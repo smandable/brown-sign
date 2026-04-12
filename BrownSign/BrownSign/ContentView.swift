@@ -54,17 +54,49 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.brown)
                         .controlSize(.large)
+                        .buttonBorderShape(.roundedRectangle(radius: 0))
 
-                        TextField(
-                            "Landmark text",
-                            text: $signText,
-                            axis: .vertical
-                        )
-                        .lineLimit(1...5)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isSignTextFocused)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.words)
+                        HStack(spacing: 8) {
+                            TextField(
+                                "Landmark text",
+                                text: $signText,
+                                axis: .vertical
+                            )
+                            .lineLimit(1...5)
+                            .focused($isSignTextFocused)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.words)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color(.secondarySystemBackground))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(
+                                        isSignTextFocused
+                                            ? Color.accentColor
+                                            : Color.secondary.opacity(0.35),
+                                        lineWidth: isSignTextFocused ? 2 : 1
+                                    )
+                            )
+
+                            if !signText.isEmpty {
+                                Button {
+                                    clearSearch()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.title2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Clear search")
+                                .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                        .animation(.easeInOut(duration: 0.15), value: signText.isEmpty)
+                        .animation(.easeInOut(duration: 0.15), value: isSignTextFocused)
 
                         if !statusMessage.isEmpty {
                             Text(statusMessage)
@@ -103,6 +135,7 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
                 .controlSize(.large)
+                .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(signText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || isProcessing
                           || isSearching)
@@ -219,6 +252,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(savedLookup == nil)
 
                 Button {
@@ -228,6 +262,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(result.pageURL.absoluteString.isEmpty)
             }
         }
@@ -448,6 +483,18 @@ struct ContentView: View {
         if result?.pageURL == enriched.pageURL {
             savedLookup = saved
         }
+    }
+
+    /// Reset the search field and any visible result/alternatives so
+    /// the user can start a fresh query without backspacing. Leaves
+    /// the captured photo alone — if the user wants a new one they
+    /// can tap Snap a Sign again.
+    private func clearSearch() {
+        signText = ""
+        result = nil
+        savedLookup = nil
+        candidates = []
+        statusMessage = ""
     }
 
     /// Called when the user taps an alternative in the "Other matches"

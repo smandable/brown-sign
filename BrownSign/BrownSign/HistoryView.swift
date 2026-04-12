@@ -191,6 +191,7 @@ struct LandmarkDetailView: View {
                     Label("Read full article", systemImage: "safari")
                 }
                 .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(lookup.pageURL == nil)
 
                 if !lookup.rawSignText.isEmpty {
