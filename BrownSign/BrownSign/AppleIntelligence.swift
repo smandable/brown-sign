@@ -25,29 +25,56 @@ private func isAppleIntelligenceAvailable() -> Bool {
 
 // MARK: - (a) Normalize OCR → clean landmark name
 
-func normalizeLandmarkName(from rawOCR: String) async -> String {
-    guard isAppleIntelligenceAvailable() else { return rawOCR }
+/// Preferred entry point: takes the structured list of lines from
+/// Vision OCR and asks Apple Intelligence to pull out the landmark
+/// name, ignoring directions/distances/dates on separate lines.
+func normalizeLandmarkName(fromLines lines: [String]) async -> String {
+    let fallback = lines.joined(separator: " ")
+    guard isAppleIntelligenceAvailable() else { return fallback }
+    guard !lines.isEmpty else { return fallback }
 
     let instructions = """
-        You extract clean landmark names from OCR'd roadside sign text. \
-        Return only the name — no explanations, no quotes.
+        You extract clean landmark names from the lines of text on \
+        brown roadside landmark signs. Return only the name — no \
+        explanations, no quotes, no extra punctuation.
         """
+    // Number the lines so the model can reference them in its reasoning
+    // even though we only want the final name back.
+    let numbered = lines.enumerated()
+        .map { "\($0.offset + 1). \($0.element)" }
+        .joined(separator: "\n")
     let prompt = """
-        Extract the landmark name from this OCR text. Strip directions, \
-        distances, dates, and generic suffixes unless they are part of the \
-        official name. Respond with only the name.
+        These are the text lines read from a brown roadside sign in \
+        top-to-bottom order:
 
-        OCR: \(rawOCR)
+        \(numbered)
+
+        Identify the landmark being pointed to. Ignore lines that are \
+        just directions ("EXIT 5", "→ 2 MI"), distances, dates, or \
+        generic labels ("HISTORIC SITE", "STATE PARK") unless those \
+        words are part of the official name. Respond with only the \
+        landmark name.
         """
 
     do {
         let session = LanguageModelSession(instructions: instructions)
         let response = try await session.respond(to: prompt)
         let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? rawOCR : text
+        return text.isEmpty ? fallback : text
     } catch {
-        return rawOCR
+        return fallback
     }
+}
+
+/// Legacy string-based convenience — splits on newlines and delegates
+/// to the lines-based function. Kept so nothing breaks if a caller
+/// still passes a pre-joined OCR string.
+func normalizeLandmarkName(from rawOCR: String) async -> String {
+    let lines = rawOCR
+        .split(whereSeparator: \.isNewline)
+        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    return await normalizeLandmarkName(fromLines: lines)
 }
 
 // MARK: - (b) Polish a long summary to 2–3 sentences

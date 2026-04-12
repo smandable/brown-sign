@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var candidates: [LandmarkResult] = []
     @State private var showSafari = false
     @State private var showDetailSheet = false
+    @State private var showMapsDialog = false
     @State private var statusMessage = ""
 
     @FocusState private var isSignTextFocused: Bool
@@ -181,6 +182,38 @@ struct ContentView: View {
                 // first search already has geographic context.
                 _ = await locationManager.currentLocation()
             }
+            .confirmationDialog(
+                "Get directions",
+                isPresented: $showMapsDialog,
+                titleVisibility: .visible
+            ) {
+                if let coord = result?.coordinates {
+                    if MapsLauncher.canOpenGoogleMaps {
+                        Button("Google Maps") {
+                            MapsLauncher.openInGoogleMaps(
+                                latitude: coord.latitude,
+                                longitude: coord.longitude
+                            )
+                        }
+                    }
+                    if MapsLauncher.canOpenWaze {
+                        Button("Waze") {
+                            MapsLauncher.openInWaze(
+                                latitude: coord.latitude,
+                                longitude: coord.longitude
+                            )
+                        }
+                    }
+                    Button("Apple Maps") {
+                        MapsLauncher.openInAppleMaps(
+                            latitude: coord.latitude,
+                            longitude: coord.longitude,
+                            name: result?.title ?? ""
+                        )
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
             .sheet(isPresented: $showDetailSheet) {
                 if let lookup = savedLookup {
                     NavigationStack {
@@ -255,15 +288,26 @@ struct ContentView: View {
                 .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(savedLookup == nil)
 
-                Button {
-                    showSafari = true
-                } label: {
-                    Label("Read full article", systemImage: "safari")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    Button {
+                        showSafari = true
+                    } label: {
+                        Label("Read full article", systemImage: "safari")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.roundedRectangle(radius: 0))
+                    .disabled(result.pageURL.absoluteString.isEmpty)
+
+                    ShareLink(item: result.pageURL,
+                              subject: Text(result.title),
+                              message: Text(result.title)) {
+                        Image(systemName: "square.and.arrow.up")
+                            .frame(maxWidth: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.roundedRectangle(radius: 0))
                 }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.roundedRectangle(radius: 0))
-                .disabled(result.pageURL.absoluteString.isEmpty)
             }
         }
         .padding()
@@ -401,6 +445,14 @@ struct ContentView: View {
                     Label(String(format: "%.4f, %.4f", coord.latitude, coord.longitude),
                           systemImage: "mappin.and.ellipse")
                         .font(.caption)
+                    Button {
+                        showMapsDialog = true
+                    } label: {
+                        Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
                 }
                 if let year = result.inceptionYear {
                     Label("Est. \(String(year))", systemImage: "calendar")
@@ -419,9 +471,9 @@ struct ContentView: View {
     private func processImage(_ image: UIImage) async {
         isProcessing = true
         statusMessage = "Reading sign…"
-        let raw = await recognizeText(from: image)
+        let lines = await recognizeText(from: image)
         statusMessage = "Identifying landmark…"
-        let normalized = await normalizeLandmarkName(from: raw)
+        let normalized = await normalizeLandmarkName(fromLines: lines)
         signText = normalized
         statusMessage = ""
         isProcessing = false

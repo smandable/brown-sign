@@ -10,6 +10,8 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import MapKit
+import CoreLocation
 
 // MARK: - HistoryView
 
@@ -142,6 +144,7 @@ struct LandmarkDetailView: View {
     let lookup: LandmarkLookup
 
     @State private var showSafari = false
+    @State private var showMapsDialog = false
 
     var body: some View {
         ScrollView {
@@ -176,6 +179,8 @@ struct LandmarkDetailView: View {
 
                 metadataBlock
 
+                mapBlock
+
                 if !lookup.rawSummary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Full description")
@@ -185,14 +190,26 @@ struct LandmarkDetailView: View {
                     }
                 }
 
-                Button {
-                    showSafari = true
-                } label: {
-                    Label("Read full article", systemImage: "safari")
+                HStack(spacing: 8) {
+                    Button {
+                        showSafari = true
+                    } label: {
+                        Label("Read full article", systemImage: "safari")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.roundedRectangle(radius: 0))
+                    .disabled(lookup.pageURL == nil)
+
+                    if let url = lookup.pageURL {
+                        ShareLink(item: url) {
+                            Image(systemName: "square.and.arrow.up")
+                                .frame(maxWidth: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.roundedRectangle(radius: 0))
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.roundedRectangle(radius: 0))
-                .disabled(lookup.pageURL == nil)
 
                 if !lookup.rawSignText.isEmpty {
                     Text("Original sign: \(lookup.rawSignText)")
@@ -209,6 +226,32 @@ struct LandmarkDetailView: View {
             if let url = lookup.pageURL {
                 SafariView(url: url)
             }
+        }
+        .confirmationDialog(
+            "Get directions",
+            isPresented: $showMapsDialog,
+            titleVisibility: .visible
+        ) {
+            if let lat = lookup.latitude, let lon = lookup.longitude {
+                if MapsLauncher.canOpenGoogleMaps {
+                    Button("Google Maps") {
+                        MapsLauncher.openInGoogleMaps(latitude: lat, longitude: lon)
+                    }
+                }
+                if MapsLauncher.canOpenWaze {
+                    Button("Waze") {
+                        MapsLauncher.openInWaze(latitude: lat, longitude: lon)
+                    }
+                }
+                Button("Apple Maps") {
+                    MapsLauncher.openInAppleMaps(
+                        latitude: lat,
+                        longitude: lon,
+                        name: lookup.resolvedTitle
+                    )
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -237,6 +280,14 @@ struct LandmarkDetailView: View {
                     Label(String(format: "%.4f, %.4f", lat, lon),
                           systemImage: "mappin.and.ellipse")
                         .font(.caption)
+                    Button {
+                        showMapsDialog = true
+                    } label: {
+                        Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                            .font(.caption)
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
                 }
                 if let year = lookup.inceptionYear {
                     Label("Est. \(String(year))", systemImage: "calendar")
@@ -255,4 +306,25 @@ struct LandmarkDetailView: View {
             )
         }
     }
+
+    @ViewBuilder
+    private var mapBlock: some View {
+        if let lat = lookup.latitude, let lon = lookup.longitude {
+            let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            Map(initialPosition: .region(MKCoordinateRegion(
+                center: coord,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            ))) {
+                Marker(lookup.resolvedTitle, coordinate: coord)
+                    .tint(.brown)
+            }
+            .frame(height: 220)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .allowsHitTesting(true)
+            .onTapGesture {
+                showMapsDialog = true
+            }
+        }
+    }
+
 }

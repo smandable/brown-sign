@@ -10,9 +10,22 @@
 		148C0FB42F8AE8CA0091888E /* BrownSign.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BrownSign.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		148C104B2F8B3DD80091888E /* Exceptions for "BrownSign" folder in "BrownSign" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 148C0FB32F8AE8CA0091888E /* BrownSign */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		148C0FB62F8AE8CA0091888E /* BrownSign */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				148C104B2F8B3DD80091888E /* Exceptions for "BrownSign" folder in "BrownSign" target */,
+			);
 			path = BrownSign;
 			sourceTree = "<group>";
 		};
@@ -256,6 +269,7 @@
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BrownSign/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "To read brown signs and identify landmarks";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "To bias landmark searches toward places near you";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -291,6 +305,7 @@
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BrownSign/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "To read brown signs and identify landmarks";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "To bias landmark searches toward places near you";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
