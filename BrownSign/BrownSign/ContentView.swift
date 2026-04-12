@@ -33,51 +33,63 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    if let image = capturedImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 16) {
+                        if let image = capturedImage {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 180)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+
+                        Button {
+                            showCamera = true
+                        } label: {
+                            Label("Snap a Sign", systemImage: "camera.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.brown)
+                        .controlSize(.large)
+
+                        TextField(
+                            "Landmark text",
+                            text: $signText,
+                            axis: .vertical
+                        )
+                        .lineLimit(1...5)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isSignTextFocused)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.words)
+
+                        if !statusMessage.isEmpty {
+                            Text(statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if let result {
+                            resultCard(for: result)
+                                .id("resultCard")
+                            alternativesSection
+                        }
                     }
-
-                    Button {
-                        showCamera = true
-                    } label: {
-                        Label("Snap a Sign", systemImage: "camera.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.brown)
-                    .controlSize(.large)
-
-                    TextField(
-                        "Landmark text",
-                        text: $signText,
-                        axis: .vertical
-                    )
-                    .lineLimit(1...5)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isSignTextFocused)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.words)
-
-                    if !statusMessage.isEmpty {
-                        Text(statusMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    if let result {
-                        resultCard(for: result)
-                        alternativesSection
+                    .padding()
+                }
+                .onChange(of: result?.pageURL) { _, _ in
+                    // When the card content switches to a different
+                    // landmark, scroll the card into view so the user
+                    // doesn't have to hunt for it.
+                    guard result != nil else { return }
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        proxy.scrollTo("resultCard", anchor: .top)
                     }
                 }
-                .padding()
             }
             .navigationTitle("Brown Sign")
             .scrollDismissesKeyboard(.immediately)
@@ -347,8 +359,6 @@ struct ContentView: View {
         let hasAny = result.coordinates != nil
             || result.inceptionYear != nil
             || result.wikidataType != nil
-            || result.externalConfidence != nil
-            || result.onDeviceMatchScore != nil
 
         if hasAny {
             VStack(alignment: .leading, spacing: 4) {
@@ -364,17 +374,6 @@ struct ContentView: View {
                 if let type = result.wikidataType {
                     Label(type, systemImage: "tag.fill")
                         .font(.caption)
-                }
-                if let ext = result.externalConfidence {
-                    Label(String(format: "Google: %.0f", ext),
-                          systemImage: "checkmark.seal.fill")
-                        .font(.caption)
-                        .foregroundStyle(.purple)
-                }
-                if let score = result.onDeviceMatchScore {
-                    Label("On-device: \(Int(score * 100))%", systemImage: "sparkles")
-                        .font(.caption)
-                        .foregroundStyle(.indigo)
                 }
             }
         }

@@ -33,11 +33,22 @@ func searchWikipedia(query: String) async -> WikiResult? {
 /// the given coordinate whose titles contain the query text (case
 /// insensitive). Used by the orchestrator to prefer genuinely-nearby
 /// landmarks over whatever Wikipedia text-ranks as globally popular.
-/// Uses `generator=geosearch` + batch extracts/pageimages in one call.
+///
+/// Internally this is a two-step fetch:
+///   1. `list=geosearch` for nearby page list (titles + pageids only)
+///   2. client-side title filter, then `wikipediaFetchPageDetails` for
+///      the matches to get extracts + pageimages + disambiguation flag
+///
+/// The naive one-shot `generator=geosearch + prop=pageimages` approach
+/// silently drops thumbnails for pages beyond the `pilimit` cap (~50),
+/// which in dense areas (hundreds of geo-tagged articles within 10 km)
+/// means articles at index 55+ lose their thumbnail field even though
+/// Wikipedia has one. Splitting into two calls keeps thumbnail lookups
+/// well under the cap.
 ///
 /// Notes on Wikipedia's geosearch API limits:
 ///   - Maximum radius is **10,000 meters** — larger values return an error.
-///   - Maximum `ggslimit` is 500. Use a large value because dense areas
+///   - Maximum `gslimit` is 500. Use a large value because dense areas
 ///     can have hundreds of geo-tagged articles within a few km.
 func searchWikipediaNearby(
     query: String,
@@ -48,12 +59,57 @@ func searchWikipediaNearby(
     let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedQuery.isEmpty else { return [] }
 
-    // Wikipedia's geosearch enforces a 10 km maximum.
-    let clampedRadius = min(max(radiusMeters, 10), 10_000)
+    // Step 1: get nearby page list (distance-ordered).
+    let nearby = await wikipediaGeosearchPageList(
+        latitude: latitude,
+        longitude: longitude,
+        radiusMeters: radiusMeters
+    )
+    guard !nearby.isEmpty else { return [] }
 
+    // Step 2: title-match filter (client side).
+    let needle = trimmedQuery.lowercased()
+    let matching = nearby.filter { $0.title.lowercased().contains(needle) }
+    guard !matching.isEmpty else { return [] }
+
+    // Step 3: batch fetch details (extracts + thumbnails + disambiguation
+    // flag). Landmark queries typically yield < 10 matches, well under
+    // pilimit=50, so one call is enough.
+    let pageIDs = matching.map(\.pageID)
+    let details = await wikipediaFetchPageDetails(pageIDs: pageIDs)
+    guard !details.isEmpty else { return [] }
+
+    // Step 4: assemble, preserving geosearch order (distance-ascending).
+    var results: [WikiResult] = []
+    for page in matching {
+        guard let d = details[page.pageID] else { continue }
+        if d.isDisambiguation { continue }
+        results.append(WikiResult(
+            title: d.title,
+            summary: String(d.extract.prefix(500)),
+            pageURL: d.url,
+            imageURL: d.imageURL
+        ))
+    }
+    return results
+}
+
+// MARK: - Plain geosearch (no page details)
+
+private struct NearbyPage {
+    let pageID: Int
+    let title: String
+}
+
+private func wikipediaGeosearchPageList(
+    latitude: Double,
+    longitude: Double,
+    radiusMeters: Int
+) async -> [NearbyPage] {
+    let clampedRadius = min(max(radiusMeters, 10), 10_000)
     let coord = "\(latitude)|\(longitude)"
     guard let encodedCoord = coord.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=geosearch&ggscoord=\(encodedCoord)&ggsradius=\(clampedRadius)&ggslimit=500&prop=extracts%7Cpageprops%7Cinfo%7Cpageimages&ppprop=disambiguation&inprop=url&exintro=1&explaintext=1&redirects=1&piprop=thumbnail&pithumbsize=600") else {
+          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&list=geosearch&gscoord=\(encodedCoord)&gsradius=\(clampedRadius)&gslimit=500") else {
         return []
     }
 
@@ -61,43 +117,14 @@ func searchWikipediaNearby(
         let (data, _) = try await URLSession.shared.data(from: url)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
-              let pages = queryObj["pages"] as? [String: Any] else {
+              let geosearch = queryObj["geosearch"] as? [[String: Any]] else {
             return []
         }
-
-        let needle = trimmedQuery.lowercased()
-        var results: [WikiResult] = []
-        for (_, rawPage) in pages {
-            guard let page = rawPage as? [String: Any],
-                  let title = page["title"] as? String else { continue }
-
-            // Filter: title must contain the query substring.
-            guard title.lowercased().contains(needle) else { continue }
-
-            // Skip disambiguation pages.
-            let pageprops = page["pageprops"] as? [String: Any]
-            if pageprops?["disambiguation"] != nil { continue }
-
-            let extract = page["extract"] as? String ?? ""
-            let urlString = page["fullurl"] as? String
-                ?? page["canonicalurl"] as? String
-                ?? ""
-            guard let pageURL = URL(string: urlString) else { continue }
-
-            var imageURL: URL?
-            if let thumb = page["thumbnail"] as? [String: Any],
-               let src = thumb["source"] as? String {
-                imageURL = URL(string: src)
-            }
-
-            results.append(WikiResult(
-                title: title,
-                summary: String(extract.prefix(500)),
-                pageURL: pageURL,
-                imageURL: imageURL
-            ))
+        return geosearch.compactMap { entry in
+            guard let pageid = entry["pageid"] as? Int,
+                  let title = entry["title"] as? String else { return nil }
+            return NearbyPage(pageID: pageid, title: title)
         }
-        return results
     } catch {
         return []
     }

@@ -220,7 +220,10 @@ func enrichLandmark(
         candidateTitle: candidate.title,
         candidateSummary: candidate.rawSummary
     )
-    async let imageData  = downloadArticleImage(from: candidate.articleImageURL)
+    async let imageData  = downloadArticleImage(
+        from: candidate.articleImageURL,
+        title: candidate.title
+    )
 
     let kg     = await kgScore
     let polish = await polished
@@ -247,7 +250,7 @@ func enrichLandmark(
 /// reasonable storage size (~800px on its longest edge) before
 /// returning the JPEG-encoded bytes. Returns nil on any failure so the
 /// caller can fall through to a placeholder. Uses `URLSession.shared`.
-private func downloadArticleImage(from url: URL?) async -> Data? {
+private func downloadArticleImage(from url: URL?, title: String) async -> Data? {
     guard let url else { return nil }
     do {
         let (data, response) = try await URLSession.shared.data(from: url)

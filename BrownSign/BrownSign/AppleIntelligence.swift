@@ -74,12 +74,6 @@ func polishSummary(_ summary: String) async -> String {
 
 // MARK: - (c) On-device match confidence score
 
-@Generable
-struct MatchJudgment {
-    @Guide(description: "Confidence between 0.0 and 1.0 that the candidate entry describes what the user queried")
-    let confidence: Double
-}
-
 func judgeMatch(
     query: String,
     candidateTitle: String,
@@ -87,25 +81,44 @@ func judgeMatch(
 ) async -> Double? {
     guard isAppleIntelligenceAvailable() else { return nil }
 
+    // Plain-text response + regex parse of the first floating-point
+    // number. Previously used @Generable / structured output, but
+    // that consistently returned 0.0 on device — either the macro
+    // wasn't populating the value or the model wasn't emitting
+    // parseable structured output. Plain text is more reliable.
     let instructions = """
         You judge whether an encyclopedia entry actually describes a user's \
-        landmark query. Be strict: a low score means the entry is about \
-        something different, a high score means it's the correct landmark.
+        landmark query. Reply with ONLY a single decimal number between 0 \
+        and 1 — no words, no explanation, no units.
         """
     let prompt = """
         Query: "\(query)"
         Candidate title: \(candidateTitle)
         Candidate summary: \(candidateSummary)
 
-        How confident are you (0.0–1.0) that this candidate describes what \
-        the user was looking for?
+        Output a single number from 0.0 (wrong landmark) to 1.0 (perfect \
+        match). Consider whether the candidate's type, location, and \
+        description actually align with the query intent.
         """
 
     do {
         let session = LanguageModelSession(instructions: instructions)
-        let response = try await session.respond(to: prompt, generating: MatchJudgment.self)
-        let raw = response.content.confidence
-        return min(max(raw, 0), 1)
+        let response = try await session.respond(to: prompt)
+        let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Pull the first decimal number from the response, tolerant of
+        // any extra words the model might add.
+        let pattern = #"-?\d+(?:\.\d+)?"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                in: text,
+                range: NSRange(text.startIndex..., in: text)
+              ),
+              let range = Range(match.range, in: text),
+              let value = Double(text[range]) else {
+            return nil
+        }
+        return min(max(value, 0), 1)
     } catch {
         return nil
     }

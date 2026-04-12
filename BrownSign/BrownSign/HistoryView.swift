@@ -229,8 +229,6 @@ struct LandmarkDetailView: View {
         let hasAny = lookup.hasCoordinates
             || lookup.inceptionYear != nil
             || lookup.wikidataType != nil
-            || lookup.externalConfidence != nil
-            || lookup.onDeviceMatchScore != nil
 
         if hasAny {
             VStack(alignment: .leading, spacing: 6) {
@@ -246,17 +244,6 @@ struct LandmarkDetailView: View {
                 if let type = lookup.wikidataType {
                     Label(type, systemImage: "tag.fill")
                         .font(.caption)
-                }
-                if let ext = lookup.externalConfidence {
-                    Label(String(format: "Google: %.0f", ext),
-                          systemImage: "checkmark.seal.fill")
-                        .font(.caption)
-                        .foregroundStyle(.purple)
-                }
-                if let score = lookup.onDeviceMatchScore {
-                    Label("On-device: \(Int(score * 100))%", systemImage: "sparkles")
-                        .font(.caption)
-                        .foregroundStyle(.indigo)
                 }
             }
             .padding(10)
