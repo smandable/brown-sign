@@ -140,6 +140,16 @@ func searchLandmarkCandidates(
         return !isLandmarkType(label)
     }
 
+    // 3b. Drop candidates whose title doesn't share significant tokens
+    //     with the query. Wikipedia's text search matches article
+    //     bodies too, so e.g. "East Haven, CT" will come back for a
+    //     "fort Nathan Hale" query because that town's article
+    //     mentions the fort. Without this filter, those irrelevant
+    //     matches can outrank the real landmark on distance.
+    enriched.removeAll { pair in
+        !titleMatchesQuery(query: trimmed, title: pair.wiki.title)
+    }
+
     // 4. Assemble [LandmarkResult]. Sort by distance from user when
     //    possible; candidates with no coordinates go to the end,
     //    preserving text-merge order among themselves.
@@ -297,6 +307,51 @@ func searchLandmark(
     )
     guard let first = candidates.first else { return nil }
     return await enrichLandmark(first, query: query)
+}
+
+/// Stopwords stripped when tokenizing query/title text for overlap
+/// scoring. These carry no discriminative weight for landmark names.
+private let queryStopwords: Set<String> = [
+    "the", "and", "for", "from", "that", "this", "with", "into", "onto",
+    "near", "over", "under", "about", "around",
+    "state", "national", "historic", "historical", "site", "area",
+    "park", "landmark", "monument"
+]
+
+/// Split a query or title into significant lowercase tokens: letters
+/// and digits only, ≥3 characters, minus stopwords.
+private func significantTokens(_ text: String) -> [String] {
+    return text
+        .lowercased()
+        .split { !$0.isLetter && !$0.isNumber }
+        .map(String.init)
+        .filter { $0.count >= 3 && !queryStopwords.contains($0) }
+}
+
+/// Returns true if the article title shares enough significant tokens
+/// with the query to be considered a reasonable title match. Protects
+/// against Wikipedia's full-text search returning articles that
+/// coincidentally mention the query in their body text without being
+/// about it.
+///
+/// Rule: at least `ceil(queryTokens.count / 2)` of the query's
+/// significant tokens must appear in the title. A search for "fort
+/// Nathan Hale" (3 tokens) requires 2 title matches, so "East Haven"
+/// (0 matches) is dropped while "Nathan Hale Homestead" (2 matches)
+/// and "Fort Nathan Hale" (3 matches) are kept.
+///
+/// If the query has no significant tokens (too short, all stopwords),
+/// the filter passes everything rather than rejecting it all.
+private func titleMatchesQuery(query: String, title: String) -> Bool {
+    let queryTokens = significantTokens(query)
+    guard !queryTokens.isEmpty else { return true }
+
+    let lowerTitle = title.lowercased()
+    let matchCount = queryTokens.reduce(into: 0) { count, token in
+        if lowerTitle.contains(token) { count += 1 }
+    }
+    let required = max(1, (queryTokens.count + 1) / 2)
+    return matchCount >= required
 }
 
 /// Decide whether a Wikidata P31 ("instance of") label represents
