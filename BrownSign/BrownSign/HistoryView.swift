@@ -10,8 +10,6 @@
 import SwiftUI
 import SwiftData
 import UIKit
-import MapKit
-import CoreLocation
 
 // MARK: - HistoryView
 
@@ -20,6 +18,8 @@ struct HistoryView: View {
     private var lookups: [LandmarkLookup]
 
     @Environment(\.modelContext) private var modelContext
+    @State private var editMode: EditMode = .inactive
+    @State private var showDeleteAllConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -39,6 +39,7 @@ struct HistoryView: View {
                         }
                         .onDelete(perform: deleteLookups)
                     }
+                    .environment(\.editMode, $editMode)
                 }
             }
             .navigationTitle("History")
@@ -46,9 +47,32 @@ struct HistoryView: View {
                 LandmarkDetailView(lookup: lookup)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    EditButton()
+                ToolbarItem(placement: .topBarLeading) {
+                    if editMode.isEditing && !lookups.isEmpty {
+                        Button("Delete All", role: .destructive) {
+                            showDeleteAllConfirmation = true
+                        }
+                        .foregroundStyle(.red)
+                    }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !lookups.isEmpty {
+                        EditButton()
+                    }
+                }
+            }
+            .environment(\.editMode, $editMode)
+            .confirmationDialog(
+                "Delete all history?",
+                isPresented: $showDeleteAllConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete All", role: .destructive) {
+                    deleteAll()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will remove all \(lookups.count) saved lookups. This cannot be undone.")
             }
         }
     }
@@ -57,6 +81,13 @@ struct HistoryView: View {
         for index in offsets {
             modelContext.delete(lookups[index])
         }
+    }
+
+    private func deleteAll() {
+        for lookup in lookups {
+            modelContext.delete(lookup)
+        }
+        editMode = .inactive
     }
 }
 
@@ -98,6 +129,8 @@ struct HistoryRow: View {
                 .resizable()
                 .scaledToFill()
                 .frame(width: 56, height: 56)
+                .clipped()
+                .contentShape(Rectangle())
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             fallbackThumbnail
@@ -111,6 +144,8 @@ struct HistoryRow: View {
                 .resizable()
                 .scaledToFill()
                 .frame(width: 56, height: 56)
+                .clipped()
+                .contentShape(Rectangle())
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             RoundedRectangle(cornerRadius: 8)
@@ -155,6 +190,8 @@ struct LandmarkDetailView: View {
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: 260)
+                        .clipped()
+                        .contentShape(Rectangle())
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
@@ -164,14 +201,23 @@ struct LandmarkDetailView: View {
                         .resizable()
                         .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: 180)
+                        .clipped()
+                        .contentShape(Rectangle())
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
-                Text(lookup.resolvedTitle)
-                    .font(.title2.bold())
+                SelectableText(
+                    text: lookup.resolvedTitle,
+                    font: .preferredFont(forTextStyle: .title2).bold()
+                )
 
                 HStack(spacing: 12) {
-                    sourceBadge
+                    Button {
+                        showSafari = true
+                    } label: {
+                        sourceBadge
+                    }
+                    .buttonStyle(.plain)
                     Text(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -179,14 +225,11 @@ struct LandmarkDetailView: View {
 
                 metadataBlock
 
-                mapBlock
-
                 if !lookup.rawSummary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Full description")
                             .font(.headline)
-                        Text(lookup.rawSummary)
-                            .font(.body)
+                        SelectableText(text: lookup.rawSummary)
                     }
                 }
 
@@ -227,31 +270,14 @@ struct LandmarkDetailView: View {
                 SafariView(url: url)
             }
         }
-        .confirmationDialog(
-            "Get directions",
-            isPresented: $showMapsDialog,
-            titleVisibility: .visible
-        ) {
+        .sheet(isPresented: $showMapsDialog) {
             if let lat = lookup.latitude, let lon = lookup.longitude {
-                if MapsLauncher.canOpenGoogleMaps {
-                    Button("Google Maps") {
-                        MapsLauncher.openInGoogleMaps(latitude: lat, longitude: lon)
-                    }
-                }
-                if MapsLauncher.canOpenWaze {
-                    Button("Waze") {
-                        MapsLauncher.openInWaze(latitude: lat, longitude: lon)
-                    }
-                }
-                Button("Apple Maps") {
-                    MapsLauncher.openInAppleMaps(
-                        latitude: lat,
-                        longitude: lon,
-                        name: lookup.resolvedTitle
-                    )
-                }
+                DirectionsSheet(
+                    latitude: lat,
+                    longitude: lon,
+                    name: lookup.resolvedTitle
+                )
             }
-            Button("Cancel", role: .cancel) {}
         }
     }
 
@@ -304,26 +330,6 @@ struct LandmarkDetailView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color.secondary.opacity(0.1))
             )
-        }
-    }
-
-    @ViewBuilder
-    private var mapBlock: some View {
-        if let lat = lookup.latitude, let lon = lookup.longitude {
-            let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            Map(initialPosition: .region(MKCoordinateRegion(
-                center: coord,
-                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-            ))) {
-                Marker(lookup.resolvedTitle, coordinate: coord)
-                    .tint(.brown)
-            }
-            .frame(height: 220)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .allowsHitTesting(true)
-            .onTapGesture {
-                showMapsDialog = true
-            }
         }
     }
 

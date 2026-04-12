@@ -14,9 +14,118 @@
 //
 
 import Foundation
+import SwiftUI
 import UIKit
 import MapKit
 import CoreLocation
+
+// MARK: - Directions sheet with inline map preview
+
+/// A compact bottom sheet that shows a MapKit preview of the landmark
+/// and buttons for each installed navigation app. Present via
+/// `.sheet(isPresented:) { DirectionsSheet(...) }` instead of a plain
+/// `.confirmationDialog`, which can't host custom views.
+struct DirectionsSheet: View {
+    let latitude: Double
+    let longitude: Double
+    let name: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Map(initialPosition: .region(MKCoordinateRegion(
+                center: coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
+            ))) {
+                Marker(name, coordinate: coordinate)
+                    .tint(.brown)
+            }
+            .frame(height: 200)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .allowsHitTesting(false)
+
+            VStack(spacing: 4) {
+                Text("Get directions to")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(name)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack(spacing: 12) {
+                if MapsLauncher.canOpenGoogleMaps {
+                    Button {
+                        MapsLauncher.openInGoogleMaps(latitude: latitude, longitude: longitude)
+                        dismiss()
+                    } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: "map.fill")
+                                .font(.title2)
+                            Text("Google")
+                                .font(.caption.weight(.medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
+                }
+
+                if MapsLauncher.canOpenWaze {
+                    Button {
+                        MapsLauncher.openInWaze(latitude: latitude, longitude: longitude)
+                        dismiss()
+                    } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: "location.north.fill")
+                                .font(.title2)
+                            Text("Waze")
+                                .font(.caption.weight(.medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.cyan)
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
+                }
+
+                Button {
+                    MapsLauncher.openInAppleMaps(latitude: latitude, longitude: longitude, name: name)
+                    dismiss()
+                } label: {
+                    VStack(spacing: 6) {
+                        Image(systemName: "map")
+                            .font(.title2)
+                        Text("Apple")
+                            .font(.caption.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .buttonBorderShape(.roundedRectangle(radius: 12))
+            }
+
+            Button("Cancel", role: .cancel) { dismiss() }
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .presentationDetents([.height(460)])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+// MARK: - Launchers
 
 @MainActor
 enum MapsLauncher {
@@ -45,12 +154,10 @@ enum MapsLauncher {
     }
 
     static func openInAppleMaps(latitude: Double, longitude: Double, name: String) {
-        let coord = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-        let placemark = MKPlacemark(coordinate: coord)
-        let mapItem = MKMapItem(placemark: placemark)
-        mapItem.name = name
-        mapItem.openInMaps(launchOptions: [
-            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
-        ])
+        let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let url = URL(
+            string: "https://maps.apple.com/?daddr=\(latitude),\(longitude)&dirflg=d&t=m&q=\(encodedName)"
+        ) else { return }
+        UIApplication.shared.open(url)
     }
 }

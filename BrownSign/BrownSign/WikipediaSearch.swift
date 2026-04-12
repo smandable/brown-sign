@@ -86,7 +86,7 @@ func searchWikipediaNearby(
         if d.isDisambiguation { continue }
         results.append(WikiResult(
             title: d.title,
-            summary: String(d.extract.prefix(500)),
+            summary: truncateAtWordBoundary(d.extract, maxLength: 500),
             pageURL: d.url,
             imageURL: d.imageURL
         ))
@@ -99,6 +99,17 @@ func searchWikipediaNearby(
 private struct NearbyPage {
     let pageID: Int
     let title: String
+}
+
+/// Truncates text at the last word boundary before `maxLength` and
+/// appends "…" if the original was longer. Short text is returned as-is.
+private func truncateAtWordBoundary(_ text: String, maxLength: Int) -> String {
+    guard text.count > maxLength else { return text }
+    var truncated = String(text.prefix(maxLength))
+    if let lastSpace = truncated.lastIndex(of: " ") {
+        truncated = String(truncated[..<lastSpace])
+    }
+    return truncated.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
 }
 
 private func wikipediaGeosearchPageList(
@@ -155,7 +166,7 @@ func searchWikipediaCandidates(query: String) async -> [WikiResult] {
         }
         results.append(WikiResult(
             title: page.title,
-            summary: String(page.extract.prefix(500)),
+            summary: truncateAtWordBoundary(page.extract, maxLength: 500),
             pageURL: page.url,
             imageURL: page.imageURL
         ))
@@ -165,13 +176,20 @@ func searchWikipediaCandidates(query: String) async -> [WikiResult] {
 
 // MARK: - Step 0: strip noise words before searching
 
+/// Light cleanup for the Wikipedia search query. Only strips patterns
+/// that are genuinely noise on brown signs and would never be part of
+/// an official name (e.g. "SITE OF", "EST. 1776").
+///
+/// Previously this also stripped "state", "national", and "historic",
+/// which broke searches like "Eastern State Penitentiary" (→ "Eastern
+/// Penitentiary") and "Grand Canyon National Park" (→ "Grand Canyon
+/// Park"). Those words are part of many official landmark names and
+/// should NOT be removed — Apple Intelligence normalization handles
+/// the intelligent cleanup upstream.
 private func cleanWikipediaQuery(_ raw: String) -> String {
     let patterns = [
-        #"site of"#,
-        #"est\.\s*\d{4}"#,
-        #"historic"#,
-        #"national"#,
-        #"state"#
+        #"\bsite of\b"#,
+        #"\best\.\s*\d{4}\b"#
     ]
     var result = raw
     for pattern in patterns {

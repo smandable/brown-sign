@@ -26,7 +26,7 @@ struct ContentView: View {
     @State private var showMapsDialog = false
     @State private var statusMessage = ""
 
-    @FocusState private var isSignTextFocused: Bool
+    @State private var isSignTextFocused = false
 
     private let locationManager = LocationManager.shared
 
@@ -41,8 +41,9 @@ struct ContentView: View {
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 180)
+                                .frame(maxWidth: .infinity, maxHeight: 180)
+                                .clipped()
+                                .contentShape(Rectangle())
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
 
@@ -58,30 +59,12 @@ struct ContentView: View {
                         .buttonBorderShape(.roundedRectangle(radius: 0))
 
                         HStack(spacing: 8) {
-                            TextField(
-                                "Landmark text",
+                            LandmarkTextField(
                                 text: $signText,
-                                axis: .vertical
+                                isFocused: $isSignTextFocused,
+                                onSearch: { Task { await lookUp() } }
                             )
-                            .lineLimit(1...5)
-                            .focused($isSignTextFocused)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.words)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(.secondarySystemBackground))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(
-                                        isSignTextFocused
-                                            ? Color.accentColor
-                                            : Color.secondary.opacity(0.35),
-                                        lineWidth: isSignTextFocused ? 2 : 1
-                                    )
-                            )
+                            .frame(minHeight: 36)
 
                             if !signText.isEmpty {
                                 Button {
@@ -93,11 +76,25 @@ struct ContentView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Clear search")
-                                .transition(.scale.combined(with: .opacity))
                             }
                         }
-                        .animation(.easeInOut(duration: 0.15), value: signText.isEmpty)
-                        .animation(.easeInOut(duration: 0.15), value: isSignTextFocused)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color(.secondarySystemBackground))
+                                .onTapGesture { isSignTextFocused = true }
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(
+                                    isSignTextFocused
+                                        ? Color.accentColor
+                                        : Color.secondary.opacity(0.35),
+                                    lineWidth: isSignTextFocused ? 2 : 1
+                                )
+                        )
+                        .id("textField")
 
                         if !statusMessage.isEmpty {
                             Text(statusMessage)
@@ -115,13 +112,8 @@ struct ContentView: View {
                     .padding()
                 }
                 .onChange(of: result?.pageURL) { _, _ in
-                    // When the card content switches to a different
-                    // landmark, scroll the card into view so the user
-                    // doesn't have to hunt for it.
                     guard result != nil else { return }
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        proxy.scrollTo("resultCard", anchor: .top)
-                    }
+                    proxy.scrollTo("textField", anchor: .top)
                 }
             }
             .navigationTitle("Brown Sign")
@@ -144,21 +136,8 @@ struct ContentView: View {
                 .padding(.vertical, 8)
                 .background(.bar)
             }
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button {
-                        Task { await lookUp() }
-                    } label: {
-                        Label("Search", systemImage: "magnifyingglass")
-                    }
-                    .disabled(
-                        signText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || isProcessing
-                        || isSearching
-                    )
-                }
-            }
+            // Keyboard toolbar is built into LandmarkTextField's
+            // inputAccessoryView (dismiss ⌨↓ + search 🔍).
             .fullScreenCover(isPresented: $showCamera) {
                 CameraView(
                     onCapture: { image in
@@ -182,37 +161,14 @@ struct ContentView: View {
                 // first search already has geographic context.
                 _ = await locationManager.currentLocation()
             }
-            .confirmationDialog(
-                "Get directions",
-                isPresented: $showMapsDialog,
-                titleVisibility: .visible
-            ) {
+            .sheet(isPresented: $showMapsDialog) {
                 if let coord = result?.coordinates {
-                    if MapsLauncher.canOpenGoogleMaps {
-                        Button("Google Maps") {
-                            MapsLauncher.openInGoogleMaps(
-                                latitude: coord.latitude,
-                                longitude: coord.longitude
-                            )
-                        }
-                    }
-                    if MapsLauncher.canOpenWaze {
-                        Button("Waze") {
-                            MapsLauncher.openInWaze(
-                                latitude: coord.latitude,
-                                longitude: coord.longitude
-                            )
-                        }
-                    }
-                    Button("Apple Maps") {
-                        MapsLauncher.openInAppleMaps(
-                            latitude: coord.latitude,
-                            longitude: coord.longitude,
-                            name: result?.title ?? ""
-                        )
-                    }
+                    DirectionsSheet(
+                        latitude: coord.latitude,
+                        longitude: coord.longitude,
+                        name: result?.title ?? ""
+                    )
                 }
-                Button("Cancel", role: .cancel) {}
             }
             .sheet(isPresented: $showDetailSheet) {
                 if let lookup = savedLookup {
@@ -238,12 +194,11 @@ struct ContentView: View {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 200)
+                    .frame(maxWidth: .infinity, maxHeight: 200)
+                    .clipped()
+                    .contentShape(Rectangle())
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             } else if let imageURL = result.articleImageURL {
-                // Pre-enrichment fallback: briefly show an AsyncImage
-                // until enrichLandmark downloads and caches the bytes.
                 AsyncImage(url: imageURL) { phase in
                     switch phase {
                     case .success(let image):
@@ -263,19 +218,23 @@ struct ContentView: View {
                         Color.clear
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 200)
+                .frame(maxWidth: .infinity, maxHeight: 200)
+                .clipped()
+                .contentShape(Rectangle())
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
-            Text(result.title)
-                .font(.title2.bold())
+            SelectableText(
+                text: result.title,
+                font: .preferredFont(forTextStyle: .title2).bold()
+            )
 
             metadataChips(for: result)
 
-            Text(result.summary)
-                .font(.body)
-                .lineLimit(6)
+            SelectableText(
+                text: result.summary,
+                lineLimit: 6
+            )
 
             VStack(spacing: 8) {
                 Button {
@@ -310,7 +269,7 @@ struct ContentView: View {
                 }
             }
         }
-        .padding()
+        .padding(.bottom, 2)
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.secondary.opacity(0.1))
@@ -357,6 +316,8 @@ struct ContentView: View {
                     .resizable()
                     .scaledToFill()
                     .frame(width: 44, height: 44)
+                    .clipped()
+                    .contentShape(Rectangle())
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             } else if let imageURL = alt.articleImageURL {
                 AsyncImage(url: imageURL) { phase in
@@ -368,6 +329,7 @@ struct ContentView: View {
                     }
                 }
                 .frame(width: 44, height: 44)
+                .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
                 RoundedRectangle(cornerRadius: 6)
@@ -480,7 +442,14 @@ struct ContentView: View {
     }
 
     private func lookUp() async {
-        isSignTextFocused = false
+        // Dismiss keyboard via UIKit responder chain — NOT via the
+        // isFocused binding, which would trigger updateUIView to call
+        // resignFirstResponder repeatedly during the search's rapid
+        // state changes and leave the text field in a stuck state.
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
         isSearching = true
         statusMessage = "Searching…"
         result = nil
@@ -506,11 +475,17 @@ struct ContentView: View {
             return
         }
 
-        // Show the top candidate's raw card immediately, then enrich.
+        // Show the top candidate's raw card immediately. Enrichment
+        // (image download, summary polish, KG score) runs in a
+        // detached Task so the view is immediately interactive —
+        // same pattern as switchTo(). Previously this awaited
+        // selectCandidate, which blocked until enrichment completed
+        // and caused layout thrashing (image appearing, card height
+        // changing) that left the text field in a stuck state.
         result = first
         statusMessage = ""
-        await selectCandidate(first, query: trimmed)
         isSearching = false
+        Task { await selectCandidate(first, query: trimmed) }
     }
 
     /// Run phase-2 enrichment for the given candidate, replace the

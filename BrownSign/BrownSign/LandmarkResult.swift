@@ -136,8 +136,17 @@ func searchLandmarkCandidates(
 
     // 3. Drop non-landmark types.
     enriched.removeAll { pair in
-        guard let label = pair.wd?.typeLabel else { return false }
-        return !isLandmarkType(label)
+        if let label = pair.wd?.typeLabel {
+            // Wikidata gave us a type — check it.
+            return !isLandmarkType(label)
+        }
+        // No Wikidata type (entity missing or P31 empty). Only keep
+        // the article if its title contains a place-indicating word
+        // like "fort", "mansion", "park", "bridge", etc. This rejects
+        // food items, cultural events, and other non-place articles
+        // that Wikipedia's text search returns but that have no
+        // Wikidata entity for us to type-check.
+        return !titleContainsPlaceWord(pair.wiki.title)
     }
 
     // 3b. Drop candidates whose title doesn't share significant tokens
@@ -176,22 +185,28 @@ func searchLandmarkCandidates(
         return (result, distance)
     }
 
-    if userLocation != nil {
-        // Stable sort: with-distance ascending, then without-distance at the end.
-        built.sort { a, b in
-            switch (a.distance, b.distance) {
-            case let (x?, y?): return x < y
-            case (_?, nil):    return true
-            case (nil, _?):    return false
-            case (nil, nil):   return false
-            }
+    // Sort: exact/close title matches first, then by distance.
+    let queryLower = trimmed.lowercased()
+    built.sort { a, b in
+        let aExact = isCloseTitleMatch(a.result.title, query: queryLower)
+        let bExact = isCloseTitleMatch(b.result.title, query: queryLower)
+        if aExact != bExact { return aExact }
+        switch (a.distance, b.distance) {
+        case let (x?, y?): return x < y
+        case (_?, nil):    return true
+        case (nil, _?):    return false
+        case (nil, nil):   return false
         }
     }
 
     var results = built.map { $0.result }
 
     // 5. NPS fallback only if we got zero Wikipedia candidates.
-    if results.isEmpty, let nps = await searchNPS(query: trimmed) {
+    //    Apply the same title-match filter so NPS's fuzzy search
+    //    doesn't return something completely unrelated (e.g.
+    //    "Battleship Bunker" for a "taco" query).
+    if results.isEmpty, let nps = await searchNPS(query: trimmed),
+       titleMatchesQuery(query: trimmed, title: nps.title) {
         let wd = await fetchWikidataEnrichment(for: nps.title)
         let npsResult = LandmarkResult(
             title: nps.title,
@@ -309,6 +324,86 @@ func searchLandmark(
     return await enrichLandmark(first, query: query)
 }
 
+/// Comprehensive list of words that indicate a physical place. Used
+/// both by `isLandmarkType` (P31 label check) and by
+/// `titleContainsPlaceWord` (title fallback for missing Wikidata).
+/// Shared so the two checks stay in sync.
+private let placeIndicators: [String] = [
+    // Structures
+    "building", "structure", "house", "home", "mansion", "estate",
+    "villa", "cottage", "cabin", "lodge", "inn", "hotel", "resort",
+    "manor", "homestead", "grange", "farmstead",
+    "tower", "castle", "fortress", "fort", "citadel", "palace",
+    "temple", "church", "cathedral", "chapel", "basilica",
+    "mosque", "synagogue", "shrine", "monastery", "abbey",
+    "bridge", "dam", "lighthouse", "windmill", "mill", "barn",
+    "warehouse", "factory", "courthouse", "capitol", "statehouse",
+    "library", "hospital", "prison", "penitentiary", "jail",
+    "barracks", "armory", "arsenal", "observatory",
+    "school", "university", "college", "academy", "campus",
+    "museum", "gallery", "theater", "theatre", "amphitheater",
+    "arena", "stadium", "pavilion",
+    "station", "terminal", "airport", "depot",
+    "pier", "wharf", "dock", "marina", "harbor", "port", "boardwalk",
+    "tunnel", "aqueduct", "canal",
+    "monument", "memorial", "statue", "sculpture", "obelisk",
+    "cemetery", "burial", "mausoleum", "tomb",
+    "plaza", "square", "promenade",
+    // Natural features
+    "mountain", "hill", "peak", "summit", "ridge", "cliff", "bluff",
+    "valley", "canyon", "gorge", "ravine", "glen",
+    "river", "creek", "stream", "spring", "lake", "pond",
+    "lagoon", "reservoir", "waterfall", "falls",
+    "island", "peninsula", "cape", "bay", "cove", "inlet",
+    "beach", "shore", "coast", "rock", "ledge", "point",
+    "cave", "cavern", "grotto",
+    "forest", "wood", "grove", "jungle",
+    "desert", "dune", "mesa", "butte", "plateau",
+    "glacier", "volcano", "crater", "geyser",
+    "swamp", "marsh", "wetland",
+    // Areas / regions
+    "park", "garden", "arboretum", "botanical",
+    "zoo", "aquarium", "sanctuary", "preserve",
+    "reserve", "refuge", "conservation",
+    "farm", "ranch", "plantation", "vineyard", "winery", "orchard",
+    "mine", "quarry",
+    "trail", "path", "route",
+    "battlefield", "battleground",
+    "district", "neighborhood", "quarter",
+    "site", "grounds", "complex", "compound",
+    // Settlements
+    "city", "town", "village", "hamlet", "settlement",
+    "borough", "township", "municipality",
+    "county", "parish", "territory",
+    // Infrastructure
+    "road", "highway", "freeway", "turnpike",
+    "railway", "railroad",
+    // Catch-all landmark words
+    "landmark", "heritage", "historic",
+    "ruins", "archaeological",
+    "camp", "campground"
+]
+
+/// Returns true if the title and query are a close match — either the
+/// title contains the full query or the query contains the full title.
+/// Used to prioritize exact matches over distance-based ranking.
+private func isCloseTitleMatch(_ title: String, query: String) -> Bool {
+    let t = title.lowercased()
+    return t.contains(query) || query.contains(t)
+}
+
+/// Returns true if the given title contains at least one
+/// place-indicating word. Used as a fallback when an article has no
+/// Wikidata type — "Choco Taco" has no place word → rejected, while
+/// "Fort Nathan Hale" contains "fort" → kept.
+private func titleContainsPlaceWord(_ title: String) -> Bool {
+    let lower = title.lowercased()
+    for word in placeIndicators {
+        if lower.contains(word) { return true }
+    }
+    return false
+}
+
 /// Stopwords stripped when tokenizing query/title text for overlap
 /// scoring. These carry no discriminative weight for landmark names.
 private let queryStopwords: Set<String> = [
@@ -356,66 +451,70 @@ private func titleMatchesQuery(query: String, title: String) -> Bool {
 
 /// Decide whether a Wikidata P31 ("instance of") label represents
 /// something that could plausibly be on a brown roadside sign.
-/// Permissive default: if we don't know, accept.
 ///
-/// Uses two-tier matching so we don't accidentally block valid landmark
-/// types like "human settlement" (villages, hamlets) just because the
-/// label contains "human".
+/// Three-pass strategy:
+///   1. **Blocklist** — fast-reject known non-landmark exact labels
+///      and phrase patterns (bands, films, food, people, etc.)
+///   2. **Place-indicator whitelist** — accept if the label contains
+///      ANY word that implies a physical place (building, park,
+///      mountain, river, museum, fort, etc.)
+///   3. **Default reject** — if the label survived the blocklist but
+///      has NO place indicator, it's probably something creative we
+///      haven't blocked yet (ice cream treat, cultural tradition,
+///      publicity stunt, etc.). Reject it.
+///
+/// Items with a nil P31 label (Wikidata didn't return a type) are
+/// handled by the caller — they're accepted as "unknown, might be a
+/// landmark". This function is only called when a label IS present.
 private func isLandmarkType(_ label: String) -> Bool {
     let lower = label
         .lowercased()
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // Exact matches — block only if the whole label equals one of these.
+    // --- Pass 1: explicit blocklist (fast reject) ---
+
     let exactBlocks: Set<String> = [
-        // Music
-        "band", "album", "song", "single", "extended play", "mixtape",
-        // Film / TV / games
-        "film", "movie", "documentary", "short film",
-        "episode", "video game", "mobile game",
-        // Print
-        "book", "novel", "short story", "poem",
-        "magazine", "newspaper", "manga", "comic book", "comic strip",
-        // People / characters / names
-        "human", "fictional character", "mythological character",
-        "given name", "surname", "family name", "pseudonym",
-        // Biology
-        "taxon", "species", "genus", "breed",
-        // Software / products
-        "software", "mobile app", "web application",
-        "operating system", "programming language",
-        "brand", "trademark",
-        // Abstract
-        "idea", "concept", "theorem", "scientific theory",
-        // Organizations that aren't places
+        "human", "band", "album", "song", "single", "film", "movie",
+        "book", "novel", "food", "dish", "dog", "cat", "animal",
+        "hoax", "prank", "mascot", "logo", "brand", "trademark",
+        "software", "taxon", "species", "genus", "breed",
+        "beverage", "drink", "cocktail", "recipe", "ingredient",
+        "color", "colour", "language", "word", "currency",
         "business", "enterprise", "corporation"
     ]
     if exactBlocks.contains(lower) { return false }
 
-    // Phrase matches — block if the label contains any of these.
     let phraseBlocks = [
-        // Music groups of any flavor
-        "musical group", "musical ensemble", "rock band", "punk band",
-        "pop band", "rock group", "jazz band", "boy band", "girl group",
-        "metal band", "hip hop group",
-        "music album", "studio album", "live album", "compilation album",
-        // TV / film
-        "television series", "tv series", "television program",
-        "tv program", "web series", "anime series",
-        "film series", "film franchise",
-        // Books / publishing
-        "book series", "novel series", "comic series",
-        // People / names — anything that says "given name" or "family name"
-        // catches variants like "male given name", "surname in X".
-        "given name", "family name",
-        // Events (generally not landmarks — a "battle" or "festival" at
-        // location X doesn't point to X itself).
-        "sports event", "music festival",
-        // Commercial entities
-        "chain store", "retail chain", "restaurant chain"
+        "musical group", "musical ensemble", "rock band", "musical work",
+        "musical composition", "music album",
+        "television series", "tv series", "film series", "web series",
+        "anime series", "television program",
+        "given name", "family name", "fictional character",
+        "dog breed", "cat breed", "breed of",
+        "food product", "food chain", "fast food",
+        "chain store", "retail chain", "restaurant chain",
+        "advertising campaign", "advertising character",
+        "April Fools", "video game", "mobile game",
+        "comic book", "comic strip", "comic series"
     ]
     for phrase in phraseBlocks {
         if lower.contains(phrase) { return false }
     }
-    return true
+
+    // --- Pass 2: place-indicator whitelist ---
+    // If the label contains any word that implies a physical location,
+    // it's almost certainly a landmark. This is the primary acceptance
+    // path — much more robust than trying to enumerate every possible
+    // non-landmark Wikidata type. Uses the shared `placeIndicators`
+    // array defined at file scope.
+    for indicator in placeIndicators {
+        if lower.contains(indicator) { return true }
+    }
+
+    // --- Pass 3: default reject ---
+    // The label survived the blocklist but has no place indicator.
+    // This catches everything creative we haven't explicitly blocked:
+    // "novelty ice cream treat", "cultural tradition",
+    // "publicity stunt", "recurring event", "day of celebration", etc.
+    return false
 }
