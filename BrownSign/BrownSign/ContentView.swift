@@ -156,7 +156,16 @@ struct ContentView: View {
     @ViewBuilder
     private func resultCard(for result: LandmarkResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let imageURL = result.articleImageURL {
+            if let data = result.articleImageData, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else if let imageURL = result.articleImageURL {
+                // Pre-enrichment fallback: briefly show an AsyncImage
+                // until enrichLandmark downloads and caches the bytes.
                 AsyncImage(url: imageURL) { phase in
                     switch phase {
                     case .success(let image):
@@ -252,7 +261,13 @@ struct ContentView: View {
     @ViewBuilder
     private func alternativeRow(_ alt: LandmarkResult) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            if let imageURL = alt.articleImageURL {
+            if let data = alt.articleImageData, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else if let imageURL = alt.articleImageURL {
                 AsyncImage(url: imageURL) { phase in
                     switch phase {
                     case .success(let image):
@@ -471,6 +486,12 @@ struct ContentView: View {
             existing.rawSummary = res.rawSummary
             existing.source = res.source
             existing.articleImageURLString = res.articleImageURL?.absoluteString
+            // Overwrite the persisted image bytes only when the fresh
+            // search actually fetched new ones — preserve the prior
+            // copy if this enrichment pass happened to fail.
+            if let newData = res.articleImageData {
+                existing.articleImageData = newData
+            }
             existing.latitude = res.coordinates?.latitude
             existing.longitude = res.coordinates?.longitude
             existing.inceptionYear = res.inceptionYear
@@ -495,6 +516,7 @@ struct ContentView: View {
             source: res.source,
             imageData: newThumb,
             articleImageURLString: res.articleImageURL?.absoluteString,
+            articleImageData: res.articleImageData,
             latitude: res.coordinates?.latitude,
             longitude: res.coordinates?.longitude,
             inceptionYear: res.inceptionYear,

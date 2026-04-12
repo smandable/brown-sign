@@ -24,6 +24,9 @@ final class LandmarkLookup {
     var imageData: Data?
     /// Remote article image URL (Wikipedia pageimages thumbnail), if any.
     var articleImageURLString: String?
+    /// Downloaded article image bytes (persisted locally so history rows
+    /// never have to re-fetch from the network).
+    var articleImageData: Data?
 
     // Wikidata enrichment
     var latitude: Double?
@@ -44,6 +47,7 @@ final class LandmarkLookup {
         source: String,
         imageData: Data? = nil,
         articleImageURLString: String? = nil,
+        articleImageData: Data? = nil,
         latitude: Double? = nil,
         longitude: Double? = nil,
         inceptionYear: Int? = nil,
@@ -61,6 +65,7 @@ final class LandmarkLookup {
         self.date = Date()
         self.imageData = imageData
         self.articleImageURLString = articleImageURLString
+        self.articleImageData = articleImageData
         self.latitude = latitude
         self.longitude = longitude
         self.inceptionYear = inceptionYear

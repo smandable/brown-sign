@@ -88,27 +88,15 @@ struct HistoryRow: View {
     @ViewBuilder
     private var thumbnail: some View {
         // Preference order:
-        //   1. Wikipedia article image (most recognizable)
+        //   1. Persisted Wikipedia article image bytes
         //   2. User's captured sign photo
         //   3. Brown signpost placeholder
-        if let imageURL = lookup.articleImageURL {
-            AsyncImage(url: imageURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                case .failure:
-                    fallbackThumbnail
-                case .empty:
-                    Color.secondary.opacity(0.1)
-                        .overlay { ProgressView().scaleEffect(0.7) }
-                @unknown default:
-                    fallbackThumbnail
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+        if let data = lookup.articleImageData, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             fallbackThumbnail
         }
@@ -158,29 +146,13 @@ struct LandmarkDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Wikipedia article image (remote), if available.
-                if let imageURL = lookup.articleImageURL {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        case .failure:
-                            Color.secondary.opacity(0.15)
-                                .overlay {
-                                    Image(systemName: "photo")
-                                        .foregroundStyle(.secondary)
-                                }
-                        case .empty:
-                            Color.secondary.opacity(0.1)
-                                .overlay { ProgressView() }
-                        @unknown default:
-                            Color.clear
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: 260)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                // Persisted Wikipedia article image, if available.
+                if let data = lookup.articleImageData, let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
 
                 // The user's captured sign photo (local thumbnail), if any.

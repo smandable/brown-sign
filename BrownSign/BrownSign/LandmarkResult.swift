@@ -9,6 +9,9 @@
 
 import Foundation
 import CoreLocation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct Coordinate: Hashable {
     let latitude: Double
@@ -24,8 +27,13 @@ struct LandmarkResult {
     let pageURL: URL
     /// "wikipedia" or "nps"
     let source: String
-    /// Remote article image (Wikipedia pageimages thumbnail).
+    /// Remote article image URL (Wikipedia pageimages thumbnail).
     let articleImageURL: URL?
+    /// Downloaded article image bytes, populated by `enrichLandmark`.
+    /// UI should prefer this over `articleImageURL` — `AsyncImage` has
+    /// no retry and caches failure states, so we download once and
+    /// persist the bytes for reliable display.
+    let articleImageData: Data?
     let coordinates: Coordinate?
     let inceptionYear: Int?
     let wikidataType: String?
@@ -42,6 +50,7 @@ struct LandmarkResult {
             pageURL: wiki.pageURL,
             source: "wikipedia",
             articleImageURL: wiki.imageURL,
+            articleImageData: nil,
             coordinates: nil,
             inceptionYear: nil,
             wikidataType: nil,
@@ -58,6 +67,7 @@ struct LandmarkResult {
             pageURL: nps.pageURL,
             source: "nps",
             articleImageURL: nps.imageURL,
+            articleImageData: nil,
             coordinates: nil,
             inceptionYear: nil,
             wikidataType: nil,
@@ -141,6 +151,7 @@ func searchLandmarkCandidates(
             pageURL: pair.wiki.pageURL,
             source: "wikipedia",
             articleImageURL: pair.wiki.imageURL,
+            articleImageData: nil,              // downloaded in phase 2
             coordinates: pair.wd?.coordinate,
             inceptionYear: pair.wd?.inceptionYear,
             wikidataType: pair.wd?.typeLabel,
@@ -179,6 +190,7 @@ func searchLandmarkCandidates(
             pageURL: nps.pageURL,
             source: "nps",
             articleImageURL: nps.imageURL,
+            articleImageData: nil,
             coordinates: wd?.coordinate,
             inceptionYear: wd?.inceptionYear,
             wikidataType: wd?.typeLabel,
@@ -193,7 +205,9 @@ func searchLandmarkCandidates(
 
 /// Phase-2 enrichment. Takes a basic candidate and runs the slower
 /// per-candidate work in parallel: Apple Intelligence summary polish,
-/// Google Knowledge Graph confidence, on-device match judgment.
+/// Google Knowledge Graph confidence, on-device match judgment, AND
+/// downloading + resizing the article image bytes so we never have to
+/// rely on AsyncImage's unreliable network fetch at display time.
 /// Always succeeds (all underlying calls fall back gracefully).
 func enrichLandmark(
     _ candidate: LandmarkResult,
@@ -206,10 +220,12 @@ func enrichLandmark(
         candidateTitle: candidate.title,
         candidateSummary: candidate.rawSummary
     )
+    async let imageData  = downloadArticleImage(from: candidate.articleImageURL)
 
     let kg     = await kgScore
     let polish = await polished
     let match  = await matchScore
+    let image  = await imageData
 
     return LandmarkResult(
         title: candidate.title,
@@ -218,12 +234,52 @@ func enrichLandmark(
         pageURL: candidate.pageURL,
         source: candidate.source,
         articleImageURL: candidate.articleImageURL,
+        articleImageData: image,
         coordinates: candidate.coordinates,
         inceptionYear: candidate.inceptionYear,
         wikidataType: candidate.wikidataType,
         externalConfidence: kg,
         onDeviceMatchScore: match
     )
+}
+
+/// Fetches the article image at the given URL and resizes it to a
+/// reasonable storage size (~800px on its longest edge) before
+/// returning the JPEG-encoded bytes. Returns nil on any failure so the
+/// caller can fall through to a placeholder. Uses `URLSession.shared`.
+private func downloadArticleImage(from url: URL?) async -> Data? {
+    guard let url else { return nil }
+    do {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            return nil
+        }
+        // Resize down if the source image is huge, otherwise keep as-is.
+        return resizeImageDataIfNeeded(data, maxDimension: 800)
+    } catch {
+        return nil
+    }
+}
+
+/// If the image is larger than `maxDimension` on its longest edge,
+/// re-encode it at that size as JPEG quality 0.8. Otherwise return the
+/// original bytes unchanged. Keeps history row loads fast and the
+/// SwiftData store small.
+private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Data? {
+    #if canImport(UIKit)
+    guard let image = UIImage(data: data) else { return data }
+    let longest = max(image.size.width, image.size.height)
+    if longest <= maxDimension { return data }
+    let scale = maxDimension / longest
+    let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+    let renderer = UIGraphicsImageRenderer(size: newSize)
+    let resized = renderer.image { _ in
+        image.draw(in: CGRect(origin: .zero, size: newSize))
+    }
+    return resized.jpegData(compressionQuality: 0.8)
+    #else
+    return data
+    #endif
 }
 
 /// Convenience: run both phases and return the top candidate, fully
