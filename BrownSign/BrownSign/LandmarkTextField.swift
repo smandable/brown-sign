@@ -68,13 +68,6 @@ struct LandmarkTextField: UIViewRepresentable {
         if uiView.text != text {
             uiView.text = text
         }
-        // Only programmatically FOCUS (for background-tap-to-focus).
-        // Never programmatically RESIGN here — that creates a feedback
-        // loop during rapid state changes (search in progress) where
-        // updateUIView is called repeatedly with isFocused=false,
-        // blocking the field from ever accepting focus again.
-        // Keyboard dismissal goes through UIKit's responder chain
-        // directly (UIApplication.sendAction(resignFirstResponder)).
         if isFocused && !uiView.isFirstResponder {
             uiView.becomeFirstResponder()
         }

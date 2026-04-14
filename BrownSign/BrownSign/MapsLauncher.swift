@@ -64,14 +64,14 @@ struct DirectionsSheet: View {
                         MapsLauncher.openInGoogleMaps(latitude: latitude, longitude: longitude)
                         dismiss()
                     } label: {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 4) {
                             Image(systemName: "map.fill")
-                                .font(.title2)
+                                .font(.title3)
                             Text("Google")
                                 .font(.caption.weight(.medium))
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 4)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
@@ -83,14 +83,14 @@ struct DirectionsSheet: View {
                         MapsLauncher.openInWaze(latitude: latitude, longitude: longitude)
                         dismiss()
                     } label: {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 4) {
                             Image(systemName: "location.north.fill")
-                                .font(.title2)
+                                .font(.title3)
                             Text("Waze")
                                 .font(.caption.weight(.medium))
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 4)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.cyan)
@@ -101,14 +101,14 @@ struct DirectionsSheet: View {
                     MapsLauncher.openInAppleMaps(latitude: latitude, longitude: longitude, name: name)
                     dismiss()
                 } label: {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 4) {
                         Image(systemName: "map")
-                            .font(.title2)
+                            .font(.title3)
                         Text("Apple")
                             .font(.caption.weight(.medium))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 4)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)

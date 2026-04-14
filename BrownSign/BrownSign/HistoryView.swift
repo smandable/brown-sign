@@ -27,7 +27,7 @@ struct HistoryView: View {
                 if lookups.isEmpty {
                     ContentUnavailableView(
                         "No lookups yet",
-                        systemImage: "signpost.right.fill",
+                        systemImage: "signpost.right.and.left",
                         description: Text("Snap a brown sign to get started.")
                     )
                 } else {
@@ -238,7 +238,8 @@ struct LandmarkDetailView: View {
                         showSafari = true
                     } label: {
                         Label("Read full article", systemImage: "safari")
-                            .frame(maxWidth: .infinity)
+                            .fontWeight(.regular)
+                            .frame(maxWidth: .infinity, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.roundedRectangle(radius: 0))
@@ -246,10 +247,11 @@ struct LandmarkDetailView: View {
 
                     if let url = lookup.pageURL {
                         ShareLink(item: url) {
-                            Image(systemName: "square.and.arrow.up")
-                                .frame(maxWidth: 44)
+                            Label("Share", systemImage: "square.and.arrow.up")
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 28)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.roundedRectangle(radius: 0))
                     }
                 }

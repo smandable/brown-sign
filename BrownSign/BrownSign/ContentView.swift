@@ -50,12 +50,12 @@ struct ContentView: View {
                         Button {
                             showCamera = true
                         } label: {
-                            Label("Snap a Sign", systemImage: "camera.fill")
-                                .frame(maxWidth: .infinity)
+                            Label("Snap a brown sign", systemImage: "camera.fill")
+                                .fontWeight(.regular)
+                                .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.brown)
-                        .controlSize(.large)
+                        .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                         .buttonBorderShape(.roundedRectangle(radius: 0))
 
                         HStack(spacing: 8) {
@@ -64,7 +64,7 @@ struct ContentView: View {
                                 isFocused: $isSignTextFocused,
                                 onSearch: { Task { await lookUp() } }
                             )
-                            .frame(minHeight: 36)
+                            .frame(minHeight: 28)
 
                             if !signText.isEmpty {
                                 Button {
@@ -79,7 +79,7 @@ struct ContentView: View {
                             }
                         }
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(Color(.secondarySystemBackground))
@@ -107,6 +107,20 @@ struct ContentView: View {
                             resultCard(for: result)
                                 .id("resultCard")
                             alternativesSection
+                        } else if !isSearching {
+                            VStack(spacing: 12) {
+                                Image(systemName: "signpost.right.and.left")
+                                    .font(.system(size: 125))
+                                    .foregroundStyle(Color(red: 0.38, green: 0.24, blue: 0.10).opacity(0.55))
+                                Text("Snap a brown sign or type...")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text("Results appear here")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 48)
                         }
                     }
                     .padding()
@@ -116,22 +130,26 @@ struct ContentView: View {
                     proxy.scrollTo("textField", anchor: .top)
                 }
             }
-            .navigationTitle("Brown Sign")
+            .toolbar(.hidden, for: .navigationBar)
+            .background(Color.brown.opacity(0.03))
             .scrollDismissesKeyboard(.immediately)
             .safeAreaInset(edge: .bottom) {
+                let lookUpDisabled = signText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || isProcessing
+                    || isSearching
                 Button {
+                    guard !lookUpDisabled else { return }
                     Task { await lookUp() }
                 } label: {
                     Label("Look It Up", systemImage: "magnifyingglass")
-                        .frame(maxWidth: .infinity)
+                        .fontWeight(.regular)
+                        .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.blue)
-                .controlSize(.large)
+                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                 .buttonBorderShape(.roundedRectangle(radius: 0))
-                .disabled(signText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || isProcessing
-                          || isSearching)
+                .opacity(lookUpDisabled ? 0.5 : 1)
+                .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
                 .padding(.horizontal)
                 .padding(.vertical, 8)
                 .background(.bar)
@@ -241,9 +259,10 @@ struct ContentView: View {
                     showDetailSheet = true
                 } label: {
                     Label("View full details", systemImage: "text.alignleft")
-                        .frame(maxWidth: .infinity)
+                        .fontWeight(.regular)
+                        .frame(maxWidth: .infinity, minHeight: 28)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(savedLookup == nil)
 
@@ -252,19 +271,21 @@ struct ContentView: View {
                         showSafari = true
                     } label: {
                         Label("Read full article", systemImage: "safari")
-                            .frame(maxWidth: .infinity)
+                            .fontWeight(.regular)
+                            .frame(maxWidth: .infinity, minHeight: 28)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.roundedRectangle(radius: 0))
                     .disabled(result.pageURL.absoluteString.isEmpty)
 
                     ShareLink(item: result.pageURL,
                               subject: Text(result.title),
                               message: Text(result.title)) {
-                        Image(systemName: "square.and.arrow.up")
-                            .frame(maxWidth: 44)
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 44, height: 28)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.roundedRectangle(radius: 0))
                 }
             }
@@ -273,6 +294,7 @@ struct ContentView: View {
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color.secondary.opacity(0.1))
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
         )
     }
 
@@ -475,16 +497,20 @@ struct ContentView: View {
             return
         }
 
-        // Show the top candidate's raw card immediately. Enrichment
-        // (image download, summary polish, KG score) runs in a
-        // detached Task so the view is immediately interactive —
-        // same pattern as switchTo(). Previously this awaited
-        // selectCandidate, which blocked until enrichment completed
-        // and caused layout thrashing (image appearing, card height
-        // changing) that left the text field in a stuck state.
+        // Show the top candidate's raw card immediately. Save the
+        // unpolished lookup to SwiftData synchronously so the
+        // "View full details" button is enabled from the first frame
+        // (otherwise it flashes disabled → enabled when enrichment
+        // completes). Enrichment then runs in a detached Task to keep
+        // the view immediately interactive.
         result = first
         statusMessage = ""
         isSearching = false
+        let thumb: Data? = capturedImage.flatMap { image -> Data? in
+            resized(image, to: CGSize(width: 112, height: 112))
+                .jpegData(compressionQuality: 0.7)
+        }
+        savedLookup = upsertLookup(result: first, rawSignText: trimmed, newThumb: thumb)
         Task { await selectCandidate(first, query: trimmed) }
     }
 
@@ -493,14 +519,13 @@ struct ContentView: View {
     /// SwiftData history. Used both from initial lookup and from tapping
     /// an alternative in the "Other matches" list.
     private func selectCandidate(_ candidate: LandmarkResult, query: String) async {
+        // Caller (lookUp or switchTo) has already set `result` and
+        // performed the initial upsert so the card + button are
+        // interactive immediately. This function just enriches and
+        // re-upserts with the enriched data.
         let enriched = await enrichLandmark(candidate, query: query)
-        // Only replace if we're still on the same candidate (user may
-        // have tapped a different one in the meantime).
         if result?.pageURL == candidate.pageURL {
             result = enriched
-        } else {
-            // User switched — still upsert the enriched value so it
-            // lands in history even if they moved on.
         }
         let thumb: Data? = capturedImage.flatMap { image -> Data? in
             resized(image, to: CGSize(width: 112, height: 112))
@@ -527,12 +552,17 @@ struct ContentView: View {
     /// Called when the user taps an alternative in the "Other matches"
     /// list on the result card.
     private func switchTo(_ alt: LandmarkResult) {
-        // Show the alternative immediately (with its raw summary) while
-        // we enrich in the background.
+        // Show the alternative immediately (with its raw summary) and
+        // save the unpolished lookup synchronously so "View full
+        // details" is enabled from the first frame.
         result = alt
-        savedLookup = nil
         statusMessage = ""
         let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let thumb: Data? = capturedImage.flatMap { image -> Data? in
+            resized(image, to: CGSize(width: 112, height: 112))
+                .jpegData(compressionQuality: 0.7)
+        }
+        savedLookup = upsertLookup(result: alt, rawSignText: trimmed, newThumb: thumb)
         Task { await selectCandidate(alt, query: trimmed) }
     }
 
