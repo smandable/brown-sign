@@ -26,6 +26,10 @@ struct ContentView: View {
     @State private var showMapsDialog = false
     @State private var statusMessage = ""
 
+    /// Cached decoded UIImage for the current result's article image.
+    /// Prevents re-decoding the JPEG on every view re-render.
+    @State private var resultArticleImage: UIImage?
+
     @State private var isSignTextFocused = false
 
     private let locationManager = LocationManager.shared
@@ -55,7 +59,6 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                         .buttonBorderShape(.roundedRectangle(radius: 0))
 
                         HStack(spacing: 8) {
@@ -129,6 +132,16 @@ struct ContentView: View {
                     guard result != nil else { return }
                     proxy.scrollTo("textField", anchor: .top)
                 }
+                .onChange(of: result?.articleImageData) { _, newData in
+                    // Decode the JPEG bytes once when the result's
+                    // image data changes, then reuse the UIImage across
+                    // all re-renders of the result card.
+                    if let data = newData {
+                        resultArticleImage = UIImage(data: data)
+                    } else {
+                        resultArticleImage = nil
+                    }
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
             .background(Color.brown.opacity(0.03))
@@ -146,7 +159,6 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                 .buttonBorderShape(.roundedRectangle(radius: 0))
                 .opacity(lookUpDisabled ? 0.5 : 1)
                 .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
@@ -159,9 +171,13 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showCamera) {
                 CameraView(
                     onCapture: { image in
-                        capturedImage = image
+                        // Downscale immediately so we don't hold a
+                        // full-resolution ~48MP iPhone photo in memory.
+                        // OCR still works great at 800px on the long edge.
+                        let scaled = resized(image, toMaxDimension: 800)
+                        capturedImage = scaled
                         showCamera = false
-                        Task { await processImage(image) }
+                        Task { await processImage(scaled) }
                     },
                     onCancel: {
                         showCamera = false
@@ -208,7 +224,7 @@ struct ContentView: View {
     @ViewBuilder
     private func resultCard(for result: LandmarkResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let data = result.articleImageData, let image = UIImage(data: data) {
+            if let image = resultArticleImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -263,6 +279,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                 .buttonBorderShape(.roundedRectangle(radius: 0))
                 .disabled(savedLookup == nil)
 
@@ -275,6 +292,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                     .buttonBorderShape(.roundedRectangle(radius: 0))
                     .disabled(result.pageURL.absoluteString.isEmpty)
 
@@ -286,6 +304,7 @@ struct ContentView: View {
                             .frame(width: 44, height: 28)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                     .buttonBorderShape(.roundedRectangle(radius: 0))
                 }
             }
@@ -547,6 +566,7 @@ struct ContentView: View {
         savedLookup = nil
         candidates = []
         statusMessage = ""
+        capturedImage = nil
     }
 
     /// Called when the user taps an alternative in the "Other matches"
@@ -638,5 +658,18 @@ struct ContentView: View {
         return renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))
         }
+    }
+
+    /// Resize an image so its longest edge is `maxDimension`, preserving
+    /// aspect ratio. Returns the original image if it's already smaller.
+    private func resized(_ image: UIImage, toMaxDimension maxDimension: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let newSize = CGSize(
+            width: image.size.width * scale,
+            height: image.size.height * scale
+        )
+        return resized(image, to: newSize)
     }
 }

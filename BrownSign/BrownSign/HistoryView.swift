@@ -242,6 +242,7 @@ struct LandmarkDetailView: View {
                             .frame(maxWidth: .infinity, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                     .buttonBorderShape(.roundedRectangle(radius: 0))
                     .disabled(lookup.pageURL == nil)
 
@@ -252,6 +253,7 @@ struct LandmarkDetailView: View {
                                 .frame(width: 44, height: 28)
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
                         .buttonBorderShape(.roundedRectangle(radius: 0))
                     }
                 }
