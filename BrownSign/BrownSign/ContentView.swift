@@ -11,6 +11,7 @@ import SwiftUI
 import SwiftData
 import UIKit
 import CoreLocation
+import StoreKit
 
 struct ContentView: View {
     @State private var signText = ""
@@ -32,9 +33,19 @@ struct ContentView: View {
 
     @State private var isSignTextFocused = false
 
+    // Review prompt: count successful lookups, request a rating
+    // after the user has had a few good experiences with the app.
+    @AppStorage("successfulLookupCount") private var successfulLookupCount = 0
+
     private let locationManager = LocationManager.shared
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.requestReview) private var requestReview
+
+    /// Recent lookups for the empty-state "Recent finds" preview.
+    /// Same sort order as HistoryView, so the top rows match.
+    @Query(sort: \LandmarkLookup.date, order: .reverse)
+    private var recentLookups: [LandmarkLookup]
 
     var body: some View {
         NavigationStack {
@@ -111,19 +122,18 @@ struct ContentView: View {
                                 .id("resultCard")
                             alternativesSection
                         } else if !isSearching {
-                            VStack(spacing: 12) {
-                                Image(systemName: "signpost.right.and.left")
-                                    .font(.system(size: 125))
-                                    .foregroundStyle(Color(red: 0.38, green: 0.24, blue: 0.10).opacity(0.55))
-                                Text("Snap a brown sign or type...")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Text("Results appear here")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
+                            VStack(spacing: 20) {
+                                brownSignHero
+                                if recentLookups.isEmpty {
+                                    howItWorksSteps
+                                } else {
+                                    recentFindsSection
+                                }
                             }
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 48)
+                            .padding(.vertical, 32)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel("Brown Sign — snap a sign or type to look up a landmark")
                         }
                     }
                     .padding()
@@ -144,7 +154,18 @@ struct ContentView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .background(Color.brown.opacity(0.03))
+            .background(
+                LinearGradient(
+                    stops: [
+                        .init(color: Color(red: 0.38, green: 0.24, blue: 0.10).opacity(0.12), location: 0),
+                        .init(color: Color.brown.opacity(0.04), location: 0.35),
+                        .init(color: Color.clear, location: 0.7)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea(edges: .top)
+            )
             .scrollDismissesKeyboard(.immediately)
             .safeAreaInset(edge: .bottom) {
                 let lookUpDisabled = signText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -216,6 +237,104 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Empty state
+
+    /// Stylized brown road-sign illustration — echoes the real-world
+    /// UK/US tourist-attraction sign that gives the app its name.
+    /// Purely decorative; hidden from VoiceOver since the container
+    /// carries the accessibility label.
+    private var brownSignHero: some View {
+        let signBrown = Color(red: 0.38, green: 0.24, blue: 0.10)
+        return ZStack {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(signBrown)
+            RoundedRectangle(cornerRadius: 9)
+                .stroke(Color.white, lineWidth: 2)
+                .padding(6)
+            VStack(spacing: 8) {
+                Image(systemName: "signpost.right.and.left.fill")
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text("BROWN SIGN")
+                    .font(.system(size: 18, weight: .heavy, design: .rounded))
+                    .tracking(2)
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 140)
+        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+        .accessibilityHidden(true)
+    }
+
+    /// Three-step "how it works" guide shown on first launch (when
+    /// the user has no saved lookups). Compact so it doesn't push
+    /// the Look It Up bar off small screens.
+    private var howItWorksSteps: some View {
+        let brown = Color(red: 0.38, green: 0.24, blue: 0.10)
+        let steps: [(String, String, String)] = [
+            ("camera.fill", "Snap", "Point your camera at a brown sign"),
+            ("sparkles", "Identify", "We look up the landmark for you"),
+            ("bookmark.fill", "Save", "History keeps every find")
+        ]
+        return VStack(alignment: .leading, spacing: 14) {
+            ForEach(steps, id: \.0) { icon, title, detail in
+                HStack(spacing: 14) {
+                    Image(systemName: icon)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(brown)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 32)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Last 3 saved lookups, shown on the empty state once the user
+    /// has history. Tapping a row opens the same LandmarkDetailView
+    /// sheet used by the result card's "View full details" button.
+    private var recentFindsSection: some View {
+        let rows = Array(recentLookups.prefix(3))
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Recent finds")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { idx, lookup in
+                    Button {
+                        savedLookup = lookup
+                        showDetailSheet = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            HistoryRow(lookup: lookup)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 10)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if idx < rows.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.secondary.opacity(0.08))
+            )
         }
     }
 
@@ -530,7 +649,23 @@ struct ContentView: View {
                 .jpegData(compressionQuality: 0.7)
         }
         savedLookup = upsertLookup(result: first, rawSignText: trimmed, newThumb: thumb)
+        maybeRequestReview()
         Task { await selectCandidate(first, query: trimmed) }
+    }
+
+    /// Prompts for an App Store rating after the user has had a few
+    /// successful lookups. Apple throttles review requests to at most
+    /// 3 per year per user, so calling this more often than that is
+    /// fine — the system simply ignores extra calls. We also skip the
+    /// first few lookups to avoid prompting during initial exploration.
+    private func maybeRequestReview() {
+        successfulLookupCount += 1
+        // Ask after the 3rd, 10th, and 25th successful lookup.
+        // Apple's own heuristics decide whether to actually show.
+        let triggers: Set<Int> = [3, 10, 25]
+        if triggers.contains(successfulLookupCount) {
+            requestReview()
+        }
     }
 
     /// Run phase-2 enrichment for the given candidate, replace the
