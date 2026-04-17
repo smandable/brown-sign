@@ -310,7 +310,7 @@ struct ContentView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { idx, lookup in
                     Button {
                         savedLookup = lookup
@@ -318,11 +318,13 @@ struct ContentView: View {
                     } label: {
                         HStack(spacing: 8) {
                             HistoryRow(lookup: lookup)
+                            Spacer(minLength: 0)
                             Image(systemName: "chevron.right")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }
                         .padding(.horizontal, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -336,6 +338,7 @@ struct ContentView: View {
                     .fill(Color.secondary.opacity(0.08))
             )
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Result card

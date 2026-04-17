@@ -228,6 +228,97 @@ func searchLandmarkCandidates(
     return results
 }
 
+/// Discovery-mode entry point for the Nearby tab. Returns all nearby
+/// Wikipedia landmarks, distance-sorted, without requiring a query or
+/// Wikidata enrichment per candidate.
+///
+/// Rationale: a dense city can have 50+ geo-tagged Wikipedia articles,
+/// and fanning out one Wikidata fetch per candidate up-front would be
+/// slow and wasteful when the user is only going to tap a few. Here we
+/// use the cheap title-place-word heuristic to filter (same logic the
+/// candidate orchestrator falls back to when Wikidata is missing), and
+/// defer the per-entity Wikidata enrichment to tap time via
+/// `enrichDiscoveredLandmark`.
+func discoverLandmarksNearby(
+    userLocation: CLLocation,
+    radiusMeters: Int = 10_000,
+    limit: Int = 40
+) async -> [LandmarkResult] {
+    let candidates = await wikipediaNearbyCandidates(
+        latitude: userLocation.coordinate.latitude,
+        longitude: userLocation.coordinate.longitude,
+        radiusMeters: radiusMeters,
+        limit: limit
+    )
+    guard !candidates.isEmpty else { return [] }
+
+    let filtered = candidates.filter { titleContainsPlaceWord($0.title) }
+
+    return filtered.map { c in
+        LandmarkResult(
+            title: c.title,
+            summary: c.summary,
+            rawSummary: c.summary,
+            pageURL: c.pageURL,
+            source: "wikipedia",
+            articleImageURL: c.imageURL,
+            articleImageData: nil,
+            coordinates: Coordinate(latitude: c.latitude, longitude: c.longitude),
+            inceptionYear: nil,
+            wikidataType: nil,
+            externalConfidence: nil,
+            onDeviceMatchScore: nil
+        )
+    }
+}
+
+/// Full enrichment for a candidate tapped from the Nearby tab. Runs the
+/// Wikidata lookup in parallel with phase-2 (polish / KG / match score /
+/// image download) so the detail view has the same chips as a scan
+/// result (type, inception year).
+func enrichDiscoveredLandmark(
+    _ candidate: LandmarkResult,
+    query: String
+) async -> LandmarkResult {
+    async let wikidata  = fetchWikidataEnrichment(for: candidate.title)
+    async let kgScore   = fetchGoogleKGConfidence(for: candidate.title)
+    async let polished  = polishSummary(candidate.rawSummary)
+    async let matchScore = judgeMatch(
+        query: query,
+        candidateTitle: candidate.title,
+        candidateSummary: candidate.rawSummary
+    )
+    async let imageData = downloadArticleImage(
+        from: candidate.articleImageURL,
+        title: candidate.title
+    )
+
+    let wd     = await wikidata
+    let kg     = await kgScore
+    let polish = await polished
+    let match  = await matchScore
+    let image  = await imageData
+
+    // Prefer Wikidata coords if available, else fall back to the
+    // geosearch coords we already had.
+    let coord = wd?.coordinate ?? candidate.coordinates
+
+    return LandmarkResult(
+        title: candidate.title,
+        summary: polish,
+        rawSummary: candidate.rawSummary,
+        pageURL: candidate.pageURL,
+        source: candidate.source,
+        articleImageURL: candidate.articleImageURL,
+        articleImageData: image,
+        coordinates: coord,
+        inceptionYear: wd?.inceptionYear,
+        wikidataType: wd?.typeLabel,
+        externalConfidence: kg,
+        onDeviceMatchScore: match
+    )
+}
+
 /// Phase-2 enrichment. Takes a basic candidate and runs the slower
 /// per-candidate work in parallel: Apple Intelligence summary polish,
 /// Google Knowledge Graph confidence, on-device match judgment, AND

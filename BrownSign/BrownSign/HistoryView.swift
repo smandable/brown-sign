@@ -10,8 +10,17 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import MapKit
+import CoreLocation
 
 // MARK: - HistoryView
+
+enum LandmarkDisplayMode: String, CaseIterable, Identifiable {
+    case list, map
+    var id: String { rawValue }
+    var label: String { self == .list ? "List" : "Map" }
+    var icon: String { self == .list ? "list.bullet" : "map" }
+}
 
 struct HistoryView: View {
     @Query(sort: \LandmarkLookup.date, order: .reverse)
@@ -20,26 +29,46 @@ struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var editMode: EditMode = .inactive
     @State private var showDeleteAllConfirmation = false
+    @State private var displayMode: LandmarkDisplayMode = .list
 
     var body: some View {
         NavigationStack {
-            Group {
-                if lookups.isEmpty {
-                    ContentUnavailableView(
-                        "No lookups yet",
-                        systemImage: "signpost.right.and.left",
-                        description: Text("Snap a brown sign to get started.")
-                    )
-                } else {
-                    List {
-                        ForEach(lookups) { lookup in
-                            NavigationLink(value: lookup) {
-                                HistoryRow(lookup: lookup)
-                            }
+            VStack(spacing: 0) {
+                if !lookups.isEmpty {
+                    Picker("Display mode", selection: $displayMode) {
+                        ForEach(LandmarkDisplayMode.allCases) { mode in
+                            Label(mode.label, systemImage: mode.icon).tag(mode)
                         }
-                        .onDelete(perform: deleteLookups)
                     }
-                    .environment(\.editMode, $editMode)
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                }
+
+                Group {
+                    if lookups.isEmpty {
+                        ContentUnavailableView(
+                            "No lookups yet",
+                            systemImage: "signpost.right.and.left",
+                            description: Text("Snap a brown sign to get started.")
+                        )
+                    } else {
+                        switch displayMode {
+                        case .list:
+                            List {
+                                ForEach(lookups) { lookup in
+                                    NavigationLink(value: lookup) {
+                                        HistoryRow(lookup: lookup)
+                                    }
+                                }
+                                .onDelete(perform: deleteLookups)
+                            }
+                            .environment(\.editMode, $editMode)
+                        case .map:
+                            HistoryMapView(lookups: lookups)
+                        }
+                    }
                 }
             }
             .navigationTitle("History")
@@ -48,7 +77,7 @@ struct HistoryView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    if editMode.isEditing && !lookups.isEmpty {
+                    if displayMode == .list && editMode.isEditing && !lookups.isEmpty {
                         Button("Delete All", role: .destructive) {
                             showDeleteAllConfirmation = true
                         }
@@ -56,12 +85,16 @@ struct HistoryView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if !lookups.isEmpty {
+                    if displayMode == .list && !lookups.isEmpty {
                         EditButton()
                     }
                 }
             }
             .environment(\.editMode, $editMode)
+            .onChange(of: displayMode) { _, newMode in
+                // Exiting edit mode cleanly when switching to map.
+                if newMode == .map { editMode = .inactive }
+            }
             .confirmationDialog(
                 "Delete all history?",
                 isPresented: $showDeleteAllConfirmation,
@@ -88,6 +121,184 @@ struct HistoryView: View {
             modelContext.delete(lookup)
         }
         editMode = .inactive
+    }
+}
+
+// MARK: - HistoryMapView
+
+/// Map-based alternative to the history list. Shows every saved lookup
+/// that has coordinates as a brown signpost pin. Tap a pin to reveal a
+/// compact card that links into the full detail view.
+struct HistoryMapView: View {
+    let lookups: [LandmarkLookup]
+
+    @State private var cameraPosition: MapCameraPosition = .automatic
+    @State private var selection: LandmarkLookup?
+
+    private var mapped: [LandmarkLookup] {
+        lookups.filter { $0.hasCoordinates }
+    }
+
+    var body: some View {
+        if mapped.isEmpty {
+            ContentUnavailableView(
+                "No mapped landmarks",
+                systemImage: "mappin.slash",
+                description: Text("Lookups with coordinates will appear here on a map.")
+            )
+        } else {
+            ZStack(alignment: .bottom) {
+                Map(position: $cameraPosition, selection: $selection) {
+                    UserAnnotation()
+                    ForEach(mapped) { lookup in
+                        if let lat = lookup.latitude, let lon = lookup.longitude {
+                            Marker(
+                                lookup.resolvedTitle,
+                                systemImage: "signpost.right.fill",
+                                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                            )
+                            .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                            .tag(lookup)
+                        }
+                    }
+                }
+                .mapControls {
+                    MapUserLocationButton()
+                    MapCompass()
+                }
+                .onAppear {
+                    cameraPosition = .region(regionFittingAll(mapped))
+                }
+                .onChange(of: mapped.count) { _, _ in
+                    cameraPosition = .region(regionFittingAll(mapped))
+                }
+
+                if let selected = selection {
+                    SelectedLookupCard(lookup: selected, onDismiss: {
+                        selection = nil
+                    })
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: selection)
+            // iOS 26 Liquid Glass tab bars are translucent by default and
+            // let content flow under them. Map tiles showing through is
+            // distracting, so force a visible tab-bar background for this
+            // view only.
+            .toolbarBackground(.visible, for: .tabBar)
+        }
+    }
+
+    /// Bounding-box region for the given lookups, padded so pins aren't
+    /// flush against the edges. Falls back to a default span for a
+    /// single point.
+    private func regionFittingAll(_ items: [LandmarkLookup]) -> MKCoordinateRegion {
+        let coords: [CLLocationCoordinate2D] = items.compactMap {
+            guard let lat = $0.latitude, let lon = $0.longitude else { return nil }
+            return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        guard !coords.isEmpty else {
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
+                span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
+            )
+        }
+        if coords.count == 1 {
+            return MKCoordinateRegion(
+                center: coords[0],
+                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+            )
+        }
+        let lats = coords.map(\.latitude)
+        let lons = coords.map(\.longitude)
+        let minLat = lats.min()!, maxLat = lats.max()!
+        let minLon = lons.min()!, maxLon = lons.max()!
+        let center = CLLocationCoordinate2D(
+            latitude: (minLat + maxLat) / 2,
+            longitude: (minLon + maxLon) / 2
+        )
+        let span = MKCoordinateSpan(
+            latitudeDelta: max(0.02, (maxLat - minLat) * 1.4),
+            longitudeDelta: max(0.02, (maxLon - minLon) * 1.4)
+        )
+        return MKCoordinateRegion(center: center, span: span)
+    }
+}
+
+/// Compact summary card shown over the map when a pin is selected.
+private struct SelectedLookupCard: View {
+    let lookup: LandmarkLookup
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            thumbnail
+            VStack(alignment: .leading, spacing: 4) {
+                Text(lookup.resolvedTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(lookup.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                NavigationLink(value: lookup) {
+                    Label("View details", systemImage: "text.alignleft")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                .controlSize(.small)
+                .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+        )
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let data = lookup.articleImageData, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipped()
+                .contentShape(Rectangle())
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else if let data = lookup.imageData, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipped()
+                .contentShape(Rectangle())
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.brown.opacity(0.18))
+                .frame(width: 56, height: 56)
+                .overlay {
+                    Image(systemName: "signpost.right.fill")
+                        .font(.title2)
+                        .foregroundStyle(.brown)
+                }
+        }
     }
 }
 

@@ -94,11 +94,75 @@ func searchWikipediaNearby(
     return results
 }
 
+// MARK: - Nearby discovery (no query filter)
+
+/// One result from the discovery-mode geosearch: a nearby Wikipedia
+/// article with coordinates and the user-distance already filled in.
+/// Separate from `WikiResult` because discovery always has geographic
+/// context, while the plain text-search result doesn't.
+struct NearbyWikiCandidate {
+    let title: String
+    let summary: String
+    let pageURL: URL
+    let imageURL: URL?
+    let latitude: Double
+    let longitude: Double
+    /// Great-circle distance from the user, in meters (from the
+    /// geosearch response).
+    let distanceMeters: Double
+}
+
+/// Returns up to `limit` nearby Wikipedia articles (distance-sorted, no
+/// query filter). Discovery-mode entry point for the Nearby tab.
+///
+/// Two-step fetch: geosearch for the page list, then batch page-details
+/// for extracts + thumbnails + disambiguation flags. Only the first
+/// `limit` pages are hydrated; geosearch in a dense area can return
+/// hundreds, but most users won't scroll past ~30.
+func wikipediaNearbyCandidates(
+    latitude: Double,
+    longitude: Double,
+    radiusMeters: Int = 10_000,
+    limit: Int = 40
+) async -> [NearbyWikiCandidate] {
+    let nearby = await wikipediaGeosearchPageList(
+        latitude: latitude,
+        longitude: longitude,
+        radiusMeters: radiusMeters
+    )
+    guard !nearby.isEmpty else { return [] }
+
+    let capped = Array(nearby.prefix(limit))
+    let details = await wikipediaFetchPageDetails(pageIDs: capped.map(\.pageID))
+    guard !details.isEmpty else { return [] }
+
+    var results: [NearbyWikiCandidate] = []
+    for page in capped {
+        guard let d = details[page.pageID] else { continue }
+        if d.isDisambiguation { continue }
+        results.append(NearbyWikiCandidate(
+            title: d.title,
+            summary: truncateAtWordBoundary(d.extract, maxLength: 500),
+            pageURL: d.url,
+            imageURL: d.imageURL,
+            latitude: page.latitude,
+            longitude: page.longitude,
+            distanceMeters: page.distanceMeters
+        ))
+    }
+    return results
+}
+
 // MARK: - Plain geosearch (no page details)
 
 private struct NearbyPage {
     let pageID: Int
     let title: String
+    let latitude: Double
+    let longitude: Double
+    /// Wikipedia-provided great-circle distance from the query coordinate,
+    /// in meters. Already distance-ascending in the response.
+    let distanceMeters: Double
 }
 
 /// Truncates text at the last word boundary before `maxLength` and
@@ -133,8 +197,17 @@ private func wikipediaGeosearchPageList(
         }
         return geosearch.compactMap { entry in
             guard let pageid = entry["pageid"] as? Int,
-                  let title = entry["title"] as? String else { return nil }
-            return NearbyPage(pageID: pageid, title: title)
+                  let title = entry["title"] as? String,
+                  let lat = entry["lat"] as? Double,
+                  let lon = entry["lon"] as? Double else { return nil }
+            let dist = (entry["dist"] as? Double) ?? 0
+            return NearbyPage(
+                pageID: pageid,
+                title: title,
+                latitude: lat,
+                longitude: lon,
+                distanceMeters: dist
+            )
         }
     } catch {
         return []

@@ -16,6 +16,11 @@ struct BrownSignApp: App {
                         Label("Scan", systemImage: "camera.fill")
                     }
 
+                NearMeView()
+                    .tabItem {
+                        Label("Nearby", systemImage: "map.fill")
+                    }
+
                 HistoryView()
                     .tabItem {
                         Label("History", systemImage: "clock.fill")
