@@ -25,7 +25,7 @@ struct LandmarkResult {
     /// Original Wikipedia/NPS extract — the full description.
     let rawSummary: String
     let pageURL: URL
-    /// "wikipedia" or "nps"
+    /// "wikipedia", "nps", or "osm"
     let source: String
     /// Remote article image URL (Wikipedia pageimages thumbnail).
     let articleImageURL: URL?
@@ -75,6 +75,26 @@ struct LandmarkResult {
             onDeviceMatchScore: nil
         )
     }
+
+    static func from(osm: OSMResult) -> LandmarkResult {
+        LandmarkResult(
+            title: osm.title,
+            summary: osm.summary,
+            rawSummary: osm.summary,
+            pageURL: osm.pageURL,
+            source: "osm",
+            articleImageURL: osm.imageURL,
+            articleImageData: nil,
+            coordinates: Coordinate(
+                latitude: osm.latitude,
+                longitude: osm.longitude
+            ),
+            inceptionYear: nil,
+            wikidataType: nil,
+            externalConfidence: nil,
+            onDeviceMatchScore: nil
+        )
+    }
 }
 
 /// Phase-1 candidate search. Returns all plausible landmarks as
@@ -91,6 +111,21 @@ func searchLandmarkCandidates(
 ) async -> [LandmarkResult] {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return [] }
+
+    // Kick off OSM in parallel with the Wikipedia searches — Overpass
+    // can be slower than Wikipedia (up to ~20 s on a cold query), so
+    // starting it first lets it finish in the background while we're
+    // building the Wikipedia candidate list. If there's no user
+    // location, OSM is skipped entirely (Overpass is geographic-only).
+    async let osmCandidatesTask: [OSMResult] = {
+        guard let user = userLocation else { return [] }
+        return await searchOpenStreetMapNearby(
+            query: trimmed,
+            latitude: user.coordinate.latitude,
+            longitude: user.coordinate.longitude,
+            radiusMeters: 10_000
+        )
+    }()
 
     // 1a. Geographic Wikipedia search within 10 km of the user (if
     //     known). 10 km is Wikipedia's API-enforced maximum for
@@ -201,6 +236,23 @@ func searchLandmarkCandidates(
 
     var results = built.map { $0.result }
 
+    // 4b. Augment with OSM nearby results. OSM catches small parks,
+    //     monuments, memorials, and historic markers Wikipedia misses.
+    //     Dedup by normalized title so OSM doesn't duplicate a
+    //     Wikipedia hit for the same feature. Apply the same
+    //     title-match filter so OSM's raw name index can't surface
+    //     something unrelated to the query.
+    let osmCandidates = await osmCandidatesTask
+    if !osmCandidates.isEmpty {
+        let existingTitles = Set(results.map { $0.title.lowercased() })
+        for osm in osmCandidates {
+            let key = osm.title.lowercased()
+            if existingTitles.contains(key) { continue }
+            if !titleMatchesQuery(query: trimmed, title: osm.title) { continue }
+            results.append(LandmarkResult.from(osm: osm))
+        }
+    }
+
     // 5. NPS fallback only if we got zero Wikipedia candidates.
     //    Apply the same title-match filter so NPS's fuzzy search
     //    doesn't return something completely unrelated (e.g.
@@ -244,18 +296,39 @@ func discoverLandmarksNearby(
     radiusMeters: Int = 10_000,
     limit: Int = 40
 ) async -> [LandmarkResult] {
-    let candidates = await wikipediaNearbyCandidates(
+    // Fan out to both sources in parallel — Wikipedia geosearch is
+    // fast, Overpass can be up to ~20 s, and we don't want one to
+    // block the other.
+    async let wikiCandidatesTask = wikipediaNearbyCandidates(
         latitude: userLocation.coordinate.latitude,
         longitude: userLocation.coordinate.longitude,
         radiusMeters: radiusMeters,
         limit: limit
     )
-    guard !candidates.isEmpty else { return [] }
+    async let osmCandidatesTask = openStreetMapNearbyCandidates(
+        latitude: userLocation.coordinate.latitude,
+        longitude: userLocation.coordinate.longitude,
+        radiusMeters: radiusMeters,
+        limit: limit
+    )
 
-    let filtered = candidates.filter { titleContainsPlaceWord($0.title) }
+    let wikiCandidates = await wikiCandidatesTask
+    let osmCandidates = await osmCandidatesTask
 
-    return filtered.map { c in
-        LandmarkResult(
+    // Wikipedia first (better content), then OSM fills in gaps. Dedup
+    // by normalized title so a monument indexed in both sources only
+    // appears once. Also skip OSM results that link to a Wikipedia
+    // article already in the list — same feature, different index.
+    var seenTitles = Set<String>()
+    var seenWikiTitles = Set<String>()
+    var merged: [LandmarkResult] = []
+
+    for c in wikiCandidates where titleContainsPlaceWord(c.title) {
+        let key = c.title.lowercased()
+        if seenTitles.contains(key) { continue }
+        seenTitles.insert(key)
+        seenWikiTitles.insert(key)
+        merged.append(LandmarkResult(
             title: c.title,
             summary: c.summary,
             rawSummary: c.summary,
@@ -268,8 +341,35 @@ func discoverLandmarksNearby(
             wikidataType: nil,
             externalConfidence: nil,
             onDeviceMatchScore: nil
-        )
+        ))
     }
+
+    for osm in osmCandidates {
+        let key = osm.title.lowercased()
+        if seenTitles.contains(key) { continue }
+        // If OSM points at a Wikipedia article we already have, skip.
+        if let wikiTitle = osm.wikipediaTitle,
+           seenWikiTitles.contains(wikiTitle.lowercased()) {
+            continue
+        }
+        seenTitles.insert(key)
+        merged.append(LandmarkResult.from(osm: osm))
+    }
+
+    // Re-sort merged list by distance from user — Wikipedia and OSM
+    // each returned distance-sorted, but the merge breaks that order.
+    let user = userLocation
+    merged.sort { a, b in
+        let da = a.coordinates.map { c in
+            user.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude))
+        } ?? .infinity
+        let db = b.coordinates.map { c in
+            user.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude))
+        } ?? .infinity
+        return da < db
+    }
+
+    return Array(merged.prefix(limit))
 }
 
 /// Full enrichment for a candidate tapped from the Nearby tab. Runs the
