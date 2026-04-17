@@ -9,23 +9,57 @@
 
 import Foundation
 import CoreLocation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
+@Observable
 final class LocationManager: NSObject {
     static let shared = LocationManager()
 
-    private let manager = CLLocationManager()
-    private var permissionContinuation: CheckedContinuation<Bool, Never>?
-    private var locationContinuation: CheckedContinuation<CLLocation?, Never>?
-    private var inflightFetch: Task<CLLocation?, Never>?
+    @ObservationIgnored private let manager = CLLocationManager()
+    @ObservationIgnored private var permissionContinuation: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var locationContinuation: CheckedContinuation<CLLocation?, Never>?
+    @ObservationIgnored private var inflightFetch: Task<CLLocation?, Never>?
 
     private(set) var lastLocation: CLLocation?
+
+    /// Published so SwiftUI views can react to the user granting/denying
+    /// location permission (e.g. show/hide a "Turn on location" banner).
+    /// Updated from `locationManagerDidChangeAuthorization`.
+    private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
+
+    /// True when the user has explicitly denied or restricted location
+    /// access, so we can't prompt anymore — the only path to authorize
+    /// is through the system Settings app.
+    var isDenied: Bool {
+        authorizationStatus == .denied || authorizationStatus == .restricted
+    }
+
+    /// True when we have at least When-In-Use authorization.
+    var isAuthorized: Bool {
+        authorizationStatus == .authorizedWhenInUse
+            || authorizationStatus == .authorizedAlways
+    }
 
     private override init() {
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        authorizationStatus = manager.authorizationStatus
     }
+
+    /// Deeplink into this app's system Settings page so the user can
+    /// flip Location from Never to While Using. iOS also sends us a
+    /// fresh `locationManagerDidChangeAuthorization` when they come
+    /// back, which unsticks any UI that was gated on `isDenied`.
+    #if canImport(UIKit)
+    static func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+    #endif
 
     /// Request "When In Use" permission if we don't already have it.
     /// Returns true if we're authorized, false otherwise.
@@ -101,9 +135,11 @@ final class LocationManager: NSObject {
 
 extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
         Task { @MainActor in
+            self.authorizationStatus = status
             let granted: Bool
-            switch manager.authorizationStatus {
+            switch status {
             case .authorizedWhenInUse, .authorizedAlways:
                 granted = true
             default:

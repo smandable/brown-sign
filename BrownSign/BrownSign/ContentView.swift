@@ -33,6 +33,12 @@ struct ContentView: View {
 
     @State private var isSignTextFocused = false
 
+    /// Per-session dismiss for the "Turn on location" banner. Flips back
+    /// to false every cold launch, so a user who taps the X still sees
+    /// it next time they open the app — but we don't nag them during
+    /// the current session.
+    @State private var locationBannerDismissed = false
+
     // Review prompt: count successful lookups, request a rating
     // after the user has had a few good experiences with the app.
     @AppStorage("successfulLookupCount") private var successfulLookupCount = 0
@@ -109,6 +115,10 @@ struct ContentView: View {
                                 )
                         )
                         .id("textField")
+
+                        if locationManager.isDenied && !locationBannerDismissed {
+                            locationDeniedBanner
+                        }
 
                         if !statusMessage.isEmpty {
                             Text(statusMessage)
@@ -238,6 +248,58 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Location denied banner
+
+    /// Inline callout shown on the Scan tab when the user has denied
+    /// location access. Location is a silent quality booster here
+    /// (nearby-first ranking, 10 km geosearch, distance labels) so
+    /// without a visible nudge, users simply get worse results and
+    /// never know why. Dismissable per-session via the small X.
+    private var locationDeniedBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "location.slash.fill")
+                .font(.callout)
+                .foregroundStyle(.orange)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Turn on location")
+                    .font(.footnote.weight(.semibold))
+                Text("Get nearby-first results and discover landmarks around you in the Nearby tab.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    LocationManager.openAppSettings()
+                } label: {
+                    Text("Open Settings")
+                        .font(.footnote.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+                .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+            Button {
+                locationBannerDismissed = true
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss location tip")
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.orange.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+        )
     }
 
     // MARK: - Empty state

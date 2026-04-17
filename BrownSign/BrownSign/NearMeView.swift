@@ -54,11 +54,20 @@ struct NearMeView: View {
                     case .idle, .loading:
                         loadingView
                     case .locationDenied:
-                        ContentUnavailableView(
-                            "Location permission needed",
-                            systemImage: "location.slash",
-                            description: Text("Brown Sign uses your location to find landmarks within 10 km. Enable it in Settings.")
-                        )
+                        ContentUnavailableView {
+                            Label("Location permission needed", systemImage: "location.slash")
+                        } description: {
+                            Text("Brown Sign uses your location to find landmarks within 10 km of you. Turn on location access in Settings.")
+                        } actions: {
+                            Button {
+                                LocationManager.openAppSettings()
+                            } label: {
+                                Label("Open Settings", systemImage: "gear")
+                                    .fontWeight(.semibold)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                        }
                     case .locationUnavailable:
                         ContentUnavailableView(
                             "Can't find your location",
