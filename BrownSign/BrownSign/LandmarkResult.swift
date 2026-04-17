@@ -315,19 +315,16 @@ func discoverLandmarksNearby(
     let wikiCandidates = await wikiCandidatesTask
     let osmCandidates = await osmCandidatesTask
 
-    // Wikipedia first (better content), then OSM fills in gaps. Dedup
-    // by normalized title so a monument indexed in both sources only
-    // appears once. Also skip OSM results that link to a Wikipedia
-    // article already in the list — same feature, different index.
+    // Wikipedia first (better content), then OSM fills in gaps
+    // (see the OSM loop below for why wiki-tagged OSM items are
+    // skipped entirely). Dedup by normalized title.
     var seenTitles = Set<String>()
-    var seenWikiTitles = Set<String>()
     var merged: [LandmarkResult] = []
 
     for c in wikiCandidates where titleContainsPlaceWord(c.title) {
         let key = c.title.lowercased()
         if seenTitles.contains(key) { continue }
         seenTitles.insert(key)
-        seenWikiTitles.insert(key)
         merged.append(LandmarkResult(
             title: c.title,
             summary: c.summary,
@@ -347,11 +344,27 @@ func discoverLandmarksNearby(
     for osm in osmCandidates {
         let key = osm.title.lowercased()
         if seenTitles.contains(key) { continue }
-        // If OSM points at a Wikipedia article we already have, skip.
-        if let wikiTitle = osm.wikipediaTitle,
-           seenWikiTitles.contains(wikiTitle.lowercased()) {
-            continue
-        }
+
+        // OSM elements that link to a Wikipedia article need special
+        // handling: the OSM node's coordinates often don't match the
+        // article's true location (e.g., a kiosk or sign tagged with a
+        // state park's name can sit miles from the actual park).
+        //
+        //   - If Wikipedia geosearch *did* return that article, the
+        //     Wikipedia coords are within 10 km and authoritative —
+        //     use the Wikipedia entry and drop the OSM duplicate.
+        //   - If Wikipedia geosearch *didn't* return it, the
+        //     article's real coords are outside the search radius (or
+        //     missing entirely). Don't surface OSM's mismatched
+        //     coords, because tapping through would yank the user to
+        //     the correct far-away location and the distance label
+        //     would be wildly wrong.
+        //
+        // OSM elements with no `wikipedia` tag are the genuinely new
+        // value — small parks, markers, monuments Wikipedia doesn't
+        // index. Those we surface as-is with OSM's coords.
+        if osm.wikipediaTitle != nil { continue }
+
         seenTitles.insert(key)
         merged.append(LandmarkResult.from(osm: osm))
     }
