@@ -277,11 +277,14 @@ struct NearMeView: View {
 
         let desired: Int
         if let target = targetRadiusMeters {
-            // Round up to the nearest 5 km tier ≥ target, capped at max.
+            // Round the target up to the nearest 5 km tier, capped at
+            // max. If the tier covering the target is already below or
+            // equal to the current radius, the guard below will no-op;
+            // we don't want to force a pointless extra tier bump just
+            // because the map callback fired.
             let snapped = ((target + Self.radiusStepMeters - 1)
                 / Self.radiusStepMeters) * Self.radiusStepMeters
-            desired = min(max(snapped, currentRadiusMeters + Self.radiusStepMeters),
-                          Self.maxRadiusMeters)
+            desired = min(snapped, Self.maxRadiusMeters)
         } else {
             desired = min(currentRadiusMeters + Self.radiusStepMeters,
                           Self.maxRadiusMeters)
@@ -530,19 +533,20 @@ private struct NearbyMapView: View {
             .onMapCameraChange(frequency: .onEnd) { context in
                 // When the visible map region extends past the current
                 // search radius — either because the user zoomed out
-                // OR because they panned to a nearby area that was
-                // outside the previous search — ask the parent to
-                // widen. `.onEnd` only fires after the user stops
+                // OR because they panned to an area that was outside
+                // the previous search — ask the parent to widen.
+                // `.onEnd` only fires after the user stops
                 // interacting, so we don't spam refetches mid-gesture.
                 guard let user = userLocation else { return }
                 let needed = furthestVisibleDistanceMeters(
                     from: user,
                     region: context.region
                 )
-                // Trigger when the furthest visible point is at least
-                // 20% past the current radius — small pans shouldn't
-                // keep bumping the search.
-                if needed > Double(currentRadiusMeters) * 1.2 {
+                // Trigger any time the visible region extends past the
+                // current radius. The tier-snap + `desired > current`
+                // guard in the parent's `loadMore` prevents redundant
+                // fetches when the target is already covered.
+                if needed > Double(currentRadiusMeters) {
                     onZoomExpansionNeeded(needed)
                 }
             }
