@@ -26,11 +26,22 @@ struct NearMeView: View {
         case empty
     }
 
+    /// Radius tiers for progressive expansion. Nearby starts at 10 km
+    /// (Wikipedia's geosearch hard cap), and widens in 5 km steps as
+    /// the user scrolls past the bottom of the list or zooms the map
+    /// out, up to 25 km. OSM's Overpass allows the full range; the
+    /// Wikipedia geosearch call is clipped at 10 km internally.
+    private static let initialRadiusMeters = 10_000
+    private static let maxRadiusMeters = 25_000
+    private static let radiusStepMeters = 5_000
+
     @State private var state: LoadState = .idle
     @State private var isReloading = false
+    @State private var isLoadingMore = false
     @State private var userLocation: CLLocation?
     @State private var pushedLookup: LandmarkLookup?
     @State private var displayMode: LandmarkDisplayMode = .list
+    @State private var currentRadiusMeters: Int = NearMeView.initialRadiusMeters
 
     private let locationManager = LocationManager.shared
 
@@ -88,7 +99,11 @@ struct NearMeView: View {
                             NearbyMapView(
                                 results: results,
                                 userLocation: userLocation,
-                                onSelect: { open($0) }
+                                currentRadiusMeters: currentRadiusMeters,
+                                onSelect: { open($0) },
+                                onZoomExpansionNeeded: { visibleRadius in
+                                    Task { await loadMore(targetRadiusMeters: Int(visibleRadius)) }
+                                }
                             )
                         }
                     }
@@ -143,7 +158,8 @@ struct NearMeView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "location.fill")
                             .font(.caption)
-                        Text(String(format: "Within 10 km of current location (%.4f, %.4f)",
+                        Text(String(format: "Within %d km of current location (%.4f, %.4f)",
+                                    currentRadiusMeters / 1_000,
                                     loc.coordinate.latitude, loc.coordinate.longitude))
                             .font(.caption)
                     }
@@ -152,19 +168,57 @@ struct NearMeView: View {
                 }
             }
             Section {
-                ForEach(Array(results.enumerated()), id: \.offset) { _, result in
+                ForEach(Array(results.enumerated()), id: \.offset) { index, result in
                     Button {
                         open(result)
                     } label: {
                         NearbyRow(result: result, userLocation: userLocation)
                     }
                     .buttonStyle(.plain)
+                    .onAppear {
+                        // Trigger radius expansion as the user nears
+                        // the bottom of the list. Fire slightly before
+                        // the absolute last row so the newly loaded
+                        // items are already on-screen by the time the
+                        // user gets there.
+                        if index >= results.count - 3 {
+                            Task { await loadMore() }
+                        }
+                    }
                 }
+
+                // Footer row — shows a spinner during expansion or the
+                // final "showing everything within 25 km" note when we
+                // hit the cap.
+                footerRow
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         }
         .refreshable {
             await refresh(force: true)
         }
+    }
+
+    @ViewBuilder
+    private var footerRow: some View {
+        HStack(spacing: 8) {
+            if isLoadingMore {
+                ProgressView()
+                Text("Widening search…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if currentRadiusMeters >= Self.maxRadiusMeters {
+                Image(systemName: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Showing everything within 25 km")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Load
@@ -177,6 +231,12 @@ struct NearMeView: View {
         isReloading = true
         defer { isReloading = false }
 
+        // Manual refresh resets back to the 10 km baseline. The user
+        // can re-expand by scrolling or zooming out; keeping a stale
+        // 25 km radius across refreshes would be confusing and
+        // wasteful on Overpass.
+        currentRadiusMeters = Self.initialRadiusMeters
+
         let granted = await locationManager.ensurePermission()
         guard granted else {
             state = .locationDenied
@@ -187,8 +247,67 @@ struct NearMeView: View {
             return
         }
         userLocation = loc
-        let found = await discoverLandmarksNearby(userLocation: loc)
+        let found = await discoverLandmarksNearby(
+            userLocation: loc,
+            radiusMeters: currentRadiusMeters,
+            limit: limit(for: currentRadiusMeters)
+        )
         state = found.isEmpty ? .empty : .loaded(found)
+    }
+
+    /// Widen the search radius up to the 25 km cap and replace the
+    /// loaded list with the larger result set. Called when the user
+    /// scrolls past the bottom of the list or zooms the map beyond
+    /// the current radius.
+    ///
+    /// When `targetRadiusMeters` is provided (the map zoom path), we
+    /// jump directly to the next tier that covers the visible area —
+    /// a single big pinch-out shouldn't require multiple gestures to
+    /// load all the pins in the visible region. When it's nil (the
+    /// list scroll path), we advance one 5 km tier at a time.
+    ///
+    /// No-ops at the cap or when another expansion is in flight.
+    private func loadMore(targetRadiusMeters: Int? = nil) async {
+        guard !isLoadingMore else { return }
+        guard currentRadiusMeters < Self.maxRadiusMeters else { return }
+        guard let loc = userLocation else { return }
+
+        let desired: Int
+        if let target = targetRadiusMeters {
+            // Round up to the nearest 5 km tier ≥ target, capped at max.
+            let snapped = ((target + Self.radiusStepMeters - 1)
+                / Self.radiusStepMeters) * Self.radiusStepMeters
+            desired = min(max(snapped, currentRadiusMeters + Self.radiusStepMeters),
+                          Self.maxRadiusMeters)
+        } else {
+            desired = min(currentRadiusMeters + Self.radiusStepMeters,
+                          Self.maxRadiusMeters)
+        }
+
+        // Guard against no-op targets (target already within current radius).
+        guard desired > currentRadiusMeters else { return }
+
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        let found = await discoverLandmarksNearby(
+            userLocation: loc,
+            radiusMeters: desired,
+            limit: limit(for: desired)
+        )
+        // Only update state if we actually got a superset — protects
+        // against a transient network blip wiping out the existing
+        // results. If expansion returned nothing, keep the old list.
+        currentRadiusMeters = desired
+        if !found.isEmpty {
+            state = .loaded(found)
+        }
+    }
+
+    /// Per-radius result cap. Scales linearly so dense cities don't
+    /// stop at 40 pins when the user widens to 25 km.
+    private func limit(for radiusMeters: Int) -> Int {
+        max(40, radiusMeters / 250)
     }
 
     // MARK: - Tap-to-open
@@ -358,7 +477,17 @@ private struct NearbyRow: View {
 private struct NearbyMapView: View {
     let results: [LandmarkResult]
     let userLocation: CLLocation?
+    /// Current search radius in meters. Drives the zoom-out expansion
+    /// trigger: as the visible region grows past this value, we ask
+    /// the parent to widen the search.
+    let currentRadiusMeters: Int
     let onSelect: (LandmarkResult) -> Void
+    /// Called when the visible map region extends meaningfully past
+    /// `currentRadiusMeters`. The argument is the approximate radius
+    /// of the visible region in meters, so the parent can jump
+    /// straight to the right tier rather than step through one by
+    /// one. Parent no-ops at the 25 km cap.
+    let onZoomExpansionNeeded: (Double) -> Void
 
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
@@ -395,6 +524,25 @@ private struct NearbyMapView: View {
             .onAppear {
                 cameraPosition = .region(initialRegion())
             }
+            .onMapCameraChange(frequency: .onEnd) { context in
+                // When the visible map region extends past the current
+                // search radius — either because the user zoomed out
+                // OR because they panned to a nearby area that was
+                // outside the previous search — ask the parent to
+                // widen. `.onEnd` only fires after the user stops
+                // interacting, so we don't spam refetches mid-gesture.
+                guard let user = userLocation else { return }
+                let needed = furthestVisibleDistanceMeters(
+                    from: user,
+                    region: context.region
+                )
+                // Trigger when the furthest visible point is at least
+                // 20% past the current radius — small pans shouldn't
+                // keep bumping the search.
+                if needed > Double(currentRadiusMeters) * 1.2 {
+                    onZoomExpansionNeeded(needed)
+                }
+            }
 
             if let id = selectedID, let selected = resultsByID[id] {
                 SelectedNearbyCard(
@@ -409,6 +557,40 @@ private struct NearbyMapView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: selectedID)
         .toolbarBackground(.visible, for: .tabBar)
+    }
+
+    /// Distance (meters) from the user to the furthest visible corner
+    /// of the map region. Used to decide how wide the search radius
+    /// needs to be to cover what the user is currently looking at —
+    /// handles both zoom-out (corners get further away) and pan (user
+    /// stops being the center of the view).
+    private func furthestVisibleDistanceMeters(
+        from user: CLLocation,
+        region: MKCoordinateRegion
+    ) -> Double {
+        let halfLat = region.span.latitudeDelta / 2
+        let halfLon = region.span.longitudeDelta / 2
+        let corners: [CLLocationCoordinate2D] = [
+            CLLocationCoordinate2D(
+                latitude: region.center.latitude + halfLat,
+                longitude: region.center.longitude + halfLon
+            ),
+            CLLocationCoordinate2D(
+                latitude: region.center.latitude + halfLat,
+                longitude: region.center.longitude - halfLon
+            ),
+            CLLocationCoordinate2D(
+                latitude: region.center.latitude - halfLat,
+                longitude: region.center.longitude + halfLon
+            ),
+            CLLocationCoordinate2D(
+                latitude: region.center.latitude - halfLat,
+                longitude: region.center.longitude - halfLon
+            ),
+        ]
+        return corners
+            .map { user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude)) }
+            .max() ?? 0
     }
 
     /// Fit the bounding box of the user-location dot plus every pin with
