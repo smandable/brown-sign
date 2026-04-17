@@ -153,47 +153,50 @@ struct NearMeView: View {
     @ViewBuilder
     private func list(_ results: [LandmarkResult]) -> some View {
         List {
+            // "Within N km of current location" context row. Rendered
+            // as a plain row (not a Section) so there's no extra
+            // section header spacing above it, and with tight
+            // listRowInsets so it hugs the top of the tab.
             if let loc = userLocation {
-                Section {
-                    HStack(spacing: 6) {
-                        Image(systemName: "location.fill")
-                            .font(.caption)
-                        Text(String(format: "Within %d km of current location (%.4f, %.4f)",
-                                    currentRadiusMeters / 1_000,
-                                    loc.coordinate.latitude, loc.coordinate.longitude))
-                            .font(.caption)
-                    }
-                    .foregroundStyle(.secondary)
-                    .listRowBackground(Color.clear)
+                HStack(spacing: 6) {
+                    Image(systemName: "location.fill")
+                        .font(.caption)
+                    Text(String(format: "Within %d km of current location (%.4f, %.4f)",
+                                currentRadiusMeters / 1_000,
+                                loc.coordinate.latitude, loc.coordinate.longitude))
+                        .font(.caption)
                 }
+                .foregroundStyle(.secondary)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             }
-            Section {
-                ForEach(Array(results.enumerated()), id: \.offset) { index, result in
-                    Button {
-                        open(result)
-                    } label: {
-                        NearbyRow(result: result, userLocation: userLocation)
-                    }
-                    .buttonStyle(.plain)
-                    .onAppear {
-                        // Trigger radius expansion as the user nears
-                        // the bottom of the list. Fire slightly before
-                        // the absolute last row so the newly loaded
-                        // items are already on-screen by the time the
-                        // user gets there.
-                        if index >= results.count - 3 {
-                            Task { await loadMore() }
-                        }
-                    }
-                }
 
-                // Footer row — shows a spinner during expansion or the
-                // final "showing everything within 25 km" note when we
-                // hit the cap.
-                footerRow
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+            ForEach(Array(results.enumerated()), id: \.offset) { index, result in
+                Button {
+                    open(result)
+                } label: {
+                    NearbyRow(result: result, userLocation: userLocation)
+                }
+                .buttonStyle(.plain)
+                .onAppear {
+                    // Trigger radius expansion as the user nears
+                    // the bottom of the list. Fire slightly before
+                    // the absolute last row so the newly loaded
+                    // items are already on-screen by the time the
+                    // user gets there.
+                    if index >= results.count - 3 {
+                        Task { await loadMore() }
+                    }
+                }
             }
+
+            // Footer row — shows a spinner during expansion or the
+            // final "showing everything within 25 km" note when we
+            // hit the cap.
+            footerRow
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
         }
         .refreshable {
             await refresh(force: true)
