@@ -411,34 +411,40 @@ private struct NearbyMapView: View {
         .toolbarBackground(.visible, for: .tabBar)
     }
 
-    /// Center on the user when we have a fix; otherwise fit the bounding
-    /// box of the result coordinates. Span is generous enough to show
-    /// the full 10 km radius.
+    /// Fit the bounding box of the user-location dot plus every pin with
+    /// 40% padding. Tighter than a fixed-span center-on-user in dense
+    /// areas (pins cluster); opens up naturally when results are spread
+    /// out to the 10 km search radius.
     private func initialRegion() -> MKCoordinateRegion {
+        var points: [CLLocationCoordinate2D] = []
         if let user = userLocation {
-            return MKCoordinateRegion(
-                center: user.coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
-            )
+            points.append(user.coordinate)
         }
-        let coords = results.compactMap { r -> CLLocationCoordinate2D? in
-            guard let c = r.coordinates else { return nil }
-            return CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude)
+        for r in results {
+            if let c = r.coordinates {
+                points.append(CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude))
+            }
         }
-        guard !coords.isEmpty else {
+        guard !points.isEmpty else {
             return MKCoordinateRegion(
                 center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
                 span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
             )
         }
-        let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
+        if points.count == 1 {
+            return MKCoordinateRegion(
+                center: points[0],
+                span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03)
+            )
+        }
+        let lats = points.map(\.latitude), lons = points.map(\.longitude)
         let center = CLLocationCoordinate2D(
             latitude: (lats.min()! + lats.max()!) / 2,
             longitude: (lons.min()! + lons.max()!) / 2
         )
         let span = MKCoordinateSpan(
-            latitudeDelta: max(0.05, (lats.max()! - lats.min()!) * 1.4),
-            longitudeDelta: max(0.05, (lons.max()! - lons.min()!) * 1.4)
+            latitudeDelta: max(0.02, (lats.max()! - lats.min()!) * 1.4),
+            longitudeDelta: max(0.02, (lons.max()! - lons.min()!) * 1.4)
         )
         return MKCoordinateRegion(center: center, span: span)
     }

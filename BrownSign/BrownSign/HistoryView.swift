@@ -51,7 +51,7 @@ struct HistoryView: View {
                         ContentUnavailableView(
                             "No lookups yet",
                             systemImage: "signpost.right.and.left",
-                            description: Text("Snap a brown sign to get started.")
+                            description: Text("Snap a landmark sign to get started.")
                         )
                     } else {
                         switch displayMode {

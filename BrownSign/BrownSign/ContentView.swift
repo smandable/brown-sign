@@ -71,7 +71,7 @@ struct ContentView: View {
                         Button {
                             showCamera = true
                         } label: {
-                            Label("Snap a brown sign", systemImage: "camera.fill")
+                            Label("Snap a landmark sign", systemImage: "camera.fill")
                                 .fontWeight(.regular)
                                 .frame(maxWidth: .infinity, minHeight: 28)
                         }
@@ -337,7 +337,7 @@ struct ContentView: View {
     private var howItWorksSteps: some View {
         let brown = Color(red: 0.38, green: 0.24, blue: 0.10)
         let steps: [(String, String, String)] = [
-            ("camera.fill", "Snap", "Point your camera at a brown sign"),
+            ("camera.fill", "Snap", "Point your camera at any landmark sign"),
             ("sparkles", "Identify", "We look up the landmark for you"),
             ("bookmark.fill", "Save", "History keeps every find")
         ]
@@ -372,8 +372,13 @@ struct ContentView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { idx, lookup in
+            // Embedding a List inside the outer ScrollView so we get the
+            // native iOS swipe-to-delete gesture — .swipeActions only
+            // works on List. scrollDisabled passes the scroll through to
+            // the parent; the fixed frame height is needed because List
+            // doesn't self-size inside a ScrollView.
+            List {
+                ForEach(rows) { lookup in
                     Button {
                         savedLookup = lookup
                         showDetailSheet = true
@@ -385,16 +390,26 @@ struct ContentView: View {
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         }
-                        .padding(.horizontal, 10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if idx < rows.count - 1 {
-                        Divider()
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            modelContext.delete(lookup)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    .listRowSeparatorTint(Color.secondary.opacity(0.2))
                 }
             }
+            .listStyle(.plain)
+            .scrollDisabled(true)
+            .scrollContentBackground(.hidden)
+            .frame(height: CGFloat(rows.count) * 92)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.secondary.opacity(0.08))
