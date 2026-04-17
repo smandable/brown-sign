@@ -1,8 +1,8 @@
 # Brown Sign
 
-Point your iPhone at one of those brown roadside landmark signs and instantly find out what it is.
+Point your iPhone at one of those brown roadside landmark signs and instantly find out what it is — or skip the scan entirely and discover Wikipedia-eligible landmarks within 10 km of where you are via the Nearby tab.
 
-A fully on-device OCR + Apple Intelligence pipeline with a four-source landmark resolver (Wikipedia, NPS, Wikidata, Google Knowledge Graph), location-aware ranking, and a directions launcher for Google Maps, Waze, and Apple Maps.
+A fully on-device OCR + Apple Intelligence pipeline with a four-source landmark resolver (Wikipedia, NPS, Wikidata, Google Knowledge Graph), location-aware ranking, an interactive map view of every find, and a directions launcher for Google Maps, Waze, and Apple Maps.
 
 [![Download on the App Store](https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg)](https://apps.apple.com/app/brown-sign/id000000000)
 
@@ -51,6 +51,8 @@ Camera / typed text
 
 ## Features
 
+- **Nearby discovery tab** — surfaces all geo-tagged Wikipedia landmarks within 10 km of you, no scan required. Reuses the geosearch pipeline; defers per-entity Wikidata enrichment to tap time so a dense city stays fast. Tap a row (or pin in map mode) to enrich (Wikidata + AI polish + Google KG + match score + image) in the background and push the standard detail view, just like a scan result.
+- **Map view in History and Nearby** — every saved lookup and every nearby discovery drops as a brown signpost pin on a MapKit map. Tap a pin for a callout card with thumbnail, summary, and a "View details" link. List/Map toggle on both tabs; History fits the camera to the bounding box of all your finds, Nearby centers on you.
 - **Live camera** with tap-to-focus, auto flash, and a close button
 - **On-device OCR** via Vision — multi-line output sorted top-to-bottom by bounding box, with structured line-by-line prompting so Apple Intelligence can distinguish "Wadsworth Mansion" from "2 MI"
 - **On-device Apple Intelligence** via FoundationModels:
@@ -123,9 +125,10 @@ No third-party Swift packages. Stock Apple frameworks only.
 
 | File | Purpose |
 | --- | --- |
-| `BrownSignApp.swift` | `@main`, SwiftData container, TabView (Scan / History) |
+| `BrownSignApp.swift` | `@main`, SwiftData container, TabView (Scan / Nearby / History) |
 | `ContentView.swift` | Scan tab — camera button, text field, result card, alternatives list |
-| `HistoryView.swift` | History tab, row, detail view (with source badge links, selectable text) |
+| `NearMeView.swift` | Nearby tab — discovery list + map view of geo-tagged Wikipedia landmarks within 10 km, with tap-to-enrich-and-save flow |
+| `HistoryView.swift` | History tab — list and map view, row, detail view (with source badge links, selectable text) |
 | `CameraView.swift` | UIKit camera VC with tap-to-focus, capture button, close button |
 | `SafariView.swift` | `SFSafariViewController` wrapper |
 | `LandmarkTextField.swift` | UIViewRepresentable wrapping UITextField (keyboard toolbar built in) |
@@ -134,11 +137,11 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `OCRHelper.swift` | Vision OCR — returns `[String]` lines sorted top-to-bottom |
 | `AppleIntelligence.swift` | FoundationModels — normalize (line-aware), polish, match-score |
 | `LocationManager.swift` | CoreLocation async wrapper with in-flight guard + timeout |
-| `WikipediaSearch.swift` | Text search, geosearch, batch extracts/pageimages, word-boundary truncation |
+| `WikipediaSearch.swift` | Text search, geosearch, nearby-discovery candidates, batch extracts/pageimages, word-boundary truncation |
 | `WikidataSearch.swift` | Sitelinks-based entity lookup (P625 / P571 / P31 + label resolution) |
 | `NPSSearch.swift` | `/parks` + `/places` fallback with article images |
 | `GoogleKnowledgeGraphSearch.swift` | External confidence scoring |
-| `LandmarkResult.swift` | Two-phase orchestrator, type filter, title-match filter, place indicators |
+| `LandmarkResult.swift` | Two-phase scan orchestrator + nearby-discovery orchestrator, type filter, title-match filter, place indicators |
 | `LandmarkLookup.swift` | SwiftData `@Model` — history entries with all enrichment fields |
 | `APIKeys.swift` | **Gitignored.** Local API keys only. |
 
