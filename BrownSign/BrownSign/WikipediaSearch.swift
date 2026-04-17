@@ -247,6 +247,53 @@ func searchWikipediaCandidates(query: String) async -> [WikiResult] {
     return results
 }
 
+// MARK: - REST summary image fallback
+
+/// Returns the best article image URL via the Wikipedia REST summary
+/// endpoint (`/api/rest_v1/page/summary/{title}`). Used as a fallback
+/// when the legacy `prop=pageimages` call returned no thumbnail — REST
+/// has a smarter image-selection heuristic that catches pages where
+/// `pageimages` returns nothing: fair-use lead images, articles whose
+/// only images live inline in the body, or pages `pageimages` simply
+/// hasn't indexed yet. Prefers `originalimage` (high-res, resized
+/// client-side) and falls back to the 320-wide `thumbnail`.
+/// Returns nil on any failure; callers treat the image as optional.
+func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
+    // REST takes the title in the URL path with underscores for spaces.
+    // URL path encoding (not query encoding) — parens, commas, colons
+    // are legal, but "/" and "?" in titles must be percent-encoded.
+    let pathTitle = title.replacingOccurrences(of: " ", with: "_")
+    guard let encoded = pathTitle.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+          ),
+          let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
+        return nil
+    }
+    do {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse,
+           !(200...299).contains(http.statusCode) {
+            return nil
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let original = root["originalimage"] as? [String: Any],
+           let src = original["source"] as? String,
+           let u = URL(string: src) {
+            return u
+        }
+        if let thumb = root["thumbnail"] as? [String: Any],
+           let src = thumb["source"] as? String,
+           let u = URL(string: src) {
+            return u
+        }
+        return nil
+    } catch {
+        return nil
+    }
+}
+
 // MARK: - Step 0: strip noise words before searching
 
 /// Light cleanup for the Wikipedia search query. Only strips patterns

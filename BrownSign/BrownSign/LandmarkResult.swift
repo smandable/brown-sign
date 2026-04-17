@@ -288,16 +288,13 @@ func enrichDiscoveredLandmark(
         candidateTitle: candidate.title,
         candidateSummary: candidate.rawSummary
     )
-    async let imageData = downloadArticleImage(
-        from: candidate.articleImageURL,
-        title: candidate.title
-    )
+    async let imageTask = downloadArticleImageWithFallback(candidate: candidate)
 
-    let wd     = await wikidata
-    let kg     = await kgScore
-    let polish = await polished
-    let match  = await matchScore
-    let image  = await imageData
+    let wd      = await wikidata
+    let kg      = await kgScore
+    let polish  = await polished
+    let match   = await matchScore
+    let imagePair = await imageTask
 
     // Prefer Wikidata coords if available, else fall back to the
     // geosearch coords we already had.
@@ -309,8 +306,8 @@ func enrichDiscoveredLandmark(
         rawSummary: candidate.rawSummary,
         pageURL: candidate.pageURL,
         source: candidate.source,
-        articleImageURL: candidate.articleImageURL,
-        articleImageData: image,
+        articleImageURL: imagePair.url,
+        articleImageData: imagePair.data,
         coordinates: coord,
         inceptionYear: wd?.inceptionYear,
         wikidataType: wd?.typeLabel,
@@ -336,15 +333,12 @@ func enrichLandmark(
         candidateTitle: candidate.title,
         candidateSummary: candidate.rawSummary
     )
-    async let imageData  = downloadArticleImage(
-        from: candidate.articleImageURL,
-        title: candidate.title
-    )
+    async let imageTask  = downloadArticleImageWithFallback(candidate: candidate)
 
-    let kg     = await kgScore
-    let polish = await polished
-    let match  = await matchScore
-    let image  = await imageData
+    let kg      = await kgScore
+    let polish  = await polished
+    let match   = await matchScore
+    let imagePair = await imageTask
 
     return LandmarkResult(
         title: candidate.title,
@@ -352,8 +346,8 @@ func enrichLandmark(
         rawSummary: candidate.rawSummary,
         pageURL: candidate.pageURL,
         source: candidate.source,
-        articleImageURL: candidate.articleImageURL,
-        articleImageData: image,
+        articleImageURL: imagePair.url,
+        articleImageData: imagePair.data,
         coordinates: candidate.coordinates,
         inceptionYear: candidate.inceptionYear,
         wikidataType: candidate.wikidataType,
@@ -378,6 +372,25 @@ private func downloadArticleImage(from url: URL?, title: String) async -> Data? 
     } catch {
         return nil
     }
+}
+
+/// Resolves a candidate's article image URL, falling back to the
+/// Wikipedia REST summary endpoint when the legacy `prop=pageimages`
+/// candidate URL is nil. See `wikipediaRESTSummaryImageURL` for why
+/// the fallback exists. Only attempts REST for Wikipedia-hosted pages;
+/// NPS and other sources return their own image URL directly.
+/// Returns both the resolved URL (so callers can persist it alongside
+/// the downloaded bytes) and the resized JPEG data.
+private func downloadArticleImageWithFallback(
+    candidate: LandmarkResult
+) async -> (url: URL?, data: Data?) {
+    var resolved = candidate.articleImageURL
+    if resolved == nil,
+       candidate.pageURL.host?.contains("wikipedia.org") == true {
+        resolved = await wikipediaRESTSummaryImageURL(for: candidate.title)
+    }
+    let data = await downloadArticleImage(from: resolved, title: candidate.title)
+    return (resolved, data)
 }
 
 /// If the image is larger than `maxDimension` on its longest edge,
