@@ -69,3 +69,6 @@ BrownSign/BrownSign/APIKeys.swift
 
 # macOS
 .DS_Store
+
+# Office app lock/temp files (e.g. Word ~$foo.docx)
+~$*
