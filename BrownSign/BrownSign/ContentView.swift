@@ -23,7 +23,11 @@ struct ContentView: View {
     @State private var savedLookup: LandmarkLookup?
     @State private var candidates: [LandmarkResult] = []
     @State private var showSafari = false
-    @State private var showDetailSheet = false
+    /// Drives the detail sheet. Using an optional LandmarkLookup with
+    /// `.sheet(item:)` instead of a separate `isPresented` + optional
+    /// pair avoids the race where the sheet was sometimes evaluated
+    /// before `savedLookup` had propagated, producing a blank sheet.
+    @State private var presentedLookup: LandmarkLookup?
     @State private var showMapsDialog = false
     @State private var statusMessage = ""
 
@@ -235,16 +239,14 @@ struct ContentView: View {
                     )
                 }
             }
-            .sheet(isPresented: $showDetailSheet) {
-                if let lookup = savedLookup {
-                    NavigationStack {
-                        LandmarkDetailView(lookup: lookup)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Done") { showDetailSheet = false }
-                                }
+            .sheet(item: $presentedLookup) { lookup in
+                NavigationStack {
+                    LandmarkDetailView(lookup: lookup)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") { presentedLookup = nil }
                             }
-                    }
+                        }
                 }
             }
         }
@@ -380,8 +382,12 @@ struct ContentView: View {
             List {
                 ForEach(rows) { lookup in
                     Button {
-                        savedLookup = lookup
-                        showDetailSheet = true
+                        // Drive the sheet via a single optional binding
+                        // rather than (savedLookup=…, flag=true). The
+                        // flag-plus-optional pair race produced blank
+                        // sheets when the sheet body evaluated before
+                        // the second state update had propagated.
+                        presentedLookup = lookup
                     } label: {
                         HStack(spacing: 8) {
                             HistoryRow(lookup: lookup)
@@ -471,7 +477,7 @@ struct ContentView: View {
 
             VStack(spacing: 8) {
                 Button {
-                    showDetailSheet = true
+                    presentedLookup = savedLookup
                 } label: {
                     Label("View full details", systemImage: "text.alignleft")
                         .fontWeight(.regular)
