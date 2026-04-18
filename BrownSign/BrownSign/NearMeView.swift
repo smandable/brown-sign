@@ -2,10 +2,17 @@
 //  NearMeView.swift
 //  BrownSign
 //
-//  Nearby discovery tab — surface geo-tagged Wikipedia landmarks within
-//  10 km of the user without requiring a scan. Tap a row to enrich and
-//  save it to history, then navigate to the full detail view (same
-//  destination used by Scan and History).
+//  Nearby discovery tab — surface geo-tagged Wikipedia landmarks. The
+//  list shows landmarks within 10 km of the user's GPS, sorted by
+//  distance. The map starts the same way but supports pan-to-search:
+//  when the user pans far enough, we fetch another 10 km of
+//  geosearch centered on the new map location and merge the pins in.
+//  Pins accumulate across the areas the user explores, so you can
+//  build up a dotted trail of landmarks by panning around.
+//
+//  Wikipedia's geosearch API caps radius at 10 km server-side (anything
+//  larger errors out), so rather than pretending to expand radius we
+//  move the search center with the map.
 //
 
 import SwiftUI
@@ -26,29 +33,39 @@ struct NearMeView: View {
         case empty
     }
 
-    /// Radius tiers for progressive expansion. Nearby starts at 10 km
-    /// (Wikipedia's geosearch hard cap), and widens in 5 km steps as
-    /// the user scrolls past the bottom of the list or zooms the map
-    /// out, up to 25 km. OSM's Overpass allows the full range; the
-    /// Wikipedia geosearch call is clipped at 10 km internally.
-    private static let initialRadiusMeters = 10_000
-    private static let maxRadiusMeters = 25_000
-    private static let radiusStepMeters = 5_000
+    /// Fixed 10 km radius — Wikipedia's geosearch API max.
+    private static let searchRadiusMeters = 10_000
+    /// How many items to hydrate per fetch. `wikipediaNearbyCandidates`
+    /// gets up to 500 page IDs from the geosearch API; we only pay for
+    /// extract/image hydration on this many.
+    private static let fetchLimit = 100
+    /// Minimum distance the map center must move before we fire a new
+    /// pan-centered geosearch. Below this, the existing 10 km fetch
+    /// already covers where the user is looking.
+    private static let panRefetchThresholdMeters: CLLocationDistance = 5_000
 
     @State private var state: LoadState = .idle
     @State private var isReloading = false
-    @State private var isLoadingMore = false
+    @State private var isFetchingMore = false
     @State private var userLocation: CLLocation?
+    /// Center of the most recent geosearch. Drives the pan-threshold
+    /// check: if the new map center is more than
+    /// `panRefetchThresholdMeters` from this, fire another fetch.
+    @State private var lastFetchCenter: CLLocationCoordinate2D?
     @State private var pushedLookup: LandmarkLookup?
     @State private var displayMode: LandmarkDisplayMode = .list
-    @State private var currentRadiusMeters: Int = NearMeView.initialRadiusMeters
 
     private let locationManager = LocationManager.shared
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if hasResults {
+                // Show the list/map picker whenever we've got a
+                // location, not just when results are loaded. In the
+                // .empty state we explicitly tell the user to switch
+                // to the map and pan — they need the switcher visible
+                // to actually do that.
+                if displayModePickerVisible {
                     Picker("Display mode", selection: $displayMode) {
                         ForEach(LandmarkDisplayMode.allCases) { mode in
                             Label(mode.label, systemImage: mode.icon).tag(mode)
@@ -86,11 +103,28 @@ struct NearMeView: View {
                             description: Text("Try again once you have GPS signal.")
                         )
                     case .empty:
-                        ContentUnavailableView(
-                            "No landmarks nearby",
-                            systemImage: "signpost.right.and.left",
-                            description: Text("No geo-tagged landmarks found within 10 km of your location. Try scrolling to widen the search.")
-                        )
+                        // In list mode, explain the emptiness and
+                        // point the user at the map + pan affordance.
+                        // In map mode, just show an empty map —
+                        // panning will fetch more and things will
+                        // populate as the user explores.
+                        switch displayMode {
+                        case .list:
+                            ContentUnavailableView(
+                                "No landmarks nearby",
+                                systemImage: "signpost.right.and.left",
+                                description: Text("No geo-tagged Wikipedia landmarks within 10 km of your location. Switch to the map and pan to a different area to keep exploring.")
+                            )
+                        case .map:
+                            NearbyMapView(
+                                results: [],
+                                userLocation: userLocation,
+                                onSelect: { open($0) },
+                                onMapCenterChanged: { center in
+                                    Task { await fetchAroundMapCenter(center) }
+                                }
+                            )
+                        }
                     case .loaded(let results):
                         switch displayMode {
                         case .list:
@@ -99,10 +133,9 @@ struct NearMeView: View {
                             NearbyMapView(
                                 results: results,
                                 userLocation: userLocation,
-                                currentRadiusMeters: currentRadiusMeters,
                                 onSelect: { open($0) },
-                                onZoomExpansionNeeded: { visibleRadius in
-                                    Task { await loadMore(targetRadiusMeters: Int(visibleRadius)) }
+                                onMapCenterChanged: { center in
+                                    Task { await fetchAroundMapCenter(center) }
                                 }
                             )
                         }
@@ -140,6 +173,17 @@ struct NearMeView: View {
         return false
     }
 
+    /// Show the list/map picker any time the user has a location —
+    /// even in the .empty state, because the empty-state copy tells
+    /// the user to switch to map and pan, and we need the picker
+    /// visible for them to do that.
+    private var displayModePickerVisible: Bool {
+        switch state {
+        case .loaded, .empty: return true
+        default: return false
+        }
+    }
+
     private var loadingView: some View {
         VStack(spacing: 14) {
             ProgressView()
@@ -153,16 +197,14 @@ struct NearMeView: View {
     @ViewBuilder
     private func list(_ results: [LandmarkResult]) -> some View {
         List {
-            // "Within N km of current location" context row. Rendered
-            // as a plain row (not a Section) so there's no extra
-            // section header spacing above it, and with tight
-            // listRowInsets so it hugs the top of the tab.
+            // Lat/long context row — a compact, tight-insets header
+            // rather than a proper Section so there's no extra
+            // section-header spacing above it.
             if let loc = userLocation {
                 HStack(spacing: 6) {
                     Image(systemName: "location.fill")
                         .font(.caption)
-                    Text(String(format: "Within %d km of current location (%.4f, %.4f)",
-                                currentRadiusMeters / 1_000,
+                    Text(String(format: "Within 10 km of current location (%.4f, %.4f)",
                                 loc.coordinate.latitude, loc.coordinate.longitude))
                         .font(.caption)
                 }
@@ -172,56 +214,18 @@ struct NearMeView: View {
                 .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
             }
 
-            ForEach(Array(results.enumerated()), id: \.offset) { index, result in
+            ForEach(Array(results.enumerated()), id: \.offset) { _, result in
                 Button {
                     open(result)
                 } label: {
                     NearbyRow(result: result, userLocation: userLocation)
                 }
                 .buttonStyle(.plain)
-                .onAppear {
-                    // Trigger radius expansion as the user nears
-                    // the bottom of the list. Fire slightly before
-                    // the absolute last row so the newly loaded
-                    // items are already on-screen by the time the
-                    // user gets there.
-                    if index >= results.count - 3 {
-                        Task { await loadMore() }
-                    }
-                }
             }
-
-            // Footer row — shows a spinner during expansion or the
-            // final "showing everything within 25 km" note when we
-            // hit the cap.
-            footerRow
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
         }
         .refreshable {
             await refresh(force: true)
         }
-    }
-
-    @ViewBuilder
-    private var footerRow: some View {
-        HStack(spacing: 8) {
-            if isLoadingMore {
-                ProgressView()
-                Text("Widening search…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else if currentRadiusMeters >= Self.maxRadiusMeters {
-                Image(systemName: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("Showing everything within 25 km")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 8)
     }
 
     // MARK: - Load
@@ -234,11 +238,11 @@ struct NearMeView: View {
         isReloading = true
         defer { isReloading = false }
 
-        // Manual refresh resets back to the 10 km baseline. The user
-        // can re-expand by scrolling or zooming out; keeping a stale
-        // 25 km radius across refreshes would be confusing and
-        // wasteful on Overpass.
-        currentRadiusMeters = Self.initialRadiusMeters
+        // Manual refresh discards any panned-around pins and recenters
+        // on the user. Otherwise the "Nearby" list could drift to a
+        // totally different part of the world without the user
+        // realizing.
+        lastFetchCenter = nil
 
         let granted = await locationManager.ensurePermission()
         guard granted else {
@@ -250,109 +254,72 @@ struct NearMeView: View {
             return
         }
         userLocation = loc
-
-        // Two-phase fan-out: Wikipedia is usually back in < 2 s; OSM
-        // via Overpass can take 5–20 s under load. Paint Wikipedia as
-        // soon as it's ready so the list doesn't sit empty, then fold
-        // in OSM when it arrives. Both run in parallel, not serially.
-        let radius = currentRadiusMeters
-        let cap = limit(for: radius)
-        async let wikiTask = discoverWikipediaLandmarksNearby(
-            userLocation: loc, radiusMeters: radius, limit: cap
+        let found = await discoverLandmarksAt(
+            center: loc.coordinate,
+            radiusMeters: Self.searchRadiusMeters,
+            limit: Self.fetchLimit
         )
-        async let osmTask = discoverOSMLandmarksNearby(
-            userLocation: loc, radiusMeters: radius, limit: cap
-        )
-
-        let wiki = await wikiTask
-        // Paint immediately with what Wikipedia returned — keeps the
-        // first-paint latency flat even if Overpass is slow.
-        state = wiki.isEmpty ? .loading : .loaded(wiki)
-
-        let osm = await osmTask
-        let merged = mergeNearbyResults(
-            wikipedia: wiki, osm: osm, userLocation: loc, limit: cap
-        )
-        // Guard against a newer request having landed while we were
-        // waiting: only overwrite if the radius we loaded for is
-        // still the current one.
-        guard radius == currentRadiusMeters else { return }
-        state = merged.isEmpty ? .empty : .loaded(merged)
+        lastFetchCenter = loc.coordinate
+        state = found.isEmpty ? .empty : .loaded(found)
     }
 
-    /// Widen the search radius up to the 25 km cap and replace the
-    /// loaded list with the larger result set. Called when the user
-    /// scrolls past the bottom of the list or zooms the map beyond
-    /// the current radius.
+    /// Pan-triggered fetch. Fires when the user has panned the map
+    /// far enough from the last fetch center that we're looking at
+    /// landmarks the existing 10 km of geosearch doesn't cover.
+    /// Fetches 10 km around the new center and merges the results
+    /// into the existing list (dedup by canonical page URL) so the
+    /// map accumulates pins as the user explores.
     ///
-    /// When `targetRadiusMeters` is provided (the map zoom path), we
-    /// jump directly to the next tier that covers the visible area —
-    /// a single big pinch-out shouldn't require multiple gestures to
-    /// load all the pins in the visible region. When it's nil (the
-    /// list scroll path), we advance one 5 km tier at a time.
-    ///
-    /// No-ops at the cap or when another expansion is in flight.
-    private func loadMore(targetRadiusMeters: Int? = nil) async {
-        guard !isLoadingMore else { return }
-        guard currentRadiusMeters < Self.maxRadiusMeters else { return }
-        guard let loc = userLocation else { return }
-
-        let desired: Int
-        if let target = targetRadiusMeters {
-            // Round the target up to the nearest 5 km tier, capped at
-            // max. If the tier covering the target is already below or
-            // equal to the current radius, the guard below will no-op;
-            // we don't want to force a pointless extra tier bump just
-            // because the map callback fired.
-            let snapped = ((target + Self.radiusStepMeters - 1)
-                / Self.radiusStepMeters) * Self.radiusStepMeters
-            desired = min(snapped, Self.maxRadiusMeters)
-        } else {
-            desired = min(currentRadiusMeters + Self.radiusStepMeters,
-                          Self.maxRadiusMeters)
+    /// The list re-sorts by distance from the user's GPS, so panned
+    /// results land below whatever's in the user's immediate
+    /// neighborhood — consistent with the "Within 10 km of your
+    /// location" header framing.
+    private func fetchAroundMapCenter(_ center: CLLocationCoordinate2D) async {
+        guard !isFetchingMore else { return }
+        // Pan threshold: if the new center is still within the
+        // current 10 km fetch's area, we already have its landmarks.
+        if let last = lastFetchCenter {
+            let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+            guard dist > Self.panRefetchThresholdMeters else { return }
         }
 
-        // Guard against no-op targets (target already within current radius).
-        guard desired > currentRadiusMeters else { return }
+        isFetchingMore = true
+        defer { isFetchingMore = false }
 
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-
-        // Same two-phase pattern as `refresh`: paint Wikipedia fast,
-        // then augment with OSM. Expansion already takes the user out
-        // of the "initial load" mental model, but a 10 s wait on
-        // Overpass still feels like dead air — showing the Wikipedia
-        // diff at the new radius within a second keeps it responsive.
-        let cap = limit(for: desired)
-        async let wikiTask = discoverWikipediaLandmarksNearby(
-            userLocation: loc, radiusMeters: desired, limit: cap
+        let fresh = await discoverLandmarksAt(
+            center: center,
+            radiusMeters: Self.searchRadiusMeters,
+            limit: Self.fetchLimit
         )
-        async let osmTask = discoverOSMLandmarksNearby(
-            userLocation: loc, radiusMeters: desired, limit: cap
-        )
+        lastFetchCenter = center
+        guard !fresh.isEmpty else { return }
 
-        let wiki = await wikiTask
-        currentRadiusMeters = desired
-        if !wiki.isEmpty {
-            state = .loaded(wiki)
+        // Merge into existing results. Dedup by canonical page URL —
+        // the same landmark surfaced by two overlapping geosearches
+        // would otherwise appear as two pins.
+        guard case .loaded(var existing) = state else {
+            state = .loaded(fresh)
+            return
         }
-
-        let osm = await osmTask
-        // Only merge if we're still at this radius — a subsequent
-        // expansion may have superseded us.
-        guard desired == currentRadiusMeters else { return }
-        let merged = mergeNearbyResults(
-            wikipedia: wiki, osm: osm, userLocation: loc, limit: cap
-        )
-        if !merged.isEmpty {
-            state = .loaded(merged)
+        let seen = Set(existing.map(\.pageURL))
+        for result in fresh where !seen.contains(result.pageURL) {
+            existing.append(result)
         }
-    }
-
-    /// Per-radius result cap. Scales linearly so dense cities don't
-    /// stop at 40 pins when the user widens to 25 km.
-    private func limit(for radiusMeters: Int) -> Int {
-        max(40, radiusMeters / 250)
+        // Re-sort by distance from USER (not from the map center) so
+        // the list remains anchored to where the user actually is.
+        if let user = userLocation {
+            existing.sort { a, b in
+                let da = a.coordinates.map {
+                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                } ?? .infinity
+                let db = b.coordinates.map {
+                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                } ?? .infinity
+                return da < db
+            }
+        }
+        state = .loaded(existing)
     }
 
     // MARK: - Tap-to-open
@@ -522,17 +489,12 @@ private struct NearbyRow: View {
 private struct NearbyMapView: View {
     let results: [LandmarkResult]
     let userLocation: CLLocation?
-    /// Current search radius in meters. Drives the zoom-out expansion
-    /// trigger: as the visible region grows past this value, we ask
-    /// the parent to widen the search.
-    let currentRadiusMeters: Int
     let onSelect: (LandmarkResult) -> Void
-    /// Called when the visible map region extends meaningfully past
-    /// `currentRadiusMeters`. The argument is the approximate radius
-    /// of the visible region in meters, so the parent can jump
-    /// straight to the right tier rather than step through one by
-    /// one. Parent no-ops at the 25 km cap.
-    let onZoomExpansionNeeded: (Double) -> Void
+    /// Called at the end of every camera gesture with the new map
+    /// center. Parent decides (via `panRefetchThresholdMeters`)
+    /// whether the pan was significant enough to warrant a new
+    /// geosearch at this location.
+    let onMapCenterChanged: (CLLocationCoordinate2D) -> Void
 
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
@@ -570,24 +532,13 @@ private struct NearbyMapView: View {
                 cameraPosition = .region(initialRegion())
             }
             .onMapCameraChange(frequency: .onEnd) { context in
-                // When the visible map region extends past the current
-                // search radius — either because the user zoomed out
-                // OR because they panned to an area that was outside
-                // the previous search — ask the parent to widen.
+                // Report the new map center to the parent at the end
+                // of every gesture. The parent compares against its
+                // last-fetched center and decides whether the pan was
+                // significant enough to warrant another geosearch.
                 // `.onEnd` only fires after the user stops
                 // interacting, so we don't spam refetches mid-gesture.
-                guard let user = userLocation else { return }
-                let needed = furthestVisibleDistanceMeters(
-                    from: user,
-                    region: context.region
-                )
-                // Trigger any time the visible region extends past the
-                // current radius. The tier-snap + `desired > current`
-                // guard in the parent's `loadMore` prevents redundant
-                // fetches when the target is already covered.
-                if needed > Double(currentRadiusMeters) {
-                    onZoomExpansionNeeded(needed)
-                }
+                onMapCenterChanged(context.region.center)
             }
 
             if let id = selectedID, let selected = resultsByID[id] {
@@ -603,40 +554,6 @@ private struct NearbyMapView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: selectedID)
         .toolbarBackground(.visible, for: .tabBar)
-    }
-
-    /// Distance (meters) from the user to the furthest visible corner
-    /// of the map region. Used to decide how wide the search radius
-    /// needs to be to cover what the user is currently looking at —
-    /// handles both zoom-out (corners get further away) and pan (user
-    /// stops being the center of the view).
-    private func furthestVisibleDistanceMeters(
-        from user: CLLocation,
-        region: MKCoordinateRegion
-    ) -> Double {
-        let halfLat = region.span.latitudeDelta / 2
-        let halfLon = region.span.longitudeDelta / 2
-        let corners: [CLLocationCoordinate2D] = [
-            CLLocationCoordinate2D(
-                latitude: region.center.latitude + halfLat,
-                longitude: region.center.longitude + halfLon
-            ),
-            CLLocationCoordinate2D(
-                latitude: region.center.latitude + halfLat,
-                longitude: region.center.longitude - halfLon
-            ),
-            CLLocationCoordinate2D(
-                latitude: region.center.latitude - halfLat,
-                longitude: region.center.longitude + halfLon
-            ),
-            CLLocationCoordinate2D(
-                latitude: region.center.latitude - halfLat,
-                longitude: region.center.longitude - halfLon
-            ),
-        ]
-        return corners
-            .map { user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude)) }
-            .max() ?? 0
     }
 
     /// Fit the bounding box of the user-location dot plus every pin with

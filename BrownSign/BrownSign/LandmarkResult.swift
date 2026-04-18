@@ -25,7 +25,7 @@ struct LandmarkResult {
     /// Original Wikipedia/NPS extract — the full description.
     let rawSummary: String
     let pageURL: URL
-    /// "wikipedia", "nps", or "osm"
+    /// "wikipedia" or "nps"
     let source: String
     /// Remote article image URL (Wikipedia pageimages thumbnail).
     let articleImageURL: URL?
@@ -75,26 +75,6 @@ struct LandmarkResult {
             onDeviceMatchScore: nil
         )
     }
-
-    static func from(osm: OSMResult) -> LandmarkResult {
-        LandmarkResult(
-            title: osm.title,
-            summary: osm.summary,
-            rawSummary: osm.summary,
-            pageURL: osm.pageURL,
-            source: "osm",
-            articleImageURL: osm.imageURL,
-            articleImageData: nil,
-            coordinates: Coordinate(
-                latitude: osm.latitude,
-                longitude: osm.longitude
-            ),
-            inceptionYear: nil,
-            wikidataType: nil,
-            externalConfidence: nil,
-            onDeviceMatchScore: nil
-        )
-    }
 }
 
 /// Phase-1 candidate search. Returns all plausible landmarks as
@@ -111,21 +91,6 @@ func searchLandmarkCandidates(
 ) async -> [LandmarkResult] {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return [] }
-
-    // Kick off OSM in parallel with the Wikipedia searches — Overpass
-    // can be slower than Wikipedia (up to ~20 s on a cold query), so
-    // starting it first lets it finish in the background while we're
-    // building the Wikipedia candidate list. If there's no user
-    // location, OSM is skipped entirely (Overpass is geographic-only).
-    async let osmCandidatesTask: [OSMResult] = {
-        guard let user = userLocation else { return [] }
-        return await searchOpenStreetMapNearby(
-            query: trimmed,
-            latitude: user.coordinate.latitude,
-            longitude: user.coordinate.longitude,
-            radiusMeters: 10_000
-        )
-    }()
 
     // 1a. Geographic Wikipedia search within 10 km of the user (if
     //     known). 10 km is Wikipedia's API-enforced maximum for
@@ -236,23 +201,6 @@ func searchLandmarkCandidates(
 
     var results = built.map { $0.result }
 
-    // 4b. Augment with OSM nearby results. OSM catches small parks,
-    //     monuments, memorials, and historic markers Wikipedia misses.
-    //     Dedup by normalized title so OSM doesn't duplicate a
-    //     Wikipedia hit for the same feature. Apply the same
-    //     title-match filter so OSM's raw name index can't surface
-    //     something unrelated to the query.
-    let osmCandidates = await osmCandidatesTask
-    if !osmCandidates.isEmpty {
-        let existingTitles = Set(results.map { $0.title.lowercased() })
-        for osm in osmCandidates {
-            let key = osm.title.lowercased()
-            if existingTitles.contains(key) { continue }
-            if !titleMatchesQuery(query: trimmed, title: osm.title) { continue }
-            results.append(LandmarkResult.from(osm: osm))
-        }
-    }
-
     // 5. NPS fallback only if we got zero Wikipedia candidates.
     //    Apply the same title-match filter so NPS's fuzzy search
     //    doesn't return something completely unrelated (e.g.
@@ -280,25 +228,26 @@ func searchLandmarkCandidates(
     return results
 }
 
-/// Wikipedia-only discovery for the Nearby tab. Fast path —
-/// typically returns in well under 2 s. Callers paint this first,
-/// then augment with `discoverOSMLandmarksNearby` in a second phase
-/// so a slow Overpass query doesn't block the initial list paint.
+/// Returns up to `limit` geo-tagged Wikipedia landmarks within
+/// `radiusMeters` of `center`. Distance-sorted from the center.
+/// No per-entity Wikidata enrichment up front (that happens at tap
+/// time via `enrichDiscoveredLandmark`); a dense city can return
+/// 100+ items and fanning out Wikidata for each would be wasteful
+/// when the user only taps a few.
 ///
-/// Rationale for `titleContainsPlaceWord` rather than Wikidata
-/// enrichment: a dense city can have 50+ geo-tagged Wikipedia
-/// articles, and fanning out one Wikidata fetch per candidate up
-/// front would be slow and wasteful when the user only taps a few.
-/// Per-entity Wikidata enrichment runs at tap time via
-/// `enrichDiscoveredLandmark`.
-func discoverWikipediaLandmarksNearby(
-    userLocation: CLLocation,
+/// Two call sites in the Nearby tab:
+///   - Initial load: `center = userLocation.coordinate`
+///   - Pan-to-search: `center = map center` as the user pans. Results
+///     accumulate at the call site (dedup by page URL) so the map
+///     builds up pins across the areas the user explores.
+func discoverLandmarksAt(
+    center: CLLocationCoordinate2D,
     radiusMeters: Int = 10_000,
-    limit: Int = 40
+    limit: Int = 100
 ) async -> [LandmarkResult] {
     let candidates = await wikipediaNearbyCandidates(
-        latitude: userLocation.coordinate.latitude,
-        longitude: userLocation.coordinate.longitude,
+        latitude: center.latitude,
+        longitude: center.longitude,
         radiusMeters: radiusMeters,
         limit: limit
     )
@@ -325,118 +274,9 @@ func discoverWikipediaLandmarksNearby(
         ))
     }
 
-    return Array(results
-        .sorted { distanceToUser(userLocation, $0.coordinates) < distanceToUser(userLocation, $1.coordinates) }
-        .prefix(limit))
-}
-
-/// OpenStreetMap-only discovery for the Nearby tab. Slow path —
-/// Overpass can be 5–20 s under load. Call in parallel with
-/// `discoverWikipediaLandmarksNearby` so it doesn't block the initial
-/// paint, then merge via `mergeNearbyResults` when it returns.
-///
-/// Skips OSM elements with a `wikipedia` tag. The OSM node for a
-/// wiki-tagged feature often sits at a kiosk, sign, or marker near
-/// the user while the real article's coordinates are elsewhere (a
-/// state-park visitor marker vs. the park itself 50 km away).
-/// Letting those through means the distance label is wildly wrong
-/// and tapping through would yank the user to a completely different
-/// coordinate than the list showed. Wiki-tagged features are supposed
-/// to come through the Wikipedia path, and if Wikipedia's own
-/// geosearch didn't return them they're out of range.
-///
-/// OSM elements with no `wikipedia` tag are the genuinely new value —
-/// small parks, monuments, memorials, viewpoints Wikipedia doesn't
-/// index. Those surface as-is with OSM's coords.
-func discoverOSMLandmarksNearby(
-    userLocation: CLLocation,
-    radiusMeters: Int = 10_000,
-    limit: Int = 40
-) async -> [LandmarkResult] {
-    let candidates = await openStreetMapNearbyCandidates(
-        latitude: userLocation.coordinate.latitude,
-        longitude: userLocation.coordinate.longitude,
-        radiusMeters: radiusMeters,
-        limit: limit
-    )
-
-    var results: [LandmarkResult] = []
-    for osm in candidates where osm.wikipediaTitle == nil {
-        results.append(LandmarkResult.from(osm: osm))
-    }
-
-    return Array(results
-        .sorted { distanceToUser(userLocation, $0.coordinates) < distanceToUser(userLocation, $1.coordinates) }
-        .prefix(limit))
-}
-
-/// Merges a Wikipedia list with an OSM list, dropping duplicates by
-/// (a) lowercase title or (b) coordinate proximity to an existing
-/// Wikipedia entry. Wikipedia wins — better content, more reliable
-/// coords — so OSM's version of the same feature is dropped.
-/// Re-sorts the union by distance from the user and caps at `limit`.
-///
-/// Coordinate-proximity dedup matters because OSM mappers don't
-/// always tag the corresponding `wikipedia=en:…` reference, so a
-/// feature that's on Wikipedia still slips through the wiki-tag
-/// filter in `discoverOSMLandmarksNearby`. Checking whether the OSM
-/// item sits within ~250 m of any Wikipedia item catches those:
-/// small parks, monuments, churches where Wikipedia's and OSM's
-/// names differ slightly ("Center Church on the Green" vs. "First
-/// Church of Christ, New Haven", etc.).
-///
-/// Pure synchronous function so the caller can swap one list for a
-/// fresh copy and re-render without another round trip.
-func mergeNearbyResults(
-    wikipedia: [LandmarkResult],
-    osm: [LandmarkResult],
-    userLocation: CLLocation,
-    limit: Int
-) -> [LandmarkResult] {
-    var seenTitles = Set<String>()
-    var wikiCoords: [CLLocation] = []
-    var merged: [LandmarkResult] = []
-
-    for result in wikipedia {
-        let key = result.title.lowercased()
-        if seenTitles.contains(key) { continue }
-        seenTitles.insert(key)
-        merged.append(result)
-        if let c = result.coordinates {
-            wikiCoords.append(CLLocation(latitude: c.latitude, longitude: c.longitude))
-        }
-    }
-
-    for result in osm {
-        let key = result.title.lowercased()
-        if seenTitles.contains(key) { continue }
-        // Coordinate-proximity dedup: if any Wikipedia entry sits
-        // within 250 m of this OSM entry, treat them as the same
-        // real-world feature and prefer Wikipedia's copy.
-        if let c = result.coordinates {
-            let osmLoc = CLLocation(latitude: c.latitude, longitude: c.longitude)
-            if wikiCoords.contains(where: { $0.distance(from: osmLoc) < 250 }) {
-                continue
-            }
-        }
-        seenTitles.insert(key)
-        merged.append(result)
-    }
-    merged.sort { distanceToUser(userLocation, $0.coordinates) < distanceToUser(userLocation, $1.coordinates) }
-    return Array(merged.prefix(limit))
-}
-
-/// Distance helper: .infinity for coordinate-less entries so they
-/// sink to the bottom of a distance-sorted list.
-private func distanceToUser(
-    _ user: CLLocation,
-    _ coord: Coordinate?
-) -> CLLocationDistance {
-    guard let coord else { return .infinity }
-    return user.distance(from: CLLocation(
-        latitude: coord.latitude,
-        longitude: coord.longitude
-    ))
+    // Wikipedia geosearch already returns distance-ascending from the
+    // query coordinate; the place-word filter preserves that order.
+    return results
 }
 
 /// Full enrichment for a candidate tapped from the Nearby tab. Runs the
