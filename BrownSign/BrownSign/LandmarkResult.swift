@@ -254,7 +254,7 @@ func discoverLandmarksAt(
 
     var seenTitles = Set<String>()
     var results: [LandmarkResult] = []
-    for c in candidates where titleContainsPlaceWord(c.title) {
+    for c in candidates where titleIsNearbyWorthy(c.title) {
         let key = c.title.lowercased()
         if seenTitles.contains(key) { continue }
         seenTitles.insert(key)
@@ -511,6 +511,56 @@ private func titleContainsPlaceWord(_ title: String) -> Bool {
     let lower = title.lowercased()
     for word in placeIndicators {
         if lower.contains(word) { return true }
+    }
+    return false
+}
+
+/// Generic road and rail words. In the Nearby tab, a title that
+/// matches ONLY on one of these is dropped — browsing nearby
+/// landmarks shouldn't surface Interstate 95 or a commuter-rail
+/// line. The scan flow still accepts them: if a user scanned a
+/// brown sign for Lincoln Highway, they should find it.
+private let roadRailIndicators: Set<String> = [
+    "road", "highway", "freeway", "turnpike", "parkway",
+    "railway", "railroad"
+]
+
+/// Qualifiers that elevate a generic road or rail title into a
+/// historic landmark the Nearby tab does surface. If a title
+/// contains any of these alongside a road/rail word, we keep it:
+/// "Lincoln Highway Historic District", "Old Post Road", etc.
+/// Already-structured phrases ("old ", "historic") are used as
+/// substrings, so compound words don't spuriously match (e.g.
+/// "old " with a trailing space avoids matching "golden").
+private let historicQualifiers: [String] = [
+    "historic", "heritage", "landmark", "colonial", "national",
+    "old "
+]
+
+/// Stricter variant of `titleContainsPlaceWord` used by the Nearby
+/// discovery tab. Accepts anything the scan-flow filter accepts,
+/// except that generic road and rail titles are dropped unless the
+/// title also carries a historic qualifier. Keeps browsing
+/// signal-to-noise high (no Interstate 95 pins, no commuter-rail
+/// branches), while still surfacing historic byways and named
+/// post roads.
+private func titleIsNearbyWorthy(_ title: String) -> Bool {
+    let lower = title.lowercased()
+    for word in placeIndicators {
+        guard lower.contains(word) else { continue }
+        if roadRailIndicators.contains(word) {
+            // A road/rail word only qualifies when the title also
+            // has a historic qualifier. If not, skip this match
+            // and see whether another (non-road/rail) place word
+            // also appears in the title — e.g. "Lincoln Highway
+            // Bridge" should pass via "bridge" even though
+            // "highway" itself doesn't qualify.
+            if historicQualifiers.contains(where: { lower.contains($0) }) {
+                return true
+            }
+            continue
+        }
+        return true
     }
     return false
 }
