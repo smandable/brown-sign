@@ -370,7 +370,35 @@ private struct WikiPageDetails {
     let isDisambiguation: Bool
 }
 
+/// MediaWiki's anonymous API caps `pageids=` at 50 per request —
+/// passing more returns an error and no usable data. Our Nearby
+/// flow wants to hydrate ~100 candidates, so we batch.
+private let wikipediaPageDetailsBatchSize = 50
+
 private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
+    guard !pageIDs.isEmpty else { return [:] }
+
+    // Chunk into batches that stay under the 50-ID anon limit, and
+    // fan them out in parallel so a two-batch request is only one
+    // round-trip worth of latency.
+    let batches = stride(from: 0, to: pageIDs.count, by: wikipediaPageDetailsBatchSize).map {
+        Array(pageIDs[$0..<min($0 + wikipediaPageDetailsBatchSize, pageIDs.count)])
+    }
+
+    return await withTaskGroup(of: [Int: WikiPageDetails].self) { group in
+        for batch in batches {
+            group.addTask { await fetchPageDetailsBatch(pageIDs: batch) }
+        }
+        var combined: [Int: WikiPageDetails] = [:]
+        for await partial in group {
+            combined.merge(partial) { _, new in new }
+        }
+        return combined
+    }
+}
+
+/// Fetches one page-details batch. Expects `pageIDs.count <= 50`.
+private func fetchPageDetailsBatch(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
     guard !pageIDs.isEmpty else { return [:] }
     let idList = pageIDs.map(String.init).joined(separator: "|")
     guard let encoded = idList.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
