@@ -372,11 +372,16 @@ struct HistoryRow: View {
 
     @ViewBuilder
     private var sourceBadge: some View {
-        if lookup.source == "nps" {
+        switch lookup.source {
+        case "nps":
             Label("NPS", systemImage: "leaf.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
-        } else {
+        case "osm":
+            Label("OpenStreetMap", systemImage: "map")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        default:
             Label("Wikipedia", systemImage: "globe")
                 .font(.caption)
                 .foregroundStyle(.blue)
@@ -498,11 +503,16 @@ struct LandmarkDetailView: View {
 
     @ViewBuilder
     private var sourceBadge: some View {
-        if lookup.source == "nps" {
+        switch lookup.source {
+        case "nps":
             Label("NPS", systemImage: "leaf.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
-        } else {
+        case "osm":
+            Label("OpenStreetMap", systemImage: "map")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        default:
             Label("Wikipedia", systemImage: "globe")
                 .font(.caption)
                 .foregroundStyle(.blue)

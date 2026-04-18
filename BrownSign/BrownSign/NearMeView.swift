@@ -89,7 +89,7 @@ struct NearMeView: View {
                         ContentUnavailableView(
                             "No landmarks nearby",
                             systemImage: "signpost.right.and.left",
-                            description: Text("No geo-tagged Wikipedia landmarks within 10 km of your location.")
+                            description: Text("No geo-tagged landmarks found within 10 km of your location. Try scrolling to widen the search.")
                         )
                     case .loaded(let results):
                         switch displayMode {
@@ -250,12 +250,34 @@ struct NearMeView: View {
             return
         }
         userLocation = loc
-        let found = await discoverLandmarksNearby(
-            userLocation: loc,
-            radiusMeters: currentRadiusMeters,
-            limit: limit(for: currentRadiusMeters)
+
+        // Two-phase fan-out: Wikipedia is usually back in < 2 s; OSM
+        // via Overpass can take 5–20 s under load. Paint Wikipedia as
+        // soon as it's ready so the list doesn't sit empty, then fold
+        // in OSM when it arrives. Both run in parallel, not serially.
+        let radius = currentRadiusMeters
+        let cap = limit(for: radius)
+        async let wikiTask = discoverWikipediaLandmarksNearby(
+            userLocation: loc, radiusMeters: radius, limit: cap
         )
-        state = found.isEmpty ? .empty : .loaded(found)
+        async let osmTask = discoverOSMLandmarksNearby(
+            userLocation: loc, radiusMeters: radius, limit: cap
+        )
+
+        let wiki = await wikiTask
+        // Paint immediately with what Wikipedia returned — keeps the
+        // first-paint latency flat even if Overpass is slow.
+        state = wiki.isEmpty ? .loading : .loaded(wiki)
+
+        let osm = await osmTask
+        let merged = mergeNearbyResults(
+            wikipedia: wiki, osm: osm, userLocation: loc, limit: cap
+        )
+        // Guard against a newer request having landed while we were
+        // waiting: only overwrite if the radius we loaded for is
+        // still the current one.
+        guard radius == currentRadiusMeters else { return }
+        state = merged.isEmpty ? .empty : .loaded(merged)
     }
 
     /// Widen the search radius up to the 25 km cap and replace the
@@ -296,17 +318,34 @@ struct NearMeView: View {
         isLoadingMore = true
         defer { isLoadingMore = false }
 
-        let found = await discoverLandmarksNearby(
-            userLocation: loc,
-            radiusMeters: desired,
-            limit: limit(for: desired)
+        // Same two-phase pattern as `refresh`: paint Wikipedia fast,
+        // then augment with OSM. Expansion already takes the user out
+        // of the "initial load" mental model, but a 10 s wait on
+        // Overpass still feels like dead air — showing the Wikipedia
+        // diff at the new radius within a second keeps it responsive.
+        let cap = limit(for: desired)
+        async let wikiTask = discoverWikipediaLandmarksNearby(
+            userLocation: loc, radiusMeters: desired, limit: cap
         )
-        // Only update state if we actually got a superset — protects
-        // against a transient network blip wiping out the existing
-        // results. If expansion returned nothing, keep the old list.
+        async let osmTask = discoverOSMLandmarksNearby(
+            userLocation: loc, radiusMeters: desired, limit: cap
+        )
+
+        let wiki = await wikiTask
         currentRadiusMeters = desired
-        if !found.isEmpty {
-            state = .loaded(found)
+        if !wiki.isEmpty {
+            state = .loaded(wiki)
+        }
+
+        let osm = await osmTask
+        // Only merge if we're still at this radius — a subsequent
+        // expansion may have superseded us.
+        guard desired == currentRadiusMeters else { return }
+        let merged = mergeNearbyResults(
+            wikipedia: wiki, osm: osm, userLocation: loc, limit: cap
+        )
+        if !merged.isEmpty {
+            state = .loaded(merged)
         }
     }
 

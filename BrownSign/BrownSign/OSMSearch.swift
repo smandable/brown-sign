@@ -360,7 +360,9 @@ private func wikipediaPageURL(for title: String) -> URL? {
 /// Hand-rolled one-sentence summary from the tag bag. Used as-is for
 /// OSM-only results; the orchestrator overwrites it with the Wikipedia
 /// extract when `wikipediaTitle` is set. Intentionally terse — the
-/// underlying data is too thin to pretend it's an article.
+/// underlying data is too thin to pretend it's an article. The source
+/// badge ("OpenStreetMap") is rendered separately in the detail view,
+/// so the summary text itself doesn't editorialize about provenance.
 private func synthesizeSummary(
     tags: [String: String],
     category: String,
@@ -393,7 +395,5 @@ private func synthesizeSummary(
         parts.append("in \(state)")
     }
 
-    var sentence = parts.joined(separator: " ")
-    sentence += " (identified via OpenStreetMap)."
-    return sentence
+    return parts.joined(separator: " ") + "."
 }
