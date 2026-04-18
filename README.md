@@ -1,6 +1,6 @@
 # Brown Sign
 
-Point your iPhone at one of those brown roadside landmark signs and instantly find out what it is — or skip the scan entirely and discover geo-tagged Wikipedia landmarks within 25 km of where you are via the Nearby tab.
+Point your iPhone at one of those brown roadside landmark signs and instantly find out what it is — or skip the scan entirely and discover geo-tagged Wikipedia landmarks around you via the Nearby tab, including a pan-to-search map that lets you explore any stretch of road.
 
 A fully on-device OCR + Apple Intelligence pipeline with a four-source landmark resolver (Wikipedia, NPS, Wikidata, Google Knowledge Graph), location-aware ranking, an interactive map view of every find, and a directions launcher for Google Maps, Waze, and Apple Maps.
 
