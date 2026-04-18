@@ -54,6 +54,12 @@ struct NearMeView: View {
     @State private var lastFetchCenter: CLLocationCoordinate2D?
     @State private var pushedLookup: LandmarkLookup?
     @State private var displayMode: LandmarkDisplayMode = .list
+    /// Incremented by `refresh(force: true)` to tell the map view to
+    /// snap its camera back to the user's location. The map's camera
+    /// is its own `@State` — the parent can't reach in to update it
+    /// directly — so we pass this counter down and the map observes
+    /// it via `.onChange`.
+    @State private var recenterSignal = 0
 
     private let locationManager = LocationManager.shared
 
@@ -119,6 +125,7 @@ struct NearMeView: View {
                             NearbyMapView(
                                 results: [],
                                 userLocation: userLocation,
+                                recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
                                 onMapCenterChanged: { center in
                                     Task { await fetchAroundMapCenter(center) }
@@ -133,6 +140,7 @@ struct NearMeView: View {
                             NearbyMapView(
                                 results: results,
                                 userLocation: userLocation,
+                                recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
                                 onMapCenterChanged: { center in
                                     Task { await fetchAroundMapCenter(center) }
@@ -261,6 +269,13 @@ struct NearMeView: View {
         )
         lastFetchCenter = loc.coordinate
         state = found.isEmpty ? .empty : .loaded(found)
+
+        // Tell the map to snap its camera back to the user. If we
+        // don't do this, the refresh button is silent on the map —
+        // the underlying data resets but the view stays wherever the
+        // user had panned to, which is exactly the "doesn't bring me
+        // home" bug.
+        recenterSignal += 1
     }
 
     /// Pan-triggered fetch. Fires when the user has panned the map
@@ -489,6 +504,11 @@ private struct NearbyRow: View {
 private struct NearbyMapView: View {
     let results: [LandmarkResult]
     let userLocation: CLLocation?
+    /// Parent-driven "snap back to user" counter. When this changes,
+    /// the map re-fits its camera on the user's location. Used by
+    /// the toolbar refresh button to bring the user home after they
+    /// panned away.
+    let recenterSignal: Int
     let onSelect: (LandmarkResult) -> Void
     /// Called at the end of every camera gesture with the new map
     /// center. Parent decides (via `panRefetchThresholdMeters`)
@@ -530,6 +550,12 @@ private struct NearbyMapView: View {
             }
             .onAppear {
                 cameraPosition = .region(initialRegion())
+            }
+            .onChange(of: recenterSignal) { _, _ in
+                // Parent bumped the counter via the toolbar refresh
+                // button — re-fit to user + pins so the user comes
+                // home after panning off to another region.
+                withAnimation { cameraPosition = .region(initialRegion()) }
             }
             .onMapCameraChange(frequency: .onEnd) { context in
                 // Report the new map center to the parent at the end
