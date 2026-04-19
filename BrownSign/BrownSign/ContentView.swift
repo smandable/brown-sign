@@ -470,10 +470,21 @@ struct ContentView: View {
 
             metadataChips(for: result)
 
+            // Tap anywhere on the polished summary to open full details
+            // — same action as the "View full details" button below.
+            // Trades the UITextView's tap-to-place-cursor selection for
+            // a larger tap target; full-text selection still available
+            // on the detail view.
             SelectableText(
                 text: result.summary,
                 lineLimit: 6
             )
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if savedLookup != nil {
+                    presentedLookup = savedLookup
+                }
+            }
 
             VStack(spacing: 8) {
                 Button {
