@@ -137,7 +137,7 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `OCRHelper.swift` | Vision OCR — returns `[String]` lines sorted top-to-bottom |
 | `AppleIntelligence.swift` | FoundationModels — normalize (line-aware), polish, match-score |
 | `LocationManager.swift` | CoreLocation async wrapper with in-flight guard + timeout |
-| `WikipediaSearch.swift` | Text search, geosearch, nearby-discovery candidates, batch extracts/pageimages, word-boundary truncation |
+| `WikipediaSearch.swift` | Text search, geosearch, nearby-discovery candidates, batch extracts/pageimages, REST summary fallback for empty intros, word-boundary truncation |
 | `WikidataSearch.swift` | Sitelinks-based entity lookup (P625 / P571 / P31 + label resolution) |
 | `NPSSearch.swift` | `/parks` + `/places` fallback with article images |
 | `GoogleKnowledgeGraphSearch.swift` | External confidence scoring |
