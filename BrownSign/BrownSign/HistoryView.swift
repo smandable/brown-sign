@@ -327,6 +327,34 @@ struct HistoryRow: View {
             }
         }
         .padding(.vertical, 4)
+        .task {
+            // Backfill for items saved before the REST summary fallback
+            // existed. Runs whenever a row with an empty `summary`
+            // appears on screen — no tap required. Wikipedia only (NPS
+            // doesn't exhibit the empty-intro failure mode).
+            //
+            // Guarded on `summary`, not `rawSummary`, because earlier
+            // versions of this fix populated only rawSummary — those
+            // rows still need their list-row summary filled in, and
+            // should reuse the stored extract instead of re-fetching.
+            guard lookup.summary.isEmpty,
+                  lookup.source == "wikipedia"
+            else { return }
+            let text: String
+            if !lookup.rawSummary.isEmpty {
+                text = lookup.rawSummary
+            } else if let fetched = await wikipediaRESTSummaryExtract(for: lookup.resolvedTitle) {
+                lookup.rawSummary = fetched
+                text = fetched
+            } else {
+                return
+            }
+            lookup.summary = text
+            let polished = await polishSummary(text)
+            if polished != text {
+                lookup.summary = polished
+            }
+        }
     }
 
     @ViewBuilder
@@ -492,6 +520,30 @@ struct LandmarkDetailView: View {
                     longitude: lon,
                     name: lookup.resolvedTitle
                 )
+            }
+        }
+        .task {
+            // Safety-net backfill — the same logic lives on HistoryRow
+            // and almost always runs first (the row has to appear for
+            // the user to tap it). This covers the edge case where the
+            // row task was cancelled mid-fetch (row scrolled off) but
+            // the user still tapped through.
+            guard lookup.summary.isEmpty,
+                  lookup.source == "wikipedia"
+            else { return }
+            let text: String
+            if !lookup.rawSummary.isEmpty {
+                text = lookup.rawSummary
+            } else if let fetched = await wikipediaRESTSummaryExtract(for: lookup.resolvedTitle) {
+                lookup.rawSummary = fetched
+                text = fetched
+            } else {
+                return
+            }
+            lookup.summary = text
+            let polished = await polishSummary(text)
+            if polished != text {
+                lookup.summary = polished
             }
         }
     }

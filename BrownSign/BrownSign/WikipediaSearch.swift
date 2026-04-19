@@ -247,7 +247,39 @@ func searchWikipediaCandidates(query: String) async -> [WikiResult] {
     return results
 }
 
-// MARK: - REST summary image fallback
+// MARK: - REST summary fallbacks
+
+/// REST fallback for when the legacy intro-extract call
+/// (`exintro=1&explaintext=1`) returns "" for an article that actually
+/// has body content. Some articles lead with an infobox straight into
+/// a section header, leaving `exintro` nothing before the first `<h2>`
+/// to extract — the REST summary endpoint uses a smarter heuristic
+/// that still finds usable text. Returns nil when REST also has no
+/// extract (true stubs, redirects that dropped content, etc.).
+func wikipediaRESTSummaryExtract(for title: String) async -> String? {
+    let pathTitle = title.replacingOccurrences(of: " ", with: "_")
+    guard let encoded = pathTitle.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+          ),
+          let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
+        return nil
+    }
+    do {
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse,
+           !(200...299).contains(http.statusCode) {
+            return nil
+        }
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let extract = root["extract"] as? String,
+              !extract.isEmpty else {
+            return nil
+        }
+        return extract
+    } catch {
+        return nil
+    }
+}
 
 /// Returns the best article image URL via the Wikipedia REST summary
 /// endpoint (`/api/rest_v1/page/summary/{title}`). Used as a fallback
@@ -385,16 +417,54 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
         Array(pageIDs[$0..<min($0 + wikipediaPageDetailsBatchSize, pageIDs.count)])
     }
 
-    return await withTaskGroup(of: [Int: WikiPageDetails].self) { group in
+    var combined = await withTaskGroup(of: [Int: WikiPageDetails].self) { group in
         for batch in batches {
             group.addTask { await fetchPageDetailsBatch(pageIDs: batch) }
         }
-        var combined: [Int: WikiPageDetails] = [:]
+        var acc: [Int: WikiPageDetails] = [:]
         for await partial in group {
-            combined.merge(partial) { _, new in new }
+            acc.merge(partial) { _, new in new }
         }
-        return combined
+        return acc
     }
+
+    // Fill in empty extracts via REST. `exintro=1` returns "" for the
+    // small set of articles that jump straight from an infobox into a
+    // section header, but those articles have body text the REST
+    // summary heuristic can find. Skip disambiguation pages — empty
+    // there is intentional.
+    let needsFallback: [(Int, String)] = combined.compactMap { id, d in
+        (d.extract.isEmpty && !d.isDisambiguation) ? (id, d.title) : nil
+    }
+    if !needsFallback.isEmpty {
+        let patches: [(Int, String)] = await withTaskGroup(of: (Int, String)?.self) { group in
+            for (id, title) in needsFallback {
+                group.addTask {
+                    guard let fallback = await wikipediaRESTSummaryExtract(for: title) else {
+                        return nil
+                    }
+                    return (id, fallback)
+                }
+            }
+            var out: [(Int, String)] = []
+            for await entry in group {
+                if let entry { out.append(entry) }
+            }
+            return out
+        }
+        for (id, extract) in patches {
+            guard let existing = combined[id] else { continue }
+            combined[id] = WikiPageDetails(
+                title: existing.title,
+                extract: extract,
+                url: existing.url,
+                imageURL: existing.imageURL,
+                isDisambiguation: existing.isDisambiguation
+            )
+        }
+    }
+
+    return combined
 }
 
 /// Fetches one page-details batch. Expects `pageIDs.count <= 50`.
