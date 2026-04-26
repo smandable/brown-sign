@@ -94,65 +94,6 @@ func searchWikipediaNearby(
     return results
 }
 
-// MARK: - Nearby discovery (no query filter)
-
-/// One result from the discovery-mode geosearch: a nearby Wikipedia
-/// article with coordinates and the user-distance already filled in.
-/// Separate from `WikiResult` because discovery always has geographic
-/// context, while the plain text-search result doesn't.
-struct NearbyWikiCandidate {
-    let title: String
-    let summary: String
-    let pageURL: URL
-    let imageURL: URL?
-    let latitude: Double
-    let longitude: Double
-    /// Great-circle distance from the user, in meters (from the
-    /// geosearch response).
-    let distanceMeters: Double
-}
-
-/// Returns up to `limit` nearby Wikipedia articles (distance-sorted, no
-/// query filter). Discovery-mode entry point for the Nearby tab.
-///
-/// Two-step fetch: geosearch for the page list, then batch page-details
-/// for extracts + thumbnails + disambiguation flags. Only the first
-/// `limit` pages are hydrated; geosearch in a dense area can return
-/// hundreds, but most users won't scroll past ~30.
-func wikipediaNearbyCandidates(
-    latitude: Double,
-    longitude: Double,
-    radiusMeters: Int = 10_000,
-    limit: Int = 40
-) async -> [NearbyWikiCandidate] {
-    let nearby = await wikipediaGeosearchPageList(
-        latitude: latitude,
-        longitude: longitude,
-        radiusMeters: radiusMeters
-    )
-    guard !nearby.isEmpty else { return [] }
-
-    let capped = Array(nearby.prefix(limit))
-    let details = await wikipediaFetchPageDetails(pageIDs: capped.map(\.pageID))
-    guard !details.isEmpty else { return [] }
-
-    var results: [NearbyWikiCandidate] = []
-    for page in capped {
-        guard let d = details[page.pageID] else { continue }
-        if d.isDisambiguation { continue }
-        results.append(NearbyWikiCandidate(
-            title: d.title,
-            summary: truncateAtWordBoundary(d.extract, maxLength: 500),
-            pageURL: d.url,
-            imageURL: d.imageURL,
-            latitude: page.latitude,
-            longitude: page.longitude,
-            distanceMeters: page.distanceMeters
-        ))
-    }
-    return results
-}
-
 // MARK: - Plain geosearch (no page details)
 
 private struct NearbyPage {
@@ -264,21 +205,13 @@ func wikipediaRESTSummaryExtract(for title: String) async -> String? {
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
         return nil
     }
-    do {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        if let http = response as? HTTPURLResponse,
-           !(200...299).contains(http.statusCode) {
-            return nil
-        }
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let extract = root["extract"] as? String,
-              !extract.isEmpty else {
-            return nil
-        }
-        return extract
-    } catch {
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let extract = root["extract"] as? String,
+          !extract.isEmpty else {
         return nil
     }
+    return extract
 }
 
 /// Returns the best article image URL via the Wikipedia REST summary
@@ -394,7 +327,7 @@ private func wikipediaSearchCandidates(_ query: String) async -> [WikiCandidate]
 
 // MARK: - Step 2: batch fetch extracts + pageprops + url by pageid
 
-private struct WikiPageDetails {
+struct WikiPageDetails {
     let title: String
     let extract: String
     let url: URL
@@ -465,6 +398,152 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
     }
 
     return combined
+}
+
+/// Title-keyed variant of `wikipediaFetchPageDetails(pageIDs:)`. The
+/// SPARQL Nearby flow gets Wikipedia article titles from Wikidata
+/// sitelinks, not MediaWiki page IDs, so we hit the same endpoint with
+/// `titles=` instead of `pageids=`. Same response shape; returned
+/// dictionary is keyed by INPUT title — MediaWiki's normalization and
+/// redirect chains are resolved internally so a caller looking up by
+/// the Wikidata-sitelink title gets the right entry.
+func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
+    guard !titles.isEmpty else { return [:] }
+    let batches = stride(from: 0, to: titles.count, by: wikipediaPageDetailsBatchSize).map {
+        Array(titles[$0..<min($0 + wikipediaPageDetailsBatchSize, titles.count)])
+    }
+
+    var combined = await withTaskGroup(of: [String: WikiPageDetails].self) { group in
+        for batch in batches {
+            group.addTask { await fetchPageDetailsBatchByTitles(batch) }
+        }
+        var acc: [String: WikiPageDetails] = [:]
+        for await partial in group {
+            acc.merge(partial) { _, new in new }
+        }
+        return acc
+    }
+
+    // Same REST extract fallback as the pageID path — articles whose
+    // intro extract is empty (infobox-then-section-header layout) get
+    // patched from the REST summary endpoint.
+    let needsFallback: [String] = combined.compactMap { (key, d) in
+        (d.extract.isEmpty && !d.isDisambiguation) ? key : nil
+    }
+    if !needsFallback.isEmpty {
+        let patches: [(String, String)] = await withTaskGroup(of: (String, String)?.self) { group in
+            for key in needsFallback {
+                let title = combined[key]?.title ?? key
+                group.addTask {
+                    guard let fallback = await wikipediaRESTSummaryExtract(for: title) else {
+                        return nil
+                    }
+                    return (key, fallback)
+                }
+            }
+            var out: [(String, String)] = []
+            for await entry in group {
+                if let entry { out.append(entry) }
+            }
+            return out
+        }
+        for (key, extract) in patches {
+            guard let existing = combined[key] else { continue }
+            combined[key] = WikiPageDetails(
+                title: existing.title,
+                extract: extract,
+                url: existing.url,
+                imageURL: existing.imageURL,
+                isDisambiguation: existing.isDisambiguation
+            )
+        }
+    }
+
+    return combined
+}
+
+/// Fetches one batch of page details by title. Expects `titles.count <= 50`.
+/// Returns a dictionary keyed by INPUT title — handles MediaWiki's
+/// `normalized` and `redirects` arrays so a caller passing in the
+/// Wikidata-sitelink title finds the entry under that exact key,
+/// even when Wikipedia routes the title through normalization or a
+/// redirect chain.
+private func fetchPageDetailsBatchByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
+    guard !titles.isEmpty else { return [:] }
+    let titleList = titles.joined(separator: "|")
+    guard let encoded = titleList.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts%7Cpageprops%7Cinfo%7Cpageimages&ppprop=disambiguation&inprop=url&exintro=1&explaintext=1&redirects=1&piprop=thumbnail&pithumbsize=600&titles=\(encoded)") else {
+        return [:]
+    }
+
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [:] }
+    do {
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let queryObj = root["query"] as? [String: Any],
+              let pages = queryObj["pages"] as? [String: Any] else {
+            return [:]
+        }
+
+        // Build a map from canonical title back to the original input
+        // title, walking the normalize → redirect chain so chained
+        // rewrites still resolve to the caller's input string.
+        var canonicalToOriginal: [String: String] = [:]
+        if let norm = queryObj["normalized"] as? [[String: Any]] {
+            for entry in norm {
+                if let from = entry["from"] as? String,
+                   let to = entry["to"] as? String {
+                    canonicalToOriginal[to] = from
+                }
+            }
+        }
+        if let redirects = queryObj["redirects"] as? [[String: Any]] {
+            for entry in redirects {
+                if let from = entry["from"] as? String,
+                   let to = entry["to"] as? String {
+                    let original = canonicalToOriginal[from] ?? from
+                    canonicalToOriginal[to] = original
+                }
+            }
+        }
+
+        var result: [String: WikiPageDetails] = [:]
+        for (_, rawPage) in pages {
+            guard let page = rawPage as? [String: Any],
+                  let title = page["title"] as? String else { continue }
+            let extract = page["extract"] as? String ?? ""
+            let urlString = page["fullurl"] as? String
+                ?? page["canonicalurl"] as? String
+                ?? ""
+            guard let pageURL = URL(string: urlString) else { continue }
+
+            let pageprops = page["pageprops"] as? [String: Any]
+            let isDisambiguation = pageprops?["disambiguation"] != nil
+
+            var imageURL: URL?
+            if let thumb = page["thumbnail"] as? [String: Any],
+               let src = thumb["source"] as? String {
+                imageURL = URL(string: src)
+            }
+
+            let details = WikiPageDetails(
+                title: title,
+                extract: extract,
+                url: pageURL,
+                imageURL: imageURL,
+                isDisambiguation: isDisambiguation
+            )
+            // Key under both the canonical title AND the original
+            // input title (when redirects/normalize rewrote it). The
+            // caller can look up under whichever they have.
+            result[title] = details
+            if let original = canonicalToOriginal[title], original != title {
+                result[original] = details
+            }
+        }
+        return result
+    } catch {
+        return [:]
+    }
 }
 
 /// Fetches one page-details batch. Expects `pageIDs.count <= 50`.

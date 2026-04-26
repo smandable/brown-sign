@@ -8,6 +8,8 @@ A fully on-device OCR + Apple Intelligence pipeline with a four-source landmark 
 
 ## How it works
 
+### Scan flow (camera or typed query)
+
 ```
 Camera / typed text
         │
@@ -30,6 +32,8 @@ Camera / typed text
   → coordinates (P625)
   → inception year (P571)
   → instance-of type (P31)
+  → heritage designation flag (P1435)
+  → dissolution year (P576)
         │
         ▼
   Filter: blocklist → place-indicator whitelist
@@ -49,9 +53,38 @@ Camera / typed text
   SwiftData history (deduped by canonical URL)
 ```
 
+### Nearby flow (location-driven discovery)
+
+```
+User location (or panned map center)
+        │
+        ▼
+  Wikidata SPARQL geo-spatial query
+  → P1435 (heritage designation)        ── retried on 5xx via
+    OR                                     `httpDataWithRetry`
+    P31/P279* in landmark allowlist
+  → English Wikipedia article required
+        │  (up to 300 hits, server-side filtered)
+        ▼
+  Distance-sort (haversine) + truncate to 100
+        │
+   ┌────┴─────────────────────┐
+   ▼                          ▼
+  Wikipedia REST hydrate   Operating-institution gate
+  (titles → extracts +     (parallel Wikidata claims fetch
+   thumbnails)              for ambiguous-titled hits;
+                            strict drops Seymour HS,
+                            lenient keeps NRHP churches)
+   └────┬─────────────────────┘
+        ▼
+  Render list / map. Tap a row or pin →
+  enrich (full Wikidata + AI polish + Google KG +
+  match score + image) and push the detail view.
+```
+
 ## Features
 
-- **Nearby discovery tab** — surfaces geo-tagged Wikipedia landmarks around you, no scan required. List shows a 10 km neighborhood around your GPS (Wikipedia's geosearch API cap). Map supports **pan-to-search**: as you move the map center more than ~5 km away from the last fetch, a new geosearch fires at the new location and pins accumulate. Pan across a state and you build up a dotted trail of landmarks as you go. Defers per-entity Wikidata enrichment to tap time so a dense city stays fast. Tap a row (or pin) to enrich (Wikidata + AI polish + Google KG + match score + image) in the background and push the standard detail view, just like a scan result.
+- **Nearby discovery tab** — surfaces brown-sign-worthy landmarks around you, no scan required. The fetch primary is a Wikidata SPARQL query that returns only items with a heritage designation (P1435 — NRHP, state register, etc.) or a curated landmark P31 type (museum, park, monument, lighthouse, theatre building, university campus building, …) via `wdt:P31/wdt:P279*` so subclasses like "state park" or "art museum" come along automatically. List shows the closest 100 hits within 5 miles. Map supports **pan-to-search**: as you move the map center more than ~2.5 miles away from the last fetch, a new SPARQL query fires at the new location and pins accumulate. Pan across a state and you build up a dotted trail of landmarks as you go. Wikipedia summaries and thumbnails hydrate in parallel via the REST endpoints; tap a row (or pin) to enrich (full Wikidata + AI polish + Google KG + match score + image) in the background and push the standard detail view, just like a scan result.
 - **Map view in History and Nearby** — every saved lookup and every nearby discovery drops as a brown signpost pin on a MapKit map. Tap a pin for a callout card with thumbnail, summary, and a "View details" link. List/Map toggle on both tabs; History fits the camera to the bounding box of all your finds, Nearby centers on you.
 - **Live camera** with tap-to-focus, auto flash, and a close button
 - **On-device OCR** via Vision — multi-line output sorted top-to-bottom by bounding box, with structured line-by-line prompting so Apple Intelligence can distinguish "Wadsworth Mansion" from "2 MI"
@@ -61,10 +94,11 @@ Camera / typed text
   - Scores whether a candidate actually matches the query (0–1 confidence)
 - **Location-aware search** — Wikipedia geosearch within 10 km finds articles near you, merged with global text search. Exact title matches sort first, then by distance. "Wadsworth" near Middletown, CT returns the mansion down the road, not a city in Ohio.
 - **Smart filtering** — three-pass type filter (Wikidata P31 blocklist → place-indicator whitelist → default reject) drops bands, films, food, hoaxes, people, and other non-landmarks. Title-token overlap rejects Wikipedia body-text matches ("East Haven" won't appear for "Fort Nathan Hale"). NPS fallback is also gated on title relevance.
+- **Operating-institution gate (Nearby second pass)** — even after the SPARQL filter, NRHP-listed buildings can still house active institutions: Seymour High School in Connecticut has a heritage-designated building AND is a working high school, so SPARQL surfaces it via P1435. The gate strips these. **Strict tier** (schools, hospitals, fire stations, post offices, train stations) requires Wikidata P576 (closure date) — heritage designation alone is not enough. **Lenient tier** (churches) accepts P576 *or* P1435, since a recognized landmark church is typically both active and historic ("unless they are historic or a landmark"). Titles that already advertise themselves as historic ("Old Greenwich High School", "Former Hartford Hospital") skip the fetch entirely.
 - **Disambiguation picker** — when a query matches multiple landmarks, all candidates are shown sorted by distance. Tap any alternative to swap the result card instantly.
 - **Directions** — tap coordinates or the Directions link to open a sheet with a MapKit preview and one-tap launch into Google Maps, Waze, or Apple Maps
 - **NPS fallback** for historic places without Wikipedia coverage — queries both `/parks` and `/places` (NRHP-listed sites), with article images from the NPS `images` array
-- **Wikidata enrichment** — coordinates, inception year, and human-readable type label for every candidate, via exact sitelinks lookup (not fuzzy search)
+- **Wikidata enrichment** — coordinates, inception year, instance-of type label, heritage-designation flag (P1435), and dissolution year (P576) for every candidate, via exact sitelinks lookup (not fuzzy search)
 - **Persistent article images** — downloaded and resized during enrichment, stored locally in SwiftData. History scrolling is instant; images never disappear from transient network failures.
 - **SwiftData history** — newest-first sort, swipe-to-delete, Delete All in edit mode, dedupe by canonical URL, push-to-detail with full raw summary
 - **Selectable text** — titles and descriptions use UITextView (read-only) for full iOS text selection: tap, double-tap, drag handles, copy
@@ -127,7 +161,7 @@ No third-party Swift packages. Stock Apple frameworks only.
 | --- | --- |
 | `BrownSignApp.swift` | `@main`, SwiftData container, TabView (Scan / Nearby / History) |
 | `ContentView.swift` | Scan tab — camera button, text field, result card, alternatives list |
-| `NearMeView.swift` | Nearby tab — discovery list + map view of geo-tagged Wikipedia landmarks within 10 km; map supports pan-to-search so the user can explore beyond their immediate neighborhood by moving the map center |
+| `NearMeView.swift` | Nearby tab — discovery list + map view of brown-sign-worthy landmarks within 5 miles (SPARQL-filtered, see `WikidataLandmarkSearch.swift`); map supports pan-to-search so the user can explore beyond their immediate neighborhood by moving the map center |
 | `HistoryView.swift` | History tab — list and map view, row, detail view (with source badge links, selectable text) |
 | `CameraView.swift` | UIKit camera VC with tap-to-focus, capture button, close button |
 | `SafariView.swift` | `SFSafariViewController` wrapper |
@@ -137,11 +171,13 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `OCRHelper.swift` | Vision OCR — returns `[String]` lines sorted top-to-bottom |
 | `AppleIntelligence.swift` | FoundationModels — normalize (line-aware), polish, match-score |
 | `LocationManager.swift` | CoreLocation async wrapper with in-flight guard + timeout |
-| `WikipediaSearch.swift` | Text search, geosearch, nearby-discovery candidates, batch extracts/pageimages, REST summary fallback for empty intros, word-boundary truncation |
-| `WikidataSearch.swift` | Sitelinks-based entity lookup (P625 / P571 / P31 + label resolution) |
+| `WikipediaSearch.swift` | Text search, geosearch, batch extracts/pageimages by page-id or title, REST summary fallback for empty intros, word-boundary truncation |
+| `WikidataSearch.swift` | Sitelinks-based entity lookup (P625 / P571 / P31 / P1435 / P576 + label resolution) and lighter historic-signals fetch for the operating-institution gate |
+| `WikidataLandmarkSearch.swift` | SPARQL geo-spatial query against `query.wikidata.org` — primary fetch for the Nearby tab. Returns only items with a heritage designation (P1435) or a curated landmark P31 type (recursive via P279*) |
+| `HTTPRetry.swift` | Shared retry helper (`httpDataWithRetry`) — 3 attempts with 500 ms + 1.5 s backoff, retries on 502/503/504/429 + URL errors, honors task cancellation. Used by the SPARQL fetch and the Nearby Wikipedia REST hydration |
 | `NPSSearch.swift` | `/parks` + `/places` fallback with article images |
 | `GoogleKnowledgeGraphSearch.swift` | External confidence scoring |
-| `LandmarkResult.swift` | Two-phase scan orchestrator + nearby-discovery orchestrator, type filter, title-match filter, place indicators |
+| `LandmarkResult.swift` | Two-phase scan orchestrator + Nearby orchestrator (SPARQL + Wikipedia hydration + operating-institution gate), type filter, title-match filter, place indicators |
 | `LandmarkLookup.swift` | SwiftData `@Model` — history entries with all enrichment fields |
 | `APIKeys.swift` | **Gitignored.** Local API keys only. |
 

@@ -2,17 +2,21 @@
 //  NearMeView.swift
 //  BrownSign
 //
-//  Nearby discovery tab — surface geo-tagged Wikipedia landmarks. The
-//  list shows landmarks within 10 km of the user's GPS, sorted by
+//  Nearby discovery tab — surface brown-sign-worthy landmarks. The
+//  list shows places within 5 miles of the user's GPS, sorted by
 //  distance. The map starts the same way but supports pan-to-search:
-//  when the user pans far enough, we fetch another 10 km of
-//  geosearch centered on the new map location and merge the pins in.
-//  Pins accumulate across the areas the user explores, so you can
-//  build up a dotted trail of landmarks by panning around.
+//  when the user pans far enough, we fetch another 5 miles centered
+//  on the new map location and merge the pins in. Pins accumulate
+//  across the areas the user explores, so you can build up a dotted
+//  trail of landmarks by panning around.
 //
-//  Wikipedia's geosearch API caps radius at 10 km server-side (anything
-//  larger errors out), so rather than pretending to expand radius we
-//  move the search center with the map.
+//  The fetch primary is a Wikidata SPARQL query that returns only
+//  items with a heritage designation (P1435) or a curated landmark
+//  P31 type (recursive via P279*) — server-side equivalent of "would
+//  this be on a brown highway sign?". See `WikidataLandmarkSearch`
+//  for the query and allowlist; `discoverLandmarksAt` in
+//  `LandmarkResult` handles hydration and the operating-institution
+//  gate that drops still-active schools/stations.
 //
 
 import SwiftUI
@@ -33,16 +37,19 @@ struct NearMeView: View {
         case empty
     }
 
-    /// Fixed 10 km radius — Wikipedia's geosearch API max.
-    private static let searchRadiusMeters = 10_000
-    /// How many items to hydrate per fetch. `wikipediaNearbyCandidates`
-    /// gets up to 500 page IDs from the geosearch API; we only pay for
-    /// extract/image hydration on this many.
+    /// 5-mile search radius (8047 m via 5 × 1609.344). Passed to
+    /// the SPARQL fetch as 8.047 km — Wikidata's `wikibase:around`
+    /// has no hard cap like Wikipedia's geosearch did.
+    private static let searchRadiusMeters = 8_047
+    /// How many landmarks to hydrate + render per fetch. The SPARQL
+    /// query returns up to 300 hits in dense areas; we sort by
+    /// distance and truncate to this cap before hydrating.
     private static let fetchLimit = 100
     /// Minimum distance the map center must move before we fire a new
-    /// pan-centered geosearch. Below this, the existing 10 km fetch
-    /// already covers where the user is looking.
-    private static let panRefetchThresholdMeters: CLLocationDistance = 5_000
+    /// pan-centered geosearch — half the search radius (~2.5 miles).
+    /// Below this, the existing 5-mile fetch already covers where the
+    /// user is looking.
+    private static let panRefetchThresholdMeters: CLLocationDistance = 4_023
 
     @State private var state: LoadState = .idle
     @State private var isReloading = false
@@ -91,7 +98,7 @@ struct NearMeView: View {
                         ContentUnavailableView {
                             Label("Location permission needed", systemImage: "location.slash")
                         } description: {
-                            Text("Brown Sign uses your location to find landmarks within 10 km of you. Turn on location access in Settings.")
+                            Text("Brown Sign uses your location to find landmarks within 5 miles of you. Turn on location access in Settings.")
                         } actions: {
                             Button {
                                 LocationManager.openAppSettings()
@@ -119,7 +126,7 @@ struct NearMeView: View {
                             ContentUnavailableView(
                                 "No landmarks nearby",
                                 systemImage: "signpost.right.and.left",
-                                description: Text("No geo-tagged Wikipedia landmarks within 10 km of your location. Switch to the map and pan to a different area to keep exploring.")
+                                description: Text("No geo-tagged Wikipedia landmarks within 5 miles of your location. Switch to the map and pan to a different area to keep exploring.")
                             )
                         case .map:
                             NearbyMapView(
@@ -212,7 +219,7 @@ struct NearMeView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "location.fill")
                         .font(.caption)
-                    Text(String(format: "Within 10 km of current location (%.4f, %.4f)",
+                    Text(String(format: "Within 5 miles of current location (%.4f, %.4f)",
                                 loc.coordinate.latitude, loc.coordinate.longitude))
                         .font(.caption)
                 }
@@ -280,19 +287,19 @@ struct NearMeView: View {
 
     /// Pan-triggered fetch. Fires when the user has panned the map
     /// far enough from the last fetch center that we're looking at
-    /// landmarks the existing 10 km of geosearch doesn't cover.
-    /// Fetches 10 km around the new center and merges the results
+    /// landmarks the existing 5 miles of geosearch doesn't cover.
+    /// Fetches 5 miles around the new center and merges the results
     /// into the existing list (dedup by canonical page URL) so the
     /// map accumulates pins as the user explores.
     ///
     /// The list re-sorts by distance from the user's GPS, so panned
     /// results land below whatever's in the user's immediate
-    /// neighborhood — consistent with the "Within 10 km of your
+    /// neighborhood — consistent with the "Within 5 miles of your
     /// location" header framing.
     private func fetchAroundMapCenter(_ center: CLLocationCoordinate2D) async {
         guard !isFetchingMore else { return }
         // Pan threshold: if the new center is still within the
-        // current 10 km fetch's area, we already have its landmarks.
+        // current 5-mile fetch's area, we already have its landmarks.
         if let last = lastFetchCenter {
             let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
                 .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
@@ -585,7 +592,7 @@ private struct NearbyMapView: View {
     /// Fit the bounding box of the user-location dot plus every pin with
     /// 40% padding. Tighter than a fixed-span center-on-user in dense
     /// areas (pins cluster); opens up naturally when results are spread
-    /// out to the 10 km search radius.
+    /// out to the 5-mile search radius.
     private func initialRegion() -> MKCoordinateRegion {
         var points: [CLLocationCoordinate2D] = []
         if let user = userLocation {

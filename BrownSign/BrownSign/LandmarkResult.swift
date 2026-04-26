@@ -230,10 +230,22 @@ func searchLandmarkCandidates(
 
 /// Returns up to `limit` geo-tagged Wikipedia landmarks within
 /// `radiusMeters` of `center`. Distance-sorted from the center.
-/// No per-entity Wikidata enrichment up front (that happens at tap
-/// time via `enrichDiscoveredLandmark`); a dense city can return
-/// 100+ items and fanning out Wikidata for each would be wasteful
-/// when the user only taps a few.
+///
+/// Three-pass pipeline:
+///   1. **SPARQL primary filter** (server-side) — Wikidata Query
+///      Service returns only items with a heritage designation
+///      (P1435) or a P31/P279* match in a curated landmark allowlist.
+///      Brown signs are essentially the real-world analog of NRHP
+///      listings, so this is the right semantic. Replaces the old
+///      Wikipedia-geosearch + place-word client filter.
+///   2. **Wikipedia hydration** (parallel) — SPARQL only returns
+///      Wikidata items, so we fetch summary text + thumbnails from
+///      Wikipedia's REST endpoints to populate the list/map cards.
+///   3. **Operating-institution gate** (parallel) — strips
+///      currently-active schools/hospitals/stations whose buildings
+///      happen to be NRHP-listed (Seymour HS) so they don't slip
+///      through SPARQL's heritage-designation branch. Lenient tier
+///      keeps NRHP-listed churches.
 ///
 /// Two call sites in the Nearby tab:
 ///   - Initial load: `center = userLocation.coordinate`
@@ -242,41 +254,98 @@ func searchLandmarkCandidates(
 ///     builds up pins across the areas the user explores.
 func discoverLandmarksAt(
     center: CLLocationCoordinate2D,
-    radiusMeters: Int = 10_000,
+    radiusMeters: Int = 8_047,
     limit: Int = 100
 ) async -> [LandmarkResult] {
-    let candidates = await wikipediaNearbyCandidates(
-        latitude: center.latitude,
-        longitude: center.longitude,
-        radiusMeters: radiusMeters,
-        limit: limit
+    let radiusKm = Double(radiusMeters) / 1000.0
+    let hits = await discoverLandmarksViaSPARQL(
+        centerLat: center.latitude,
+        centerLon: center.longitude,
+        radiusKm: radiusKm
     )
+    guard !hits.isEmpty else { return [] }
+
+    // Distance-sort and truncate. SPARQL doesn't order by distance,
+    // and `wikibase:around` returns items in some internal order
+    // that's near-but-not-exactly distance-ascending; sort
+    // explicitly so the closest landmarks render first.
+    let userLocation = CLLocation(
+        latitude: center.latitude,
+        longitude: center.longitude
+    )
+    let sortedHits = hits.sorted { a, b in
+        let aLoc = CLLocation(latitude: a.coordinate.latitude, longitude: a.coordinate.longitude)
+        let bLoc = CLLocation(latitude: b.coordinate.latitude, longitude: b.coordinate.longitude)
+        return userLocation.distance(from: aLoc) < userLocation.distance(from: bLoc)
+    }
+    let topHits = Array(sortedHits.prefix(limit))
+
+    // Compute gate verdicts up front (synchronous), then run hydration
+    // and the gate's Wikidata fetch in parallel — they're independent
+    // network calls and there's no reason to serialize them.
+    let gateAssignments: [(Int, InstitutionGate)] = topHits.indices.compactMap { idx in
+        institutionGateFor(topHits[idx].wikipediaTitle).map { (idx, $0) }
+    }
+
+    async let detailsAsync = wikipediaFetchPageDetailsByTitles(topHits.map(\.wikipediaTitle))
+    async let droppedAsync = computeGateDrops(topHits: topHits, gates: gateAssignments)
+    let details = await detailsAsync
+    let droppedIndices = await droppedAsync
 
     var seenTitles = Set<String>()
     var results: [LandmarkResult] = []
-    for c in candidates where titleIsNearbyWorthy(c.title) {
-        let key = c.title.lowercased()
+    for (idx, hit) in topHits.enumerated() {
+        if droppedIndices.contains(idx) { continue }
+        guard let d = details[hit.wikipediaTitle] else { continue }
+        if d.isDisambiguation { continue }
+        let key = d.title.lowercased()
         if seenTitles.contains(key) { continue }
         seenTitles.insert(key)
         results.append(LandmarkResult(
-            title: c.title,
-            summary: c.summary,
-            rawSummary: c.summary,
-            pageURL: c.pageURL,
+            title: d.title,
+            summary: d.extract,
+            rawSummary: d.extract,
+            pageURL: d.url,
             source: "wikipedia",
-            articleImageURL: c.imageURL,
+            articleImageURL: d.imageURL,
             articleImageData: nil,
-            coordinates: Coordinate(latitude: c.latitude, longitude: c.longitude),
+            coordinates: hit.coordinate,
             inceptionYear: nil,
             wikidataType: nil,
             externalConfidence: nil,
             onDeviceMatchScore: nil
         ))
     }
-
-    // Wikipedia geosearch already returns distance-ascending from the
-    // query coordinate; the place-word filter preserves that order.
     return results
+}
+
+/// Operating-institution gate: for each `(idx, gate)` assignment,
+/// fetches Wikidata historic signals and returns the set of indices
+/// to drop. nil signals (entity missing or network failure) default
+/// to keep — better to show a few extras than a blank list when
+/// offline. Strict gate requires P576 (closure date); lenient also
+/// accepts P1435 (heritage designation).
+private func computeGateDrops(
+    topHits: [WikidataLandmarkHit],
+    gates: [(Int, InstitutionGate)]
+) async -> Set<Int> {
+    guard !gates.isEmpty else { return [] }
+    var dropped = Set<Int>()
+    await withTaskGroup(of: (Int, InstitutionGate, WikidataHistoricSignals?).self) { group in
+        for (idx, gate) in gates {
+            let title = topHits[idx].wikipediaTitle
+            group.addTask {
+                (idx, gate, await fetchWikidataHistoricSignals(for: title))
+            }
+        }
+        for await (idx, gate, signals) in group {
+            guard let s = signals else { continue }
+            if !institutionPassesGate(s, gate: gate) {
+                dropped.insert(idx)
+            }
+        }
+    }
+    return dropped
 }
 
 /// Full enrichment for a candidate tapped from the Nearby tab. Runs the
@@ -515,53 +584,85 @@ private func titleContainsPlaceWord(_ title: String) -> Bool {
     return false
 }
 
-/// Generic road and rail words. In the Nearby tab, a title that
-/// matches ONLY on one of these is dropped — browsing nearby
-/// landmarks shouldn't surface Interstate 95 or a commuter-rail
-/// line. The scan flow still accepts them: if a user scanned a
-/// brown sign for Lincoln Highway, they should find it.
-private let roadRailIndicators: Set<String> = [
-    "road", "highway", "freeway", "turnpike", "parkway",
-    "railway", "railroad"
+/// Two-tier patterns for currently-operating institutions. The Nearby
+/// filter gates candidates whose titles match these behind a Wikidata
+/// closure-date check (P576). The split reflects different real-world
+/// realities for the two tiers:
+///
+/// - **Strict** (P576 required): the institution itself is the unit of
+///   interest, and an NRHP-listed building (P1435) often just means a
+///   historic shell housing a still-active institution. Seymour High
+///   School in Connecticut is NRHP-listed AND currently operating —
+///   the user wants it dropped, so heritage designation alone is
+///   insufficient.
+/// - **Lenient** (P1435 or P576): the building itself is the landmark
+///   even when still in active use — recognized historic churches are
+///   typically both. Matches the user-stated rule of "remove churches
+///   unless they are historic or a landmark".
+///
+/// Patterns are intentionally specific ("high school", not just
+/// "school") so generic historic schoolhouse titles like "Burrows Hill
+/// School" never trigger the gate. Matching is a substring check on
+/// the lowercased title.
+private let strictOperatingInstitutionPatterns: [String] = [
+    "high school", "middle school", "elementary school", "primary school",
+    "junior high", "secondary school", "preparatory school", "technical school",
+    "hospital", "medical center", "medical centre",
+    "fire station", "fire department",
+    "police station", "police department",
+    "post office",
+    "city hall", "town hall",
+    "shopping center", "shopping centre", "shopping mall",
+    "apartment complex",
+    " station"
 ]
 
-/// Qualifiers that elevate a generic road or rail title into a
-/// historic landmark the Nearby tab does surface. If a title
-/// contains any of these alongside a road/rail word, we keep it:
-/// "Lincoln Highway Historic District", "Old Post Road", etc.
-/// Already-structured phrases ("old ", "historic") are used as
-/// substrings, so compound words don't spuriously match (e.g.
-/// "old " with a trailing space avoids matching "golden").
-private let historicQualifiers: [String] = [
-    "historic", "heritage", "landmark", "colonial", "national",
-    "old "
+private let lenientOperatingInstitutionPatterns: [String] = [
+    " church"
 ]
 
-/// Stricter variant of `titleContainsPlaceWord` used by the Nearby
-/// discovery tab. Accepts anything the scan-flow filter accepts,
-/// except that generic road and rail titles are dropped unless the
-/// title also carries a historic qualifier. Keeps browsing
-/// signal-to-noise high (no Interstate 95 pins, no commuter-rail
-/// branches), while still surfacing historic byways and named
-/// post roads.
-private func titleIsNearbyWorthy(_ title: String) -> Bool {
+/// Title qualifiers that make an operating-institution title obviously
+/// historic on its face, so we can skip the Wikidata fetch entirely.
+/// Trailing spaces on "old " and "former " avoid compound-word matches
+/// like "golden" or "informer".
+private let historicInstitutionQualifiers: [String] = [
+    "historic", "historical", "former ", "old ", "abandoned"
+]
+
+private enum InstitutionGate {
+    /// P576 required — heritage designation alone is not enough.
+    case strict
+    /// P576 or P1435 acceptable — a recognized landmark church or
+    /// similar can stay even when still in active use.
+    case lenient
+}
+
+/// Returns the gate to apply to a title, or nil if the title isn't
+/// flagged as an operating-institution pattern (or already advertises
+/// itself as historic via a qualifier like "Old" / "Former").
+private func institutionGateFor(_ title: String) -> InstitutionGate? {
     let lower = title.lowercased()
-    for word in placeIndicators {
-        guard lower.contains(word) else { continue }
-        if roadRailIndicators.contains(word) {
-            // A road/rail word only qualifies when the title also
-            // has a historic qualifier. If not, skip this match
-            // and see whether another (non-road/rail) place word
-            // also appears in the title — e.g. "Lincoln Highway
-            // Bridge" should pass via "bridge" even though
-            // "highway" itself doesn't qualify.
-            if historicQualifiers.contains(where: { lower.contains($0) }) {
-                return true
-            }
-            continue
-        }
-        return true
+    if historicInstitutionQualifiers.contains(where: { lower.contains($0) }) {
+        return nil
     }
+    if strictOperatingInstitutionPatterns.contains(where: { lower.contains($0) }) {
+        return .strict
+    }
+    if lenientOperatingInstitutionPatterns.contains(where: { lower.contains($0) }) {
+        return .lenient
+    }
+    return nil
+}
+
+/// True if Wikidata signals satisfy the gate. For strict, only P576
+/// (closure date) keeps the candidate. For lenient, P1435 (heritage
+/// designation) also keeps it.
+private func institutionPassesGate(
+    _ signals: WikidataHistoricSignals,
+    gate: InstitutionGate
+) -> Bool {
+    if signals.dissolvedYear != nil { return true }
+    if gate == .lenient && signals.hasHeritageDesignation { return true }
     return false
 }
 
