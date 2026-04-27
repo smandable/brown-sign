@@ -214,6 +214,96 @@ func wikipediaRESTSummaryExtract(for title: String) async -> String? {
     return extract
 }
 
+/// Returns additional Wikipedia article images beyond the primary
+/// thumbnail — used by the detail view's image carousel. Calls
+/// `/api/rest_v1/page/media-list/{title}` and filters to gallery-
+/// worthy images via Wikipedia's `showInGallery` flag (the same hint
+/// MediaWiki itself uses to skip nav icons, audio file thumbnails,
+/// and country-flag decorations). SVGs are also dropped — AsyncImage
+/// doesn't render them natively and they're typically diagrams or
+/// icons rather than photographs.
+///
+/// If `excluding` is supplied, any URL whose base file name matches
+/// the excluded URL's base file name is skipped. We match on base
+/// name (with the `Npx-` thumbnail-size prefix stripped) so that the
+/// 600 px primary thumbnail and its original full-size sibling don't
+/// both show up as duplicate slides.
+///
+/// Returns [] on any error or when the page has no extra media —
+/// caller falls back to single-image rendering.
+func wikipediaArticleImageURLs(
+    for title: String,
+    excluding excludedURL: URL? = nil
+) async -> [URL] {
+    let pathTitle = title.replacingOccurrences(of: " ", with: "_")
+    guard let encoded = pathTitle.addingPercentEncoding(
+            withAllowedCharacters: .urlPathAllowed
+          ),
+          let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/media-list/\(encoded)") else {
+        return []
+    }
+
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [] }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let items = root["items"] as? [[String: Any]] else {
+        return []
+    }
+
+    let excludedBase = excludedURL.map(wikipediaImageBaseName)
+    var seenBases = Set<String>()
+    var urls: [URL] = []
+    for item in items {
+        guard let type = item["type"] as? String, type == "image" else { continue }
+        guard let showInGallery = item["showInGallery"] as? Bool, showInGallery else { continue }
+        // Prefer the original-size source. Fall back to the largest
+        // srcset entry when `original` is missing.
+        let sourceString: String?
+        if let original = item["original"] as? [String: Any],
+           let src = original["source"] as? String {
+            sourceString = src
+        } else if let srcset = item["srcset"] as? [[String: Any]],
+                  let last = srcset.last,
+                  let src = last["src"] as? String {
+            sourceString = src
+        } else {
+            sourceString = nil
+        }
+        guard let source = sourceString,
+              let imgURL = parseProtocolRelativeURL(source) else { continue }
+        // Skip SVGs — AsyncImage can't render them and they're
+        // usually diagrams rather than photographs.
+        if imgURL.pathExtension.lowercased() == "svg" { continue }
+        let base = wikipediaImageBaseName(imgURL)
+        if let excludedBase, base == excludedBase { continue }
+        if seenBases.contains(base) { continue }
+        seenBases.insert(base)
+        urls.append(imgURL)
+    }
+    return urls
+}
+
+/// Strips the `Npx-` thumbnail-size prefix off a Wikipedia image URL's
+/// last path component, so a 600 px thumbnail and its full-size
+/// sibling resolve to the same base name. Used to dedup the lead
+/// image against the rest of the media list.
+private func wikipediaImageBaseName(_ url: URL) -> String {
+    let last = url.lastPathComponent
+    if let range = last.range(of: #"^\d+px-"#, options: .regularExpression) {
+        return String(last[range.upperBound...])
+    }
+    return last
+}
+
+/// Wikipedia's REST API returns protocol-relative URLs (`//upload…`).
+/// Prepend `https:` so URL parsing succeeds; pass through fully-formed
+/// URLs unchanged.
+private func parseProtocolRelativeURL(_ src: String) -> URL? {
+    if src.hasPrefix("//") {
+        return URL(string: "https:" + src)
+    }
+    return URL(string: src)
+}
+
 /// Returns the best article image URL via the Wikipedia REST summary
 /// endpoint (`/api/rest_v1/page/summary/{title}`). Used as a fallback
 /// when the legacy `prop=pageimages` call returned no thumbnail — REST

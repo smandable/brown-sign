@@ -85,7 +85,7 @@ User location (or panned map center)
 ## Features
 
 - **Nearby discovery tab** — surfaces brown-sign-worthy landmarks around you, no scan required. The fetch primary is a Wikidata SPARQL query that returns only items with a heritage designation (P1435 — NRHP, state register, etc.) or a curated landmark P31 type (museum, park, monument, lighthouse, theatre building, university campus building, …) via `wdt:P31/wdt:P279*` so subclasses like "state park" or "art museum" come along automatically. List shows the closest 100 hits within 5 miles. Map supports **pan-to-search**: as you move the map center more than ~2.5 miles away from the last fetch, a new SPARQL query fires at the new location and pins accumulate. Pan across a state and you build up a dotted trail of landmarks as you go. Wikipedia summaries and thumbnails hydrate in parallel via the REST endpoints; tap a row (or pin) to enrich (full Wikidata + AI polish + Google KG + match score + image) in the background and push the standard detail view, just like a scan result.
-- **Map view in History and Nearby** — every saved lookup and every nearby discovery drops as a brown signpost pin on a MapKit map. Tap a pin for a callout card with thumbnail, summary, and a "View details" link. List/Map toggle on both tabs; History fits the camera to the bounding box of all your finds, Nearby centers on you.
+- **Map view in History and Nearby** — every saved lookup and every nearby discovery drops as a brown signpost pin on a MapKit map. Tap a pin for a callout card with thumbnail, summary, and a "View details" button; tap anywhere on the card body (not the X dismiss) to open the full detail view. List/Map toggle on both tabs; History fits the camera to the bounding box of all your finds, Nearby centers on you.
 - **Live camera** with tap-to-focus, auto flash, and a close button
 - **On-device OCR** via Vision — multi-line output sorted top-to-bottom by bounding box, with structured line-by-line prompting so Apple Intelligence can distinguish "Wadsworth Mansion" from "2 MI"
 - **On-device Apple Intelligence** via FoundationModels:
@@ -100,6 +100,7 @@ User location (or panned map center)
 - **NPS fallback** for historic places without Wikipedia coverage — queries both `/parks` and `/places` (NRHP-listed sites), with article images from the NPS `images` array
 - **Wikidata enrichment** — coordinates, inception year, instance-of type label, heritage-designation flag (P1435), and dissolution year (P576) for every candidate, via exact sitelinks lookup (not fuzzy search)
 - **Persistent article images** — downloaded and resized during enrichment, stored locally in SwiftData. History scrolling is instant; images never disappear from transient network failures.
+- **Image carousel in the detail view** — the persisted primary thumbnail shows instantly as the first slide; additional gallery-worthy images from the Wikipedia article (`/api/rest_v1/page/media-list` filtered by Wikipedia's `showInGallery: true` flag, with SVGs and primary-thumbnail duplicates filtered out) load lazily via `AsyncImage` only when the user swipes to them. Each slide has a fixed-frame placeholder so loading states don't shift the layout, and the carousel uses an explicit selection binding so it doesn't drift when extras arrive asynchronously. Page dots only appear when there's more than one slide.
 - **SwiftData history** — newest-first sort, swipe-to-delete, Delete All in edit mode, dedupe by canonical URL, push-to-detail with full raw summary
 - **Selectable text** — titles and descriptions use UITextView (read-only) for full iOS text selection: tap, double-tap, drag handles, copy
 - **Share sheet** — one-tap sharing of the article URL from the result card or detail view
@@ -171,7 +172,7 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `OCRHelper.swift` | Vision OCR — returns `[String]` lines sorted top-to-bottom |
 | `AppleIntelligence.swift` | FoundationModels — normalize (line-aware), polish, match-score |
 | `LocationManager.swift` | CoreLocation async wrapper with in-flight guard + timeout |
-| `WikipediaSearch.swift` | Text search, geosearch, batch extracts/pageimages by page-id or title, REST summary fallback for empty intros, word-boundary truncation |
+| `WikipediaSearch.swift` | Text search, geosearch, batch extracts/pageimages by page-id or title, REST summary fallback for empty intros, word-boundary truncation, REST media-list lookup for the detail-view image carousel |
 | `WikidataSearch.swift` | Sitelinks-based entity lookup (P625 / P571 / P31 / P1435 / P576 + label resolution) and lighter historic-signals fetch for the operating-institution gate |
 | `WikidataLandmarkSearch.swift` | SPARQL geo-spatial query against `query.wikidata.org` — primary fetch for the Nearby tab. Returns only items with a heritage designation (P1435) or a curated landmark P31 type (recursive via P279*) |
 | `HTTPRetry.swift` | Shared retry helper (`httpDataWithRetry`) — 3 attempts with 500 ms + 1.5 s backoff, retries on 502/503/504/429 + URL errors, honors task cancellation. Used by the SPARQL fetch and the Nearby Wikipedia REST hydration |

@@ -228,31 +228,20 @@ struct HistoryMapView: View {
 }
 
 /// Compact summary card shown over the map when a pin is selected.
+/// The whole card body is a NavigationLink to the detail view; the X
+/// is a sibling button so dismissing the card doesn't also navigate.
 private struct SelectedLookupCard: View {
     let lookup: LandmarkLookup
     let onDismiss: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 4) {
-                Text(lookup.resolvedTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(lookup.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                NavigationLink(value: lookup) {
-                    Label("View details", systemImage: "text.alignleft")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                .controlSize(.small)
-                .padding(.top, 2)
+            NavigationLink(value: lookup) {
+                cardContent
             }
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the full landmark details")
+
             Button {
                 onDismiss()
             } label: {
@@ -269,6 +258,39 @@ private struct SelectedLookupCard: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         )
+    }
+
+    /// Card content that's the tappable navigation target. "View
+    /// details" is a real NavigationLink (nested inside the outer
+    /// NavigationLink) so it keeps its press-state feedback as a
+    /// distinct button. Both push the same `lookup` value; SwiftUI
+    /// routes taps inside the inner link to it and taps elsewhere in
+    /// the card to the outer link.
+    private var cardContent: some View {
+        HStack(alignment: .top, spacing: 12) {
+            thumbnail
+            VStack(alignment: .leading, spacing: 4) {
+                Text(lookup.resolvedTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(lookup.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                NavigationLink(value: lookup) {
+                    Label("View details", systemImage: "text.alignleft")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                .controlSize(.small)
+                .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -414,24 +436,80 @@ struct HistoryRow: View {
 
 // MARK: - LandmarkDetailView
 
+/// One slide in the detail-view image carousel. Two flavors: `local`
+/// for the persisted primary thumbnail (already in SwiftData as JPEG
+/// bytes), `remote` for additional gallery images that load lazily
+/// via AsyncImage when the user swipes to them.
+private struct DetailImageSlide: Identifiable {
+    let id: String
+    let kind: Kind
+    enum Kind {
+        case local(UIImage)
+        case remote(URL)
+    }
+}
+
 struct LandmarkDetailView: View {
     let lookup: LandmarkLookup
 
     @State private var showSafari = false
     @State private var showMapsDialog = false
+    /// Additional Wikipedia article images beyond the persisted
+    /// primary thumbnail. Populated by a background fetch in `.task`
+    /// when the detail view appears; each entry loads lazily via
+    /// `AsyncImage` only when the user swipes to it. Empty until the
+    /// fetch completes (or stays empty if Wikipedia returns no
+    /// gallery-worthy extras).
+    @State private var additionalImageURLs: [URL] = []
+    /// Explicit `TabView` selection so the carousel stays pinned to
+    /// the slide the user is on when `imageSlides` changes shape
+    /// (extras arriving asynchronously). Without this binding the
+    /// TabView's internal index can drift on re-render and visibly
+    /// jump between slides without the user swiping.
+    @State private var carouselSelection: String = "primary"
+
+    /// Slides assembled for the image carousel: the persisted
+    /// primary thumbnail first (if we have it), then any extra
+    /// gallery images from Wikipedia. Each slide carries an `id` so
+    /// `TabView`'s `ForEach` keys correctly across re-renders.
+    private var imageSlides: [DetailImageSlide] {
+        var slides: [DetailImageSlide] = []
+        if let data = lookup.articleImageData, let image = UIImage(data: data) {
+            slides.append(DetailImageSlide(id: "primary", kind: .local(image)))
+        }
+        for url in additionalImageURLs {
+            slides.append(DetailImageSlide(id: url.absoluteString, kind: .remote(url)))
+        }
+        return slides
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Persisted Wikipedia article image, if available.
-                if let data = lookup.articleImageData, let image = UIImage(data: data) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: 260)
-                        .clipped()
-                        .contentShape(Rectangle())
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                // Image carousel: persisted primary + lazy gallery
+                // images. Page dots only appear when there's more
+                // than one slide.
+                if !imageSlides.isEmpty {
+                    TabView(selection: $carouselSelection) {
+                        ForEach(imageSlides) { slide in
+                            slideView(slide)
+                                .tag(slide.id)
+                        }
+                    }
+                    .frame(height: 260)
+                    .tabViewStyle(
+                        .page(indexDisplayMode: imageSlides.count > 1 ? .always : .never)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // If the current selection isn't in the slide
+                    // list (e.g. extras arrived but selection somehow
+                    // drifted), snap back to the first slide.
+                    .onChange(of: imageSlides.map(\.id)) { _, ids in
+                        if !ids.contains(carouselSelection),
+                           let first = ids.first {
+                            carouselSelection = first
+                        }
+                    }
                 }
 
                 // The user's captured sign photo (local thumbnail), if any.
@@ -546,6 +624,59 @@ struct LandmarkDetailView: View {
                 lookup.summary = polished
             }
         }
+        .task(id: lookup.resolvedTitle) {
+            // Fetch extra gallery-worthy article images for the
+            // carousel. Wikipedia REST returns only metadata (URLs +
+            // dimensions); image bytes don't download until the user
+            // swipes to that slide. NPS-sourced lookups skip this —
+            // they don't have a Wikipedia article to query.
+            guard lookup.source == "wikipedia",
+                  additionalImageURLs.isEmpty else { return }
+            let primaryURL = lookup.articleImageURLString.flatMap(URL.init(string:))
+            let extras = await wikipediaArticleImageURLs(
+                for: lookup.resolvedTitle,
+                excluding: primaryURL
+            )
+            if !extras.isEmpty {
+                additionalImageURLs = extras
+            }
+        }
+    }
+
+    /// Renders one carousel slide with a stable frame regardless of
+    /// load state. Wrapping the image in a fixed-size `Color`-backed
+    /// ZStack prevents AsyncImage's empty/failure phases (which have
+    /// no intrinsic size) from collapsing the slide and shifting the
+    /// layout — the visible "jump" symptom on slow connections.
+    @ViewBuilder
+    private func slideView(_ slide: DetailImageSlide) -> some View {
+        ZStack {
+            Color.gray.opacity(0.08)
+            switch slide.kind {
+            case .local(let image):
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            case .remote(let url):
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().scaledToFill()
+                    case .empty:
+                        ProgressView()
+                    case .failure:
+                        Image(systemName: "photo")
+                            .font(.system(size: 32))
+                            .foregroundStyle(.secondary)
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 260)
+        .clipped()
     }
 
     @ViewBuilder

@@ -629,8 +629,10 @@ private struct NearbyMapView: View {
 }
 
 /// Compact summary card shown over the Nearby map when a pin is
-/// selected. Its "View details" button calls `onView`, which runs the
-/// same enrich + push flow used by the list rows.
+/// selected. The whole card body is a single tap target that calls
+/// `onView` (the enrich + push flow shared with the list rows). The X
+/// is a sibling button so dismissing the card doesn't also trigger
+/// navigation.
 private struct SelectedNearbyCard: View {
     let result: LandmarkResult
     let onView: () -> Void
@@ -638,25 +640,12 @@ private struct SelectedNearbyCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 4) {
-                Text(result.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(result.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                Button(action: onView) {
-                    Label("View details", systemImage: "text.alignleft")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                .controlSize(.small)
-                .padding(.top, 2)
+            Button(action: onView) {
+                cardContent
             }
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the full landmark details")
+
             Button {
                 onDismiss()
             } label: {
@@ -673,6 +662,39 @@ private struct SelectedNearbyCard: View {
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         )
+    }
+
+    /// Card content that's the tappable area. "View details" is a
+    /// real Button (nested inside the outer Button) so it gets press
+    /// feedback as its own tap target. SwiftUI routes taps inside the
+    /// inner button to it; taps elsewhere in the card fire the outer
+    /// button — both call `onView`, so the destination is the same
+    /// either way.
+    private var cardContent: some View {
+        HStack(alignment: .top, spacing: 12) {
+            thumbnail
+            VStack(alignment: .leading, spacing: 4) {
+                Text(result.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(result.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Button(action: onView) {
+                    Label("View details", systemImage: "text.alignleft")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                .controlSize(.small)
+                .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
