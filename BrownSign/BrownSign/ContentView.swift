@@ -78,6 +78,25 @@ struct ContentView: View {
                                 .clipped()
                                 .contentShape(Rectangle())
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .overlay(alignment: .topTrailing) {
+                                    Button {
+                                        capturedImage = nil
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.title2)
+                                            // Dual-tone (white glyph
+                                            // over translucent black
+                                            // disc) stays legible over
+                                            // any captured background.
+                                            .foregroundStyle(
+                                                .white,
+                                                .black.opacity(0.55)
+                                            )
+                                            .padding(8)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Remove photo")
+                                }
                         }
 
                         Button {
