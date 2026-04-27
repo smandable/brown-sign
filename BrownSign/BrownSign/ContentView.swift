@@ -62,6 +62,14 @@ struct ContentView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 16) {
+                        // Brown sign hero anchored at the top whenever
+                        // we're in a "fresh" state (no result, not
+                        // mid-search). Disappears once a result lands
+                        // so the result card has the full viewport.
+                        if result == nil && !isSearching {
+                            brownSignHero
+                        }
+
                         if let image = capturedImage {
                             Image(uiImage: image)
                                 .resizable()
@@ -136,8 +144,10 @@ struct ContentView: View {
                                 .id("resultCard")
                             alternativesSection
                         } else if !isSearching {
+                            // Hero moved to the top of the VStack;
+                            // the empty-state body is just the
+                            // how-it-works guide or recent-finds list.
                             VStack(spacing: 20) {
-                                brownSignHero
                                 if recentLookups.isEmpty {
                                     howItWorksSteps
                                 } else {
