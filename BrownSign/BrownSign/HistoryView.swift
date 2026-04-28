@@ -468,14 +468,24 @@ struct LandmarkDetailView: View {
     /// jump between slides without the user swiping.
     @State private var carouselSelection: String = "primary"
 
-    /// Slides assembled for the image carousel: the persisted
-    /// primary thumbnail first (if we have it), then any extra
-    /// gallery images from Wikipedia. Each slide carries an `id` so
-    /// `TabView`'s `ForEach` keys correctly across re-renders.
+    /// Slides assembled for the image carousel. Slot 0 is always
+    /// reserved as `id: "primary"` whenever we know about an article
+    /// image — either the persisted JPEG bytes (instant) or, while
+    /// those are still downloading, the article-image URL rendered
+    /// through `AsyncImage`. Reserving the slot with a stable id is
+    /// what keeps the TabView from "jumping": when the Nearby flow
+    /// opens the detail view, `additionalImageURLs` arrives before
+    /// `articleImageData` finishes downloading, and without a
+    /// pre-reserved primary slot the selection settles on the first
+    /// extra and then snaps when the persistent bytes land.
     private var imageSlides: [DetailImageSlide] {
         var slides: [DetailImageSlide] = []
         if let data = lookup.articleImageData, let image = UIImage(data: data) {
             slides.append(DetailImageSlide(id: "primary", kind: .local(image)))
+        } else if let urlString = lookup.articleImageURLString,
+                  !urlString.isEmpty,
+                  let url = URL(string: urlString) {
+            slides.append(DetailImageSlide(id: "primary", kind: .remote(url)))
         }
         for url in additionalImageURLs {
             slides.append(DetailImageSlide(id: url.absoluteString, kind: .remote(url)))
