@@ -27,6 +27,6 @@ struct BrownSignApp: App {
                     }
             }
         }
-        .modelContainer(for: LandmarkLookup.self)
+        .modelContainer(for: [LandmarkLookup.self, HiddenLandmark.self])
     }
 }

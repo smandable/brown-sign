@@ -27,6 +27,8 @@ import MapKit
 
 struct NearMeView: View {
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \HiddenLandmark.dateHidden, order: .reverse)
+    private var hiddenLandmarks: [HiddenLandmark]
 
     private enum LoadState {
         case idle
@@ -67,6 +69,8 @@ struct NearMeView: View {
     /// directly — so we pass this counter down and the map observes
     /// it via `.onChange`.
     @State private var recenterSignal = 0
+    @State private var searchText: String = ""
+    @State private var showHiddenSheet = false
 
     private let locationManager = LocationManager.shared
 
@@ -87,7 +91,17 @@ struct NearMeView: View {
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
                     .padding(.top, 8)
-                    .padding(.bottom, 4)
+
+                    // 16pt below the picker — matches the VStack(spacing: 16)
+                    // gap between the "Snap a landmark sign" button and the
+                    // text field on the Scan card.
+                    SearchField(
+                        text: $searchText,
+                        placeholder: "Search nearby landmarks"
+                    )
+                    .padding(.horizontal)
+                    .padding(.top, 16)
+                    .padding(.bottom, 2)
                 }
 
                 Group {
@@ -138,14 +152,16 @@ struct NearMeView: View {
                                     Task { await fetchAroundMapCenter(center) }
                                 }
                             )
+                            .padding(.top, 16)
                         }
                     case .loaded(let results):
+                        let visible = visibleResults(from: results)
                         switch displayMode {
                         case .list:
-                            list(results)
+                            list(visible)
                         case .map:
                             NearbyMapView(
-                                results: results,
+                                results: visible,
                                 userLocation: userLocation,
                                 recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
@@ -153,12 +169,20 @@ struct NearMeView: View {
                                     Task { await fetchAroundMapCenter(center) }
                                 }
                             )
+                            .padding(.top, 16)
                         }
                     }
                 }
             }
             .navigationTitle("Nearby")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Custom principal title — system inline title is
+                // ~17pt; 21pt is ~25% larger as Sean asked for.
+                ToolbarItem(placement: .principal) {
+                    Text("Nearby")
+                        .font(.system(size: 21, weight: .semibold))
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     if isReloading {
                         ProgressView()
@@ -175,11 +199,50 @@ struct NearMeView: View {
             .navigationDestination(item: $pushedLookup) { lookup in
                 LandmarkDetailView(lookup: lookup)
             }
+            .sheet(isPresented: $showHiddenSheet) {
+                HiddenLandmarksView()
+            }
         }
         .task {
             if case .idle = state {
                 await refresh(force: false)
             }
+            // Cold start often races location services and the SPARQL
+            // endpoint — first fetch can come back empty even when the
+            // area has plenty of nearby landmarks. Wait a few seconds
+            // and retry once before leaving the user staring at "no
+            // landmarks nearby" (or a location-unavailable error) when
+            // a manual tap on Refresh would have worked.
+            if shouldAutoRetryInitialFetch {
+                try? await Task.sleep(for: .seconds(3))
+                if shouldAutoRetryInitialFetch {
+                    await refresh(force: false)
+                }
+            }
+        }
+    }
+
+    /// True while the initial-load state is one a retry can plausibly
+    /// fix — empty results or a location-services miss. `.loaded`,
+    /// `.locationDenied`, and `.loading` aren't candidates.
+    private var shouldAutoRetryInitialFetch: Bool {
+        switch state {
+        case .empty, .locationUnavailable: return true
+        default: return false
+        }
+    }
+
+    /// Apply the user's hide-list and the search-text filter to the
+    /// raw discover results. Both filters compose: a landmark whose URL
+    /// is hidden never appears, and what's left is narrowed by partial
+    /// (case-insensitive) substring match against the title.
+    private func visibleResults(from results: [LandmarkResult]) -> [LandmarkResult] {
+        let hiddenURLs = Set(hiddenLandmarks.map(\.pageURLString))
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return results.filter { r in
+            if hiddenURLs.contains(r.pageURL.absoluteString) { return false }
+            if q.isEmpty { return true }
+            return r.title.lowercased().contains(q)
         }
     }
 
@@ -211,10 +274,13 @@ struct NearMeView: View {
 
     @ViewBuilder
     private func list(_ results: [LandmarkResult]) -> some View {
-        List {
-            // Lat/long context row — a compact, tight-insets header
-            // rather than a proper Section so there's no extra
-            // section-header spacing above it.
+        // Lat/long context row sits OUTSIDE the List so it doesn't
+        // steal the inset-grouped section's rounded top corners from
+        // the first landmark row. Inside the List with a clear
+        // background, the List still treats it as row 0 and applies
+        // top-rounded corners there — making the first visible row
+        // look chopped.
+        VStack(spacing: 0) {
             if let loc = userLocation {
                 HStack(spacing: 6) {
                     Image(systemName: "location.fill")
@@ -223,24 +289,99 @@ struct NearMeView: View {
                                 loc.coordinate.latitude, loc.coordinate.longitude))
                         .font(.caption)
                 }
-                .foregroundStyle(.secondary)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                .foregroundStyle(Color.accentColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 16)
             }
 
-            ForEach(Array(results.enumerated()), id: \.offset) { _, result in
-                Button {
-                    open(result)
-                } label: {
-                    NearbyRow(result: result, userLocation: userLocation)
+            List {
+                // Identify rows by canonical page URL — a stable
+                // identifier that survives the result set shrinking
+                // when a row is hidden. Indexing by `\.offset` would
+                // re-number the remaining rows and SwiftUI could
+                // mis-diff which row left the list.
+                ForEach(results, id: \.pageURL) { result in
+                    Button {
+                        open(result)
+                    } label: {
+                        NearbyRow(result: result, userLocation: userLocation)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color("CardBackground"))
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button {
+                            hide(result)
+                        } label: {
+                            Label("Hide", systemImage: "eye.slash")
+                        }
+                        .tint(.orange)
+                    }
                 }
-                .buttonStyle(.plain)
+
+                if !hiddenLandmarks.isEmpty {
+                    Button {
+                        showHiddenSheet = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "eye.slash")
+                            Text("Hidden landmarks (\(hiddenLandmarks.count))")
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.tertiary)
+                        }
+                        // Match the .caption sizing used by the
+                        // "Within 5 miles…" header at the top of the
+                        // list — same compact label style.
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    .listRowBackground(Color("CardBackground"))
+                }
+            }
+            .scrollDismissesKeyboard(.immediately)
+            // Hide iOS's default `systemGroupedBackground` (gray
+            // light / black dark) and replace with parchment so the
+            // swipe-action area is the same color as the rows. Without
+            // this, swiping a row leaves a brief seam between the
+            // sliding parchment row and the gray/black page bg behind.
+            .scrollContentBackground(.hidden)
+            .background(Color("CardBackground"))
+            // Header bottom padding (8) already gives breathing room
+            // above the first row, so the list's own top content
+            // margin can be tight.
+            .contentMargins(.top, 4, for: .scrollContent)
+            .refreshable {
+                await refresh(force: true)
             }
         }
-        .refreshable {
-            await refresh(force: true)
-        }
+    }
+
+    /// Persist a HiddenLandmark for this result so future Nearby fetches
+    /// filter it out. Keyed on the canonical page URL — same identifier
+    /// the discover pipeline uses for dedup. Snapshots the summary +
+    /// article-image fields so the Hidden Landmarks sheet can show a
+    /// thumbnail/preview card without re-fetching.
+    private func hide(_ result: LandmarkResult) {
+        let key = result.pageURL.absoluteString
+        let descriptor = FetchDescriptor<HiddenLandmark>(
+            predicate: #Predicate { $0.pageURLString == key }
+        )
+        if let _ = try? modelContext.fetch(descriptor).first { return }
+        let hidden = HiddenLandmark(
+            pageURLString: key,
+            title: result.title,
+            summary: result.summary,
+            articleImageURLString: result.articleImageURL?.absoluteString,
+            articleImageData: result.articleImageData
+        )
+        modelContext.insert(hidden)
+        // Insertion is normally auto-saved on the next runloop, but
+        // explicit save makes the insert visible to other @Query
+        // observers immediately and surfaces any persistence error.
+        try? modelContext.save()
     }
 
     // MARK: - Load

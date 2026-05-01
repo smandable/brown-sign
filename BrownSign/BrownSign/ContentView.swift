@@ -107,6 +107,10 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity, minHeight: 28)
                         }
                         .buttonStyle(.borderedProminent)
+                        // Filled buttons use AccentButton instead of
+                        // AccentColor — needs more saturation in dark
+                        // mode for white-text contrast (4.8:1 vs 3.2:1).
+                        .tint(Color("AccentButton"))
                         .buttonBorderShape(.roundedRectangle(radius: 0))
 
                         HStack(spacing: 8) {
@@ -116,6 +120,17 @@ struct ContentView: View {
                                 onSearch: { Task { await lookUp() } }
                             )
                             .frame(minHeight: 28)
+                            .onChange(of: signText) { _, _ in
+                                // Clear any stale status (e.g.
+                                // "No results" left over from a
+                                // previous search) the moment the
+                                // user starts a new query — they
+                                // shouldn't have to commit a search
+                                // just to dismiss old feedback.
+                                if !statusMessage.isEmpty {
+                                    statusMessage = ""
+                                }
+                            }
 
                             if !signText.isEmpty {
                                 Button {
@@ -149,6 +164,7 @@ struct ContentView: View {
 
                         if locationManager.isDenied && !locationBannerDismissed {
                             locationDeniedBanner
+                                .opacity(isSignTextFocused ? 0 : 1)
                         }
 
                         if !statusMessage.isEmpty {
@@ -166,6 +182,10 @@ struct ContentView: View {
                             // Hero moved to the top of the VStack;
                             // the empty-state body is just the
                             // how-it-works guide or recent-finds list.
+                            // Fades while the keyboard is up — those
+                            // rows otherwise sit visibly under the
+                            // raised "Look It Up" button and pull the
+                            // eye away from the field being typed in.
                             VStack(spacing: 20) {
                                 if recentLookups.isEmpty {
                                     howItWorksSteps
@@ -175,11 +195,15 @@ struct ContentView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 32)
+                            .opacity(isSignTextFocused ? 0 : 1)
                             .accessibilityElement(children: .contain)
                             .accessibilityLabel("Brown Sign — snap a sign or type to look up a landmark")
                         }
                     }
                     .padding()
+                    // Single animation on focus so all the fades happen
+                    // together rather than each rebuilding independently.
+                    .animation(.easeInOut(duration: 0.2), value: isSignTextFocused)
                 }
                 .onChange(of: result?.pageURL) { _, _ in
                     guard result != nil else { return }
@@ -223,6 +247,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(Color("AccentButton"))
                 .buttonBorderShape(.roundedRectangle(radius: 0))
                 .opacity(lookUpDisabled ? 0.5 : 1)
                 .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
@@ -401,7 +426,7 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 8) {
             Text("Recent finds")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.accentColor)
 
             // Embedding a List inside the outer ScrollView so we get the
             // native iOS swipe-to-delete gesture — .swipeActions only
@@ -444,11 +469,20 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
-            .frame(height: CGFloat(rows.count) * 92)
+            // 104pt per row leaves room for thumbnail + headline + 2-line
+            // summary + caption metadata + listRowInsets without clipping
+            // (was 92, just barely fitting on long titles).
+            .frame(height: CGFloat(rows.count) * 104)
+            // Same `CardBackground` asset Nearby/History rows use:
+            // warm parchment in light mode, iOS-standard dark gray in
+            // dark mode. Keeps the recents card visually parallel to
+            // those list rows. clipShape after the background so row
+            // content actually clips to the rounded outline.
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.secondary.opacity(0.08))
+                    .fill(Color("CardBackground"))
             )
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -711,6 +745,15 @@ struct ContentView: View {
                         .font(.caption)
                 }
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Same parchment surface as the detail view's metadata
+            // block — keeps the Scan result card metadata visually
+            // parallel to its History counterpart.
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color("CardBackground"))
+            )
         }
     }
 

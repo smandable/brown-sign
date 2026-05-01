@@ -30,11 +30,23 @@ struct HistoryView: View {
     @State private var editMode: EditMode = .inactive
     @State private var showDeleteAllConfirmation = false
     @State private var displayMode: LandmarkDisplayMode = .list
+    @State private var searchText: String = ""
+
+    /// Lookups narrowed by the live search field. Partial, case-
+    /// insensitive substring match against the resolved title.
+    private var filteredLookups: [LandmarkLookup] {
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return lookups }
+        return lookups.filter { $0.resolvedTitle.lowercased().contains(q) }
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !lookups.isEmpty {
+                // Chrome above the list (picker, search field) hides in
+                // edit mode — when the user is selecting rows to delete,
+                // the browse/search controls are noise.
+                if !lookups.isEmpty && !editMode.isEditing {
                     Picker("Display mode", selection: $displayMode) {
                         ForEach(LandmarkDisplayMode.allCases) { mode in
                             Label(mode.label, systemImage: mode.icon).tag(mode)
@@ -43,7 +55,17 @@ struct HistoryView: View {
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
                     .padding(.top, 8)
-                    .padding(.bottom, 4)
+
+                    // 16pt below the picker — matches the VStack(spacing: 16)
+                    // gap between the "Snap a landmark sign" button and the
+                    // text field on the Scan card.
+                    SearchField(
+                        text: $searchText,
+                        placeholder: "Search history"
+                    )
+                    .padding(.horizontal)
+                    .padding(.top, 16)
+                    .padding(.bottom, 2)
                 }
 
                 Group {
@@ -56,26 +78,91 @@ struct HistoryView: View {
                     } else {
                         switch displayMode {
                         case .list:
-                            List {
-                                ForEach(lookups) { lookup in
-                                    NavigationLink(value: lookup) {
-                                        HistoryRow(lookup: lookup)
+                            if filteredLookups.isEmpty {
+                                // Search yielded nothing — render the
+                                // empty-state on its own instead of
+                                // overlaying it on the List, which
+                                // would centre the "No matches" copy
+                                // right on top of the "Recently viewed
+                                // landmarks" header row.
+                                ContentUnavailableView(
+                                    "No matches",
+                                    systemImage: "magnifyingglass",
+                                    description: Text("No saved lookups match \"\(searchText)\".")
+                                )
+                            } else {
+                                // Header lives OUTSIDE the List so it
+                                // doesn't steal the inset-grouped
+                                // section's rounded top corners from
+                                // the first landmark row. Inside the
+                                // List with a clear background, the
+                                // List still treats it as row 0 and
+                                // applies the top-rounded corners
+                                // there — making the first visible row
+                                // look chopped. As a sibling above the
+                                // List, we control its spacing with
+                                // simple padding and the List's first
+                                // row keeps its native rounded cap.
+                                VStack(spacing: 0) {
+                                    if !editMode.isEditing {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "clock.fill")
+                                                .font(.caption)
+                                            Text("Recently viewed landmarks")
+                                                .font(.caption)
+                                        }
+                                        .foregroundStyle(Color.accentColor)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 16)
+                                        .padding(.top, 16)
+                                        .padding(.bottom, 16)
                                     }
+
+                                    List {
+                                        ForEach(filteredLookups) { lookup in
+                                            NavigationLink(value: lookup) {
+                                                HistoryRow(lookup: lookup)
+                                            }
+                                            .listRowBackground(Color("CardBackground"))
+                                        }
+                                        .onDelete(perform: deleteFilteredLookups)
+                                    }
+                                    .environment(\.editMode, $editMode)
+                                    .scrollDismissesKeyboard(.immediately)
+                                    // Hide iOS's default page bg and
+                                    // replace with parchment so the
+                                    // swipe-action area matches the
+                                    // row color (no seam between a
+                                    // sliding parchment row and the
+                                    // page bg behind).
+                                    .scrollContentBackground(.hidden)
+                                    .background(Color("CardBackground"))
+                                    // Header bottom padding (8) already
+                                    // gives breathing room above the
+                                    // first row, so the list's own top
+                                    // content margin can be tight.
+                                    .contentMargins(.top, 4, for: .scrollContent)
                                 }
-                                .onDelete(perform: deleteLookups)
                             }
-                            .environment(\.editMode, $editMode)
                         case .map:
-                            HistoryMapView(lookups: lookups)
+                            HistoryMapView(lookups: filteredLookups)
+                                .padding(.top, 16)
                         }
                     }
                 }
             }
             .navigationTitle("History")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: LandmarkLookup.self) { lookup in
                 LandmarkDetailView(lookup: lookup)
             }
             .toolbar {
+                // Custom principal title — system inline title is
+                // ~17pt; 21pt is ~25% larger as Sean asked for.
+                ToolbarItem(placement: .principal) {
+                    Text("History")
+                        .font(.system(size: 21, weight: .semibold))
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     if displayMode == .list && editMode.isEditing && !lookups.isEmpty {
                         Button("Delete All", role: .destructive) {
@@ -91,9 +178,25 @@ struct HistoryView: View {
                 }
             }
             .environment(\.editMode, $editMode)
+            // Hide the tab bar while editing so the user is focused on
+            // the row-selection workflow — matches Mail/Notes editing
+            // UX. Also gate on `!lookups.isEmpty` so an empty list
+            // always shows the tab bar: deleting the last row removes
+            // the EditButton (gated on the same condition), and the
+            // user has no other way to exit edit mode.
+            .toolbar(
+                (editMode.isEditing && !lookups.isEmpty) ? .hidden : .visible,
+                for: .tabBar
+            )
             .onChange(of: displayMode) { _, newMode in
                 // Exiting edit mode cleanly when switching to map.
                 if newMode == .map { editMode = .inactive }
+            }
+            .onChange(of: lookups.isEmpty) { _, isEmpty in
+                // List drained (delete-all or swipe-delete-last) —
+                // ensure editMode resets so the next session starts
+                // clean.
+                if isEmpty { editMode = .inactive }
             }
             .confirmationDialog(
                 "Delete all history?",
@@ -113,6 +216,16 @@ struct HistoryView: View {
     private func deleteLookups(at offsets: IndexSet) {
         for index in offsets {
             modelContext.delete(lookups[index])
+        }
+    }
+
+    /// Swipe-delete handler for the displayed (filtered) list. Index
+    /// offsets are relative to `filteredLookups`, not the full `lookups`
+    /// query, so we resolve through the filtered array first.
+    private func deleteFilteredLookups(at offsets: IndexSet) {
+        let items = filteredLookups
+        for index in offsets {
+            modelContext.delete(items[index])
         }
     }
 
@@ -538,18 +651,6 @@ struct LandmarkDetailView: View {
                     font: .preferredFont(forTextStyle: .title2).bold()
                 )
 
-                HStack(spacing: 12) {
-                    Button {
-                        showSafari = true
-                    } label: {
-                        sourceBadge
-                    }
-                    .buttonStyle(.plain)
-                    Text(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 metadataBlock
 
                 if !lookup.rawSummary.isEmpty {
@@ -704,41 +805,53 @@ struct LandmarkDetailView: View {
 
     @ViewBuilder
     private var metadataBlock: some View {
-        let hasAny = lookup.hasCoordinates
-            || lookup.inceptionYear != nil
-            || lookup.wikidataType != nil
-
-        if hasAny {
-            VStack(alignment: .leading, spacing: 6) {
-                if let lat = lookup.latitude, let lon = lookup.longitude {
-                    Label(String(format: "%.4f, %.4f", lat, lon),
-                          systemImage: "mappin.and.ellipse")
-                        .font(.caption)
-                    Button {
-                        showMapsDialog = true
-                    } label: {
-                        Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
-                            .font(.caption)
-                            .foregroundStyle(.blue)
-                    }
-                    .buttonStyle(.plain)
+        // Source badge + saved date now live INSIDE the block, so
+        // every detail view gets a metadata card (no more "if hasAny"
+        // gating — even an entry with no Wikidata enrichment shows
+        // its source and date in the parchment box).
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Button {
+                    showSafari = true
+                } label: {
+                    sourceBadge
                 }
-                if let year = lookup.inceptionYear {
-                    Label("Est. \(String(year))", systemImage: "calendar")
-                        .font(.caption)
-                }
-                if let type = lookup.wikidataType {
-                    Label(type, systemImage: "tag.fill")
-                        .font(.caption)
-                }
+                .buttonStyle(.plain)
+                Text(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.secondary.opacity(0.1))
-            )
+            if let lat = lookup.latitude, let lon = lookup.longitude {
+                Label(String(format: "%.4f, %.4f", lat, lon),
+                      systemImage: "mappin.and.ellipse")
+                    .font(.caption)
+                Button {
+                    showMapsDialog = true
+                } label: {
+                    Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+            if let year = lookup.inceptionYear {
+                Label("Est. \(String(year))", systemImage: "calendar")
+                    .font(.caption)
+            }
+            if let type = lookup.wikidataType {
+                Label(type, systemImage: "tag.fill")
+                    .font(.caption)
+            }
         }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Same warm parchment surface as the list rows and the
+        // Scan recents card, so the detail view's metadata reads
+        // as another card from the same family.
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color("CardBackground"))
+        )
     }
 
 }
