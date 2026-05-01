@@ -67,6 +67,7 @@ struct HiddenLandmarksView: View {
                                 HiddenLandmarkRow(item: item)
                             }
                             .listRowBackground(Color("CardBackground"))
+                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button {
                                     restore(item)
@@ -77,13 +78,23 @@ struct HiddenLandmarksView: View {
                             }
                         }
                     }
+                    // Plain style so rows extend full-width within
+                    // the padded frame; inset-grouped doubles up
+                    // margins with .padding(.horizontal).
+                    .listStyle(.plain)
                     .animation(.default, value: editMode.isEditing)
                     // Hide iOS's default page bg and replace with
                     // parchment so the swipe-action area matches the
-                    // row color (no seam between a sliding parchment
-                    // row and the page bg behind).
+                    // row color (no seam).
                     .scrollContentBackground(.hidden)
                     .background(Color("CardBackground"))
+                    // Round corners so the sheet's list reads as a
+                    // parchment card on the system page bg.
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    // Match the picker/search field margin used by the
+                    // Nearby and History lists so this sheet lines up
+                    // visually with the rest of the app.
+                    .padding(.horizontal)
                 }
             }
             .navigationTitle("Hidden Landmarks")

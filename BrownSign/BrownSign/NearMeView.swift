@@ -152,7 +152,13 @@ struct NearMeView: View {
                                     Task { await fetchAroundMapCenter(center) }
                                 }
                             )
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .padding(.horizontal)
                             .padding(.top, 16)
+                            // Same gap below the map as above so the
+                            // tab bar has breathing room — matches
+                            // the search-field-to-map gap.
+                            .padding(.bottom, 16)
                         }
                     case .loaded(let results):
                         let visible = visibleResults(from: results)
@@ -169,7 +175,13 @@ struct NearMeView: View {
                                     Task { await fetchAroundMapCenter(center) }
                                 }
                             )
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .padding(.horizontal)
                             .padding(.top, 16)
+                            // Same gap below the map as above so the
+                            // tab bar has breathing room — matches
+                            // the search-field-to-map gap.
+                            .padding(.bottom, 16)
                         }
                     }
                 }
@@ -310,6 +322,12 @@ struct NearMeView: View {
                     }
                     .buttonStyle(.plain)
                     .listRowBackground(Color("CardBackground"))
+                    // Zero leading/trailing so row content aligns
+                    // with the picker / search field above (the
+                    // outer .padding(.horizontal) provides the only
+                    // margin; plain style would otherwise add ~16pt
+                    // of its own, doubling the gap).
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button {
                             hide(result)
@@ -339,16 +357,27 @@ struct NearMeView: View {
                         .foregroundStyle(Color.accentColor)
                     }
                     .listRowBackground(Color("CardBackground"))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                 }
             }
+            // Plain style instead of the default inset-grouped, so
+            // the rows extend full-width within the padded list
+            // frame. Inset-grouped adds its own per-row inset on top
+            // of any outer .padding(.horizontal), squeezing the rows.
+            .listStyle(.plain)
             .scrollDismissesKeyboard(.immediately)
-            // Hide iOS's default `systemGroupedBackground` (gray
-            // light / black dark) and replace with parchment so the
-            // swipe-action area is the same color as the rows. Without
-            // this, swiping a row leaves a brief seam between the
-            // sliding parchment row and the gray/black page bg behind.
+            // Hide the system bg and replace with parchment so the
+            // swipe-action area matches the row color (no seam).
             .scrollContentBackground(.hidden)
             .background(Color("CardBackground"))
+            // Round corners and clip so the list reads as a parchment
+            // card on the system page bg, matching the Scan recents
+            // pattern. Bottom rounding may sit behind the tab bar; the
+            // top rounding is what the user actually sees.
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            // Match the picker/search field's horizontal margin so
+            // the list lines up with the chrome above it.
+            .padding(.horizontal)
             // Header bottom padding (8) already gives breathing room
             // above the first row, so the list's own top content
             // margin can be tight.
@@ -566,9 +595,15 @@ private struct NearbyRow: View {
                 HStack(spacing: 8) {
                     if let coord = result.coordinates {
                         let d = distanceMeters(from: userLocation, to: coord)
-                        Label(formatDistance(d), systemImage: "location")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        // Manual HStack instead of Label so the
+                        // location-arrow / number gap is tighter than
+                        // the default Label spacing.
+                        HStack(spacing: 3) {
+                            Image(systemName: "location")
+                            Text(formatDistance(d))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
                     if let type = result.wikidataType {
                         Text(type)

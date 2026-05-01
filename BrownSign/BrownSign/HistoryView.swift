@@ -124,19 +124,32 @@ struct HistoryView: View {
                                                 HistoryRow(lookup: lookup)
                                             }
                                             .listRowBackground(Color("CardBackground"))
+                                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                                         }
                                         .onDelete(perform: deleteFilteredLookups)
                                     }
+                                    // Plain style so rows extend
+                                    // full-width within the padded
+                                    // frame; inset-grouped doubles
+                                    // up margins with .padding.
+                                    .listStyle(.plain)
                                     .environment(\.editMode, $editMode)
                                     .scrollDismissesKeyboard(.immediately)
                                     // Hide iOS's default page bg and
                                     // replace with parchment so the
                                     // swipe-action area matches the
-                                    // row color (no seam between a
-                                    // sliding parchment row and the
-                                    // page bg behind).
+                                    // row color (no seam).
                                     .scrollContentBackground(.hidden)
                                     .background(Color("CardBackground"))
+                                    // Round corners so the list reads
+                                    // as a parchment card on the
+                                    // system page bg.
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    // Match the picker/search field's
+                                    // horizontal margin so the list
+                                    // lines up with the chrome above
+                                    // it.
+                                    .padding(.horizontal)
                                     // Header bottom padding (8) already
                                     // gives breathing room above the
                                     // first row, so the list's own top
@@ -146,7 +159,10 @@ struct HistoryView: View {
                             }
                         case .map:
                             HistoryMapView(lookups: filteredLookups)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .padding(.horizontal)
                                 .padding(.top, 16)
+                                .padding(.bottom, 16)
                         }
                     }
                 }
@@ -441,6 +457,10 @@ private struct SelectedLookupCard: View {
 
 struct HistoryRow: View {
     let lookup: LandmarkLookup
+    /// Verb that prefaces the date on the row's caption line. Defaults
+    /// to "Viewed" (History tab); Scan's recents preview passes
+    /// "Found" so the same row reads as "this is when I scanned it".
+    var datePrefix: String = "Viewed"
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -453,12 +473,9 @@ struct HistoryRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                HStack(spacing: 8) {
-                    sourceBadge
-                    Text(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(datePrefix) \(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
@@ -533,18 +550,6 @@ struct HistoryRow: View {
         }
     }
 
-    @ViewBuilder
-    private var sourceBadge: some View {
-        if lookup.source == "nps" {
-            Label("NPS", systemImage: "leaf.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
-        } else {
-            Label("Wikipedia", systemImage: "globe")
-                .font(.caption)
-                .foregroundStyle(.blue)
-        }
-    }
 }
 
 // MARK: - LandmarkDetailView
@@ -793,13 +798,19 @@ struct LandmarkDetailView: View {
     @ViewBuilder
     private var sourceBadge: some View {
         if lookup.source == "nps" {
-            Label("NPS", systemImage: "leaf.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
+            HStack(spacing: 3) {
+                Image(systemName: "leaf.fill")
+                Text("NPS")
+            }
+            .font(.caption)
+            .foregroundStyle(.green)
         } else {
-            Label("Wikipedia", systemImage: "globe")
-                .font(.caption)
-                .foregroundStyle(.blue)
+            HStack(spacing: 3) {
+                Image(systemName: "globe")
+                Text("Wikipedia")
+            }
+            .font(.caption)
+            .foregroundStyle(.blue)
         }
     }
 

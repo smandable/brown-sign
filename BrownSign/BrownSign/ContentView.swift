@@ -444,7 +444,7 @@ struct ContentView: View {
                         presentedLookup = lookup
                     } label: {
                         HStack(spacing: 8) {
-                            HistoryRow(lookup: lookup)
+                            HistoryRow(lookup: lookup, datePrefix: "Found")
                             Spacer(minLength: 0)
                             Image(systemName: "chevron.right")
                                 .font(.caption)
