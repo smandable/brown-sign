@@ -397,24 +397,23 @@ struct ContentView: View {
             ("sparkles", "Identify", "We look up the landmark for you"),
             ("bookmark.fill", "Save", "History keeps every find")
         ]
-        return VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 18) {
             ForEach(steps, id: \.0) { icon, title, detail in
-                HStack(spacing: 14) {
+                HStack(spacing: 16) {
                     Image(systemName: icon)
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(brown)
-                        .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 1) {
+                        .frame(width: 38)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(title)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.title2.weight(.bold))
                         Text(detail)
-                            .font(.caption)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
             }
         }
-        .padding(.horizontal, 32)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
