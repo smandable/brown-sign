@@ -64,6 +64,9 @@ fastlane/test_output
 # Local API keys — never commit
 BrownSign/BrownSign/APIKeys.swift
 
+# Local screenshot scratchpad — regenerate from the sim as needed
+docs/screenshots/
+
 # Claude Code local state (plan files, session data)
 .claude/
 
