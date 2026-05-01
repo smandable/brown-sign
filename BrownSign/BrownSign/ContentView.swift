@@ -252,7 +252,13 @@ struct ContentView: View {
                 .opacity(lookUpDisabled ? 0.5 : 1)
                 .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
                 .padding(.horizontal)
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                // 16pt below the button — same gap above the tab bar
+                // that the list and map cards leave on Nearby/History.
+                // Kept inside .bar so the material stays flush with the
+                // tab bar (iOS bottom-action-bar convention) instead of
+                // floating with a clear strip below it.
+                .padding(.bottom, 16)
                 .background(.bar)
             }
             // Keyboard toolbar is built into LandmarkTextField's

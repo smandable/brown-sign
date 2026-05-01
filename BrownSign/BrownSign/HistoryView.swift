@@ -156,6 +156,10 @@ struct HistoryView: View {
                                     // content margin can be tight.
                                     .contentMargins(.top, 4, for: .scrollContent)
                                 }
+                                // Match the map case's bottom padding so
+                                // the parchment list card sits the same
+                                // distance above the tab bar as the map.
+                                .padding(.bottom, 16)
                             }
                         case .map:
                             HistoryMapView(lookups: filteredLookups)

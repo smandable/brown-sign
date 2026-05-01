@@ -386,6 +386,9 @@ struct NearMeView: View {
                 await refresh(force: true)
             }
         }
+        // Match the map case's bottom padding so the parchment list
+        // card sits the same distance above the tab bar as the map.
+        .padding(.bottom, 16)
     }
 
     /// Persist a HiddenLandmark for this result so future Nearby fetches
