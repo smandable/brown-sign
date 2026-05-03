@@ -40,6 +40,7 @@ struct HistoryView: View {
         return lookups.filter { $0.resolvedTitle.lowercased().contains(q) }
     }
 
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -107,10 +108,15 @@ struct HistoryView: View {
                                     if !editMode.isEditing {
                                         HStack(spacing: 6) {
                                             Image(systemName: "clock.fill")
-                                                .font(.caption)
                                             Text("Recently viewed landmarks")
-                                                .font(.caption)
                                         }
+                                        // Match the "Recent finds"
+                                        // section header on Scan
+                                        // (subheadline + semibold) so
+                                        // the three list-section
+                                        // labels read consistently
+                                        // across tabs.
+                                        .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(Color.accentColor)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 16)
@@ -119,12 +125,40 @@ struct HistoryView: View {
                                     }
 
                                     List {
-                                        ForEach(filteredLookups) { lookup in
+                                        ForEach(Array(filteredLookups.enumerated()), id: \.element.id) { index, lookup in
                                             NavigationLink(value: lookup) {
                                                 HistoryRow(lookup: lookup)
                                             }
-                                            .listRowBackground(Color("CardBackground"))
-                                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                                            // Parchment lives per-row,
+                                            // not on the whole list.
+                                            // Only the first row gets
+                                            // rounded top corners and
+                                            // only the last row gets
+                                            // rounded bottoms — the
+                                            // visual "card" is
+                                            // composed of abutted
+                                            // rows, so the parchment
+                                            // ends exactly with the
+                                            // last row regardless of
+                                            // how short the list is.
+                                            .listRowBackground(
+                                                UnevenRoundedRectangle(
+                                                    cornerRadii: .init(
+                                                        topLeading: index == 0 ? 12 : 0,
+                                                        bottomLeading: index == filteredLookups.count - 1 ? 12 : 0,
+                                                        bottomTrailing: index == filteredLookups.count - 1 ? 12 : 0,
+                                                        topTrailing: index == 0 ? 12 : 0
+                                                    )
+                                                )
+                                                .fill(Color("CardBackground"))
+                                            )
+                                            // 6pt top/bottom matches the Scan
+                                            // recents card so the same
+                                            // landmark row looks the same
+                                            // size in both places — Sean
+                                            // noticed History rows reading
+                                            // taller because they were 8/8.
+                                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                                         }
                                         .onDelete(perform: deleteFilteredLookups)
                                     }
@@ -135,15 +169,17 @@ struct HistoryView: View {
                                     .listStyle(.plain)
                                     .environment(\.editMode, $editMode)
                                     .scrollDismissesKeyboard(.immediately)
-                                    // Hide iOS's default page bg and
-                                    // replace with parchment so the
-                                    // swipe-action area matches the
-                                    // row color (no seam).
+                                    // No list-level background — per-row
+                                    // backgrounds carry the parchment so
+                                    // it ends exactly at the last row.
                                     .scrollContentBackground(.hidden)
-                                    .background(Color("CardBackground"))
-                                    // Round corners so the list reads
-                                    // as a parchment card on the
-                                    // system page bg.
+                                    // Round the viewport edges so the
+                                    // top corners stay rounded as the
+                                    // first row scrolls out of view.
+                                    // Without this clip, the per-row
+                                    // rounded corners leave the screen
+                                    // with row 1 and the visible top
+                                    // becomes square mid-scroll.
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
                                     // Match the picker/search field's
                                     // horizontal margin so the list

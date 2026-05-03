@@ -13,12 +13,17 @@ import CoreLocation
 import UIKit
 #endif
 
-struct Coordinate: Hashable {
+// `nonisolated` here so the synthesized Codable conformance is itself
+// nonisolated. Without this, the project-wide `-default-isolation=MainActor`
+// makes `encode(to:)`/`init(from:)` MainActor-isolated, and
+// `NearbyResultsCache.save` (which encodes from a detached Task) can't
+// call them across the actor boundary in Swift 6 mode.
+nonisolated struct Coordinate: Hashable, Codable {
     let latitude: Double
     let longitude: Double
 }
 
-struct LandmarkResult {
+nonisolated struct LandmarkResult: Codable {
     let title: String
     /// Polished 2–3 sentence version (via Apple Intelligence if available).
     let summary: String
@@ -229,7 +234,8 @@ func searchLandmarkCandidates(
 }
 
 /// Returns up to `limit` geo-tagged Wikipedia landmarks within
-/// `radiusMeters` of `center`. Distance-sorted from the center.
+/// `radiusMeters` of `center` as an `AsyncStream` of partial result
+/// lists, distance-sorted from the center.
 ///
 /// Three-pass pipeline:
 ///   1. **SPARQL primary filter** (server-side) — Wikidata Query
@@ -247,60 +253,128 @@ func searchLandmarkCandidates(
 ///      through SPARQL's heritage-designation branch. Lenient tier
 ///      keeps NRHP-listed churches.
 ///
+/// Streaming behavior: the closest `fastFirstBatch` (default 30) hits
+/// are hydrated + gated FIRST and yielded as the initial render. The
+/// remaining hits are hydrated + gated next and yielded as the merged
+/// final list. The gate runs before each yield so rows never appear
+/// then disappear mid-scroll — a common gate-failure case is schools
+/// or hospitals with photogenic buildings, which would be very visible
+/// flicker.
+///
 /// Two call sites in the Nearby tab:
-///   - Initial load: `center = userLocation.coordinate`
-///   - Pan-to-search: `center = map center` as the user pans. Results
-///     accumulate at the call site (dedup by page URL) so the map
-///     builds up pins across the areas the user explores.
+///   - Initial load: `center = userLocation.coordinate`. Consumer
+///     renders progressively as each yield arrives.
+///   - Pan-to-search: `center = map center` as the user pans. The pan
+///     consumer collects only the final yield since pan is already
+///     non-blocking via `isFetchingMore`.
 func discoverLandmarksAt(
     center: CLLocationCoordinate2D,
     radiusMeters: Int = 8_047,
-    limit: Int = 100
-) async -> [LandmarkResult] {
-    let radiusKm = Double(radiusMeters) / 1000.0
-    let hits = await discoverLandmarksViaSPARQL(
-        centerLat: center.latitude,
-        centerLon: center.longitude,
-        radiusKm: radiusKm
-    )
-    guard !hits.isEmpty else { return [] }
+    limit: Int = 100,
+    fastFirstBatch: Int = 30
+) -> AsyncStream<[LandmarkResult]> {
+    AsyncStream { continuation in
+        let task = Task {
+            let radiusKm = Double(radiusMeters) / 1000.0
+            let hits = await discoverLandmarksViaSPARQL(
+                centerLat: center.latitude,
+                centerLon: center.longitude,
+                radiusKm: radiusKm
+            )
 
-    // Distance-sort and truncate. SPARQL doesn't order by distance,
-    // and `wikibase:around` returns items in some internal order
-    // that's near-but-not-exactly distance-ascending; sort
-    // explicitly so the closest landmarks render first.
-    let userLocation = CLLocation(
-        latitude: center.latitude,
-        longitude: center.longitude
-    )
-    let sortedHits = hits.sorted { a, b in
-        let aLoc = CLLocation(latitude: a.coordinate.latitude, longitude: a.coordinate.longitude)
-        let bLoc = CLLocation(latitude: b.coordinate.latitude, longitude: b.coordinate.longitude)
-        return userLocation.distance(from: aLoc) < userLocation.distance(from: bLoc)
+            guard !hits.isEmpty else {
+                continuation.finish()
+                return
+            }
+
+            if Task.isCancelled {
+                continuation.finish()
+                return
+            }
+
+            // Distance-sort and truncate. SPARQL doesn't order by distance,
+            // and `wikibase:around` returns items in some internal order
+            // that's near-but-not-exactly distance-ascending; sort
+            // explicitly so the closest landmarks render first.
+            let userLocation = CLLocation(
+                latitude: center.latitude,
+                longitude: center.longitude
+            )
+            let sortedHits = hits.sorted { a, b in
+                let aLoc = CLLocation(latitude: a.coordinate.latitude, longitude: a.coordinate.longitude)
+                let bLoc = CLLocation(latitude: b.coordinate.latitude, longitude: b.coordinate.longitude)
+                return userLocation.distance(from: aLoc) < userLocation.distance(from: bLoc)
+            }
+            let topHits = Array(sortedHits.prefix(limit))
+
+            // Split into a "fast" closest-N batch (rendered first) and the
+            // rest. Both batches independently run hydration + gate in
+            // parallel via `hydrateAndGateBatch`, so the network shape is
+            // the same as the old single-pass code — only the
+            // time-to-first-paint changes.
+            let fastEnd = min(fastFirstBatch, topHits.count)
+            let fastHits = Array(topHits.prefix(fastEnd))
+            let restHits = Array(topHits.dropFirst(fastEnd))
+
+            let fastBatch = await hydrateAndGateBatch(fastHits, seenTitles: Set())
+            if Task.isCancelled {
+                continuation.finish()
+                return
+            }
+            continuation.yield(fastBatch.results)
+
+            if !restHits.isEmpty {
+                let restBatch = await hydrateAndGateBatch(
+                    restHits,
+                    seenTitles: fastBatch.seenTitles
+                )
+                if Task.isCancelled {
+                    continuation.finish()
+                    return
+                }
+                continuation.yield(fastBatch.results + restBatch.results)
+            }
+
+            continuation.finish()
+        }
+
+        continuation.onTermination = { _ in
+            task.cancel()
+        }
     }
-    let topHits = Array(sortedHits.prefix(limit))
+}
 
-    // Compute gate verdicts up front (synchronous), then run hydration
-    // and the gate's Wikidata fetch in parallel — they're independent
-    // network calls and there's no reason to serialize them.
-    let gateAssignments: [(Int, InstitutionGate)] = topHits.indices.compactMap { idx in
-        institutionGateFor(topHits[idx].wikipediaTitle).map { (idx, $0) }
+/// Hydrate a batch of SPARQL hits with Wikipedia article details and
+/// run the operating-institution gate against them — both in parallel
+/// since they're independent network calls. Returns the gated
+/// `LandmarkResult`s plus the running set of canonical lowercased
+/// titles that have been emitted, so the next batch can dedup against
+/// this one (Wikipedia redirects can route two different SPARQL hits
+/// to the same canonical title).
+private func hydrateAndGateBatch(
+    _ hits: [WikidataLandmarkHit],
+    seenTitles: Set<String>
+) async -> (results: [LandmarkResult], seenTitles: Set<String>) {
+    guard !hits.isEmpty else { return ([], seenTitles) }
+
+    let gateAssignments: [(Int, InstitutionGate)] = hits.indices.compactMap { idx in
+        institutionGateFor(hits[idx].wikipediaTitle).map { (idx, $0) }
     }
 
-    async let detailsAsync = wikipediaFetchPageDetailsByTitles(topHits.map(\.wikipediaTitle))
-    async let droppedAsync = computeGateDrops(topHits: topHits, gates: gateAssignments)
+    async let detailsAsync = wikipediaFetchPageDetailsByTitles(hits.map(\.wikipediaTitle))
+    async let droppedAsync = computeGateDrops(topHits: hits, gates: gateAssignments)
     let details = await detailsAsync
     let droppedIndices = await droppedAsync
 
-    var seenTitles = Set<String>()
+    var seen = seenTitles
     var results: [LandmarkResult] = []
-    for (idx, hit) in topHits.enumerated() {
+    for (idx, hit) in hits.enumerated() {
         if droppedIndices.contains(idx) { continue }
         guard let d = details[hit.wikipediaTitle] else { continue }
         if d.isDisambiguation { continue }
         let key = d.title.lowercased()
-        if seenTitles.contains(key) { continue }
-        seenTitles.insert(key)
+        if seen.contains(key) { continue }
+        seen.insert(key)
         results.append(LandmarkResult(
             title: d.title,
             summary: d.extract,
@@ -316,7 +390,7 @@ func discoverLandmarksAt(
             onDeviceMatchScore: nil
         ))
     }
-    return results
+    return (results, seen)
 }
 
 /// Operating-institution gate: for each `(idx, gate)` assignment,

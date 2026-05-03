@@ -61,6 +61,20 @@ final class LocationManager: NSObject {
     }
     #endif
 
+    /// Kick off a background `currentLocation()` fetch IF we already
+    /// have permission. Used at app launch to pre-warm the GPS so by
+    /// the time the user opens the Nearby tab, `lastLocation` is
+    /// populated and the SPARQL fetch isn't blocked on a 2–10 s cold
+    /// radio fix. No-op when authorization is `.notDetermined` so we
+    /// never pop the system permission prompt at launch — the prompt
+    /// still appears in-context the first time the user opens Nearby.
+    /// `currentLocation()` already dedupes via `inflightFetch`, so a
+    /// follow-up call from the view won't double-fetch.
+    func warmUpIfAuthorized() {
+        guard isAuthorized else { return }
+        Task { _ = await currentLocation() }
+    }
+
     /// Request "When In Use" permission if we don't already have it.
     /// Returns true if we're authorized, false otherwise.
     func ensurePermission() async -> Bool {

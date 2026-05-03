@@ -60,7 +60,16 @@ struct NearMeView: View {
     /// Center of the most recent geosearch. Drives the pan-threshold
     /// check: if the new map center is more than
     /// `panRefetchThresholdMeters` from this, fire another fetch.
+    /// Also seeded from the disk cache on cold-start so the spatial
+    /// invalidation check (current GPS vs. cached center) can run as
+    /// soon as the fresh GPS fix lands.
     @State private var lastFetchCenter: CLLocationCoordinate2D?
+    /// Latest in-flight refresh task. Tracked so a second refresh
+    /// (rapid toolbar-tap, pull-then-tap) cancels the first instead
+    /// of racing with it. Without this, two `AsyncStream` consumers
+    /// could both write to `state` and the user would see results
+    /// flicker between the two fetches.
+    @State private var refreshTask: Task<Void, Never>?
     @State private var pushedLookup: LandmarkLookup?
     @State private var displayMode: LandmarkDisplayMode = .list
     /// Incremented by `refresh(force: true)` to tell the map view to
@@ -162,9 +171,23 @@ struct NearMeView: View {
                         }
                     case .loaded(let results):
                         let visible = visibleResults(from: results)
+                        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
                         switch displayMode {
                         case .list:
-                            list(visible)
+                            // List mode + active search filter that
+                            // narrows to zero hits → explicit "No
+                            // results" instead of a blank list. Map
+                            // mode keeps the empty map so the user
+                            // can pan-search to find more.
+                            if visible.isEmpty && !trimmedSearch.isEmpty {
+                                ContentUnavailableView(
+                                    "No results",
+                                    systemImage: "magnifyingglass",
+                                    description: Text("No nearby landmarks match \"\(trimmedSearch)\".")
+                                )
+                            } else {
+                                list(visible)
+                            }
                         case .map:
                             NearbyMapView(
                                 results: visible,
@@ -200,7 +223,7 @@ struct NearMeView: View {
                         ProgressView()
                     } else {
                         Button {
-                            Task { await refresh(force: true) }
+                            startRefresh(force: true)
                         } label: {
                             Image(systemName: "arrow.clockwise")
                         }
@@ -216,32 +239,62 @@ struct NearMeView: View {
             }
         }
         .task {
-            if case .idle = state {
-                await refresh(force: false)
+            // Stale-while-revalidate cold-start: render last session's
+            // pins instantly from the disk cache so the user isn't
+            // staring at a spinner while SPARQL + hydration runs. The
+            // fresh fetch kicks immediately afterwards and replaces
+            // these pins as its yields arrive. `lastFetchCenter` is
+            // seeded so `refresh` can spatially invalidate the cache
+            // if the user has moved cities between sessions.
+            if case .idle = state, let cached = NearbyResultsCache.load() {
+                state = cached.results.isEmpty ? .empty : .loaded(cached.results)
+                lastFetchCenter = CLLocationCoordinate2D(
+                    latitude: cached.fetchCenter.latitude,
+                    longitude: cached.fetchCenter.longitude
+                )
             }
-            // Cold start often races location services and the SPARQL
-            // endpoint — first fetch can come back empty even when the
-            // area has plenty of nearby landmarks. Wait a few seconds
-            // and retry once before leaving the user staring at "no
-            // landmarks nearby" (or a location-unavailable error) when
-            // a manual tap on Refresh would have worked.
+
+            await startRefresh(force: false).value
+
+            // Auto-retry only on .locationUnavailable — that's the case
+            // a 1 s wait can plausibly fix (the GPS first-fix landed
+            // late). `.empty` is no longer a retry trigger: SPARQL
+            // transient failures are already retried inside
+            // `httpDataWithRetry`, and a genuinely empty area shouldn't
+            // re-fire the whole pipeline. Pre-warming the GPS at app
+            // launch (BrownSignApp) makes this branch rare anyway.
             if shouldAutoRetryInitialFetch {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(1))
                 if shouldAutoRetryInitialFetch {
-                    await refresh(force: false)
+                    await startRefresh(force: false).value
                 }
             }
         }
     }
 
     /// True while the initial-load state is one a retry can plausibly
-    /// fix — empty results or a location-services miss. `.loaded`,
-    /// `.locationDenied`, and `.loading` aren't candidates.
+    /// fix — currently only `.locationUnavailable`. `.empty` is not a
+    /// retry candidate because SPARQL transient failures are already
+    /// handled by `httpDataWithRetry`'s internal ladder.
     private var shouldAutoRetryInitialFetch: Bool {
         switch state {
-        case .empty, .locationUnavailable: return true
+        case .locationUnavailable: return true
         default: return false
         }
+    }
+
+    /// Cancels any in-flight refresh and starts a new one. Returns the
+    /// new task so callers that need to await completion (the initial
+    /// `.task` body, pull-to-refresh) can do so. Toolbar button taps
+    /// don't need to await — they're fire-and-forget.
+    @discardableResult
+    private func startRefresh(force: Bool) -> Task<Void, Never> {
+        refreshTask?.cancel()
+        let task = Task {
+            await refresh(force: force)
+        }
+        refreshTask = task
+        return task
     }
 
     /// Apply the user's hide-list and the search-text filter to the
@@ -293,14 +346,18 @@ struct NearMeView: View {
         // top-rounded corners there — making the first visible row
         // look chopped.
         VStack(spacing: 0) {
-            if let loc = userLocation {
+            if userLocation != nil {
                 HStack(spacing: 6) {
                     Image(systemName: "location.fill")
-                        .font(.caption)
-                    Text(String(format: "Within 5 miles of current location (%.4f, %.4f)",
-                                loc.coordinate.latitude, loc.coordinate.longitude))
-                        .font(.caption)
+                    Text("Within 5 miles of your location")
                 }
+                // Match the "Recent finds" section header on Scan
+                // (subheadline + semibold) so the three list-section
+                // labels read consistently across tabs. Lat/long
+                // values used to live in this string but wrapped to
+                // a second line at the larger size — dropped them
+                // since the user already knows where they are.
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
@@ -314,20 +371,41 @@ struct NearMeView: View {
                 // when a row is hidden. Indexing by `\.offset` would
                 // re-number the remaining rows and SwiftUI could
                 // mis-diff which row left the list.
-                ForEach(results, id: \.pageURL) { result in
+                ForEach(Array(results.enumerated()), id: \.element.pageURL) { index, result in
+                    let isFirst = index == 0
+                    // Last result row is also the visual last row of
+                    // the card UNLESS the "Hidden landmarks (N)"
+                    // footer button is present below it.
+                    let isLastVisible = index == results.count - 1 && hiddenLandmarks.isEmpty
                     Button {
                         open(result)
                     } label: {
                         NearbyRow(result: result, userLocation: userLocation)
                     }
                     .buttonStyle(.plain)
-                    .listRowBackground(Color("CardBackground"))
-                    // Zero leading/trailing so row content aligns
-                    // with the picker / search field above (the
-                    // outer .padding(.horizontal) provides the only
-                    // margin; plain style would otherwise add ~16pt
-                    // of its own, doubling the gap).
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    // Parchment per-row, with rounded outer corners
+                    // only on the first and last rows of the visual
+                    // card. Replaces the prior list-level background
+                    // + clipShape + maxHeight cap — the per-row
+                    // approach lets the parchment end exactly with
+                    // the last row regardless of how short the list
+                    // is, fixing the "extra parchment below the last
+                    // row" Sean saw on a sparse History/Nearby list.
+                    .listRowBackground(
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: isFirst ? 12 : 0,
+                                bottomLeading: isLastVisible ? 12 : 0,
+                                bottomTrailing: isLastVisible ? 12 : 0,
+                                topTrailing: isFirst ? 12 : 0
+                            )
+                        )
+                        .fill(Color("CardBackground"))
+                    )
+                    // 6pt vertical insets to match the Scan recents
+                    // card so the same landmark looks the same size
+                    // in both places.
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button {
                             hide(result)
@@ -350,14 +428,29 @@ struct NearMeView: View {
                             Image(systemName: "chevron.right")
                                 .foregroundStyle(.tertiary)
                         }
-                        // Match the .caption sizing used by the
-                        // "Within 5 miles…" header at the top of the
-                        // list — same compact label style.
+                        // Compact .caption sizing keeps this footer
+                        // visually subordinate to the section header
+                        // ("Within 5 miles…") above the list — that
+                        // header is now subheadline+semibold to match
+                        // Scan's "Recent finds".
                         .font(.caption)
                         .foregroundStyle(Color.accentColor)
                     }
-                    .listRowBackground(Color("CardBackground"))
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    // The footer button is the visual last row of
+                    // the card whenever it's present, so it carries
+                    // the rounded bottom corners.
+                    .listRowBackground(
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: 0,
+                                bottomLeading: 12,
+                                bottomTrailing: 12,
+                                topTrailing: 0
+                            )
+                        )
+                        .fill(Color("CardBackground"))
+                    )
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                 }
             }
             // Plain style instead of the default inset-grouped, so
@@ -366,14 +459,15 @@ struct NearMeView: View {
             // of any outer .padding(.horizontal), squeezing the rows.
             .listStyle(.plain)
             .scrollDismissesKeyboard(.immediately)
-            // Hide the system bg and replace with parchment so the
-            // swipe-action area matches the row color (no seam).
+            // No list-level background — per-row backgrounds carry
+            // the parchment so it ends exactly at the last visible
+            // row.
             .scrollContentBackground(.hidden)
-            .background(Color("CardBackground"))
-            // Round corners and clip so the list reads as a parchment
-            // card on the system page bg, matching the Scan recents
-            // pattern. Bottom rounding may sit behind the tab bar; the
-            // top rounding is what the user actually sees.
+            // Round the viewport edges so the top corners stay
+            // rounded as the first row scrolls out of view. Without
+            // this clip, the per-row rounded corners leave the
+            // screen with row 1 and the visible top becomes square
+            // mid-scroll.
             .clipShape(RoundedRectangle(cornerRadius: 12))
             // Match the picker/search field's horizontal margin so
             // the list lines up with the chrome above it.
@@ -383,7 +477,7 @@ struct NearMeView: View {
             // margin can be tight.
             .contentMargins(.top, 4, for: .scrollContent)
             .refreshable {
-                await refresh(force: true)
+                await startRefresh(force: true).value
             }
         }
         // Match the map case's bottom padding so the parchment list
@@ -422,15 +516,12 @@ struct NearMeView: View {
         // Preserve existing results while reloading so pull-to-refresh
         // and the toolbar button don't wipe the list. Only flip to the
         // full-screen loading view when we have nothing to show yet.
+        // Cached pins from a previous session count as "results" for
+        // this purpose — keep them visible while the fresh stream
+        // populates.
         if !hasResults { state = .loading }
         isReloading = true
         defer { isReloading = false }
-
-        // Manual refresh discards any panned-around pins and recenters
-        // on the user. Otherwise the "Nearby" list could drift to a
-        // totally different part of the world without the user
-        // realizing.
-        lastFetchCenter = nil
 
         let granted = await locationManager.ensurePermission()
         guard granted else {
@@ -442,13 +533,81 @@ struct NearMeView: View {
             return
         }
         userLocation = loc
-        let found = await discoverLandmarksAt(
+
+        // Spatial cache invalidation: if the rendered pins are from a
+        // previous session and the fresh GPS fix is more than one
+        // search-radius from the cached center, the user has moved
+        // cities — drop the stale pins so they don't keep staring at
+        // last-session's landmarks while the new fetch runs. Done
+        // BEFORE the `lastFetchCenter = nil` reset below so we still
+        // know the cached center.
+        if hasResults, let cachedCenter = lastFetchCenter {
+            let cachedLoc = CLLocation(
+                latitude: cachedCenter.latitude,
+                longitude: cachedCenter.longitude
+            )
+            if loc.distance(from: cachedLoc) > Double(Self.searchRadiusMeters) {
+                state = .loading
+                NearbyResultsCache.clear()
+            }
+        }
+
+        // Manual refresh discards any panned-around pins and recenters
+        // on the user. Otherwise the "Nearby" list could drift to a
+        // totally different part of the world without the user
+        // realizing.
+        lastFetchCenter = nil
+
+        // Consume the streaming discover pipeline. First yield is the
+        // closest-30 batch (gated); second yield is the full set
+        // (also gated). Cancellation propagates: if a second refresh
+        // is started, the for-await unwinds and `discoverLandmarksAt`
+        // tears down its inner SPARQL/hydration task via
+        // `continuation.onTermination`.
+        //
+        // Progressive rendering is only useful when there's nothing
+        // to show yet. On a manual refresh that already has results
+        // (cache pins or a previous fetch), letting the closest-30
+        // yield commit mid-stream causes the list to shrink from
+        // ~100 → 30 → 100 — visible as the top-row "jump" Sean saw
+        // mid pull-to-refresh. Snapshot at start of stream consumption
+        // so the gate doesn't flip if the spatial-invalidation branch
+        // above transitioned us into `.loading`.
+        let progressiveRender = !hasResults
+
+        let stream = discoverLandmarksAt(
             center: loc.coordinate,
             radiusMeters: Self.searchRadiusMeters,
             limit: Self.fetchLimit
         )
+        var finalResults: [LandmarkResult] = []
+        for await results in stream {
+            if Task.isCancelled { return }
+            // Cold-start path: render each non-empty yield as soon as
+            // it's ready so the user sees pins fast. Manual-refresh
+            // path: skip intermediate yields and swap atomically once
+            // the stream finishes. The `.empty` decision in either
+            // case is made after the stream completes — an empty
+            // intermediate yield (rare, e.g. fast batch fully gated)
+            // shouldn't flash "No landmarks nearby".
+            if progressiveRender, !results.isEmpty {
+                state = .loaded(results)
+            }
+            finalResults = results
+        }
+        if Task.isCancelled { return }
+
         lastFetchCenter = loc.coordinate
-        state = found.isEmpty ? .empty : .loaded(found)
+        if finalResults.isEmpty {
+            state = .empty
+        } else {
+            // Always commit the final set. In the progressive path
+            // this is usually a no-op (loop already set the same
+            // state); in the non-progressive path it's the actual
+            // atomic swap from the previous results to the fresh
+            // fetch.
+            state = .loaded(finalResults)
+        }
 
         // Tell the map to snap its camera back to the user. If we
         // don't do this, the refresh button is silent on the map —
@@ -456,6 +615,19 @@ struct NearMeView: View {
         // user had panned to, which is exactly the "doesn't bring me
         // home" bug.
         recenterSignal += 1
+
+        // Persist for the next cold-start so the user sees pins
+        // instantly next time. Saved as a Coordinate so the cache is
+        // self-describing without depending on CoreLocation types.
+        await NearbyResultsCache.save(CachedNearbyFetch(
+            schemaVersion: NearbyResultsCache.currentSchema,
+            fetchCenter: Coordinate(
+                latitude: loc.coordinate.latitude,
+                longitude: loc.coordinate.longitude
+            ),
+            fetchedAt: Date(),
+            results: finalResults
+        ))
     }
 
     /// Pan-triggered fetch. Fires when the user has panned the map
@@ -482,11 +654,23 @@ struct NearMeView: View {
         isFetchingMore = true
         defer { isFetchingMore = false }
 
-        let fresh = await discoverLandmarksAt(
+        // Pan-search consumes the same streaming API as the cold-start
+        // refresh, but only commits the final (full) yield. Pan is
+        // already non-blocking via `isFetchingMore`, so showing a
+        // half-hydrated pin set mid-pan would be UX churn for no
+        // benefit.
+        let stream = discoverLandmarksAt(
             center: center,
             radiusMeters: Self.searchRadiusMeters,
             limit: Self.fetchLimit
         )
+        var fresh: [LandmarkResult] = []
+        for await results in stream {
+            if Task.isCancelled { return }
+            fresh = results
+        }
+        if Task.isCancelled { return }
+
         lastFetchCenter = center
         guard !fresh.isEmpty else { return }
 

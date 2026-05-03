@@ -126,12 +126,17 @@ func discoverLandmarksViaSPARQL(
     var request = URLRequest(url: url)
     request.setValue(wdqsUserAgent, forHTTPHeaderField: "User-Agent")
     request.setValue("application/sparql-results+json", forHTTPHeaderField: "Accept")
-    // 15 s per attempt. WDQS normally answers in <2 s for this kind of
-    // geo-spatial query; anything taking 15 s+ is effectively dead and
-    // a retry against another backend instance is the right move.
-    request.timeoutInterval = 15
+    // 8 s per attempt. WDQS normally answers in <2 s for this kind of
+    // geo-spatial query; anything taking 8 s+ is effectively dead and
+    // a retry against another backend instance is the right move. The
+    // cold-start path is the wrong place to wait the old 15 s ceiling.
+    request.timeoutInterval = 8
 
-    guard let data = await httpDataWithRetry(request) else { return [] }
+    // Cap to 2 attempts (vs the helper's default 3). With timeout 8 s
+    // the worst case is `8 + 0.5 + 8 = 16.5 s` instead of the 3-attempt
+    // ceiling of `8 + 0.5 + 8 + 1.5 + 8 = 26 s`. WDQS hiccups that
+    // survive two attempts are rare and not worth the extra tail.
+    guard let data = await httpDataWithRetry(request, maxAttempts: 2) else { return [] }
     return parseSPARQLBindings(data)
 }
 

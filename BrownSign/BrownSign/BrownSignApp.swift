@@ -26,6 +26,14 @@ struct BrownSignApp: App {
                         Label("History", systemImage: "clock.fill")
                     }
             }
+            // Pre-warm the GPS at app launch so the Nearby tab doesn't
+            // pay cold-radio first-fix latency (2–10 s on a fresh
+            // launch) before the SPARQL fetch can fire. No-op if the
+            // user hasn't granted permission yet — the system prompt
+            // still appears in-context when they open Nearby.
+            .task {
+                LocationManager.shared.warmUpIfAuthorized()
+            }
         }
         .modelContainer(for: [LandmarkLookup.self, HiddenLandmark.self])
     }

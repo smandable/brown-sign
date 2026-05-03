@@ -304,6 +304,23 @@ private func parseProtocolRelativeURL(_ src: String) -> URL? {
     return URL(string: src)
 }
 
+/// Best-effort thumbnail URL for an article that came back without one
+/// via `prop=pageimages`. Chains two fallbacks: the REST summary
+/// endpoint (which uses a smarter "lead image" heuristic), and then
+/// the first gallery-worthy image from the media-list endpoint when
+/// summary also has no lead. The media-list path is what catches
+/// articles like the Middletown–Portland railroad bridge — body-only
+/// images that no "lead image" heuristic surfaces. Used by the bulk
+/// `wikipediaFetchPageDetailsByTitles` (and pageID variant) so the
+/// Nearby list/map thumbnails agree with what the detail-view's
+/// carousel finds via the same media-list endpoint.
+func wikipediaResolvedThumbnailURL(for title: String) async -> URL? {
+    if let summary = await wikipediaRESTSummaryImageURL(for: title) {
+        return summary
+    }
+    return await wikipediaArticleImageURLs(for: title).first
+}
+
 /// Returns the best article image URL via the Wikipedia REST summary
 /// endpoint (`/api/rest_v1/page/summary/{title}`). Used as a fallback
 /// when the legacy `prop=pageimages` call returned no thumbnail — REST
@@ -487,6 +504,42 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
         }
     }
 
+    // Same image-URL fallback as the title path — see that function's
+    // matching block for rationale. `wikipediaResolvedThumbnailURL`
+    // chains REST summary then media-list so body-only-image articles
+    // surface a thumbnail consistent with what the detail carousel
+    // finds.
+    let needsImageFallback: [(Int, String)] = combined.compactMap { id, d in
+        (d.imageURL == nil && !d.isDisambiguation) ? (id, d.title) : nil
+    }
+    if !needsImageFallback.isEmpty {
+        let patches: [(Int, URL)] = await withTaskGroup(of: (Int, URL)?.self) { group in
+            for (id, title) in needsImageFallback {
+                group.addTask {
+                    guard let fallback = await wikipediaResolvedThumbnailURL(for: title) else {
+                        return nil
+                    }
+                    return (id, fallback)
+                }
+            }
+            var out: [(Int, URL)] = []
+            for await entry in group {
+                if let entry { out.append(entry) }
+            }
+            return out
+        }
+        for (id, imageURL) in patches {
+            guard let existing = combined[id] else { continue }
+            combined[id] = WikiPageDetails(
+                title: existing.title,
+                extract: existing.extract,
+                url: existing.url,
+                imageURL: imageURL,
+                isDisambiguation: existing.isDisambiguation
+            )
+        }
+    }
+
     return combined
 }
 
@@ -544,6 +597,45 @@ func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> [String: Wik
                 extract: extract,
                 url: existing.url,
                 imageURL: existing.imageURL,
+                isDisambiguation: existing.isDisambiguation
+            )
+        }
+    }
+
+    // Image-URL fallback. `prop=pageimages` returns nil for articles
+    // that have images but lack an indexed lead thumbnail (no infobox
+    // image, fair-use leads, or pages MediaWiki simply hasn't indexed
+    // yet). `wikipediaResolvedThumbnailURL` chains REST summary then
+    // media-list — the latter catches articles whose only images live
+    // inline in the body (e.g. the Middletown–Portland railroad
+    // bridge), which neither `pageimages` nor REST summary surface.
+    let needsImageFallback: [String] = combined.compactMap { (key, d) in
+        (d.imageURL == nil && !d.isDisambiguation) ? key : nil
+    }
+    if !needsImageFallback.isEmpty {
+        let patches: [(String, URL)] = await withTaskGroup(of: (String, URL)?.self) { group in
+            for key in needsImageFallback {
+                let title = combined[key]?.title ?? key
+                group.addTask {
+                    guard let fallback = await wikipediaResolvedThumbnailURL(for: title) else {
+                        return nil
+                    }
+                    return (key, fallback)
+                }
+            }
+            var out: [(String, URL)] = []
+            for await entry in group {
+                if let entry { out.append(entry) }
+            }
+            return out
+        }
+        for (key, imageURL) in patches {
+            guard let existing = combined[key] else { continue }
+            combined[key] = WikiPageDetails(
+                title: existing.title,
+                extract: existing.extract,
+                url: existing.url,
+                imageURL: imageURL,
                 isDisambiguation: existing.isDisambiguation
             )
         }

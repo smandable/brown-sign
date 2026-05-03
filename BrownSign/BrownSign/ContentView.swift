@@ -429,9 +429,17 @@ struct ContentView: View {
     private var recentFindsSection: some View {
         let rows = Array(recentLookups.prefix(3))
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Recent finds")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
+            // Brand-themed icon for the section header — parallels
+            // the icon-then-label pattern on History ("clock.fill")
+            // and Nearby ("location.fill"). All three use
+            // subheadline + semibold + accent color so the section
+            // labels read consistently across tabs.
+            HStack(spacing: 6) {
+                Image(systemName: "signpost.right.fill")
+                Text("Recent finds")
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.accentColor)
 
             // Embedding a List inside the outer ScrollView so we get the
             // native iOS swipe-to-delete gesture — .swipeActions only
