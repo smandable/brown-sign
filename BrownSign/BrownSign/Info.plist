@@ -7,7 +7,5 @@
 		<string>comgooglemaps</string>
 		<string>waze</string>
 	</array>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 </dict>
 </plist>
