@@ -447,7 +447,9 @@ struct ContentView: View {
             // the parent; the fixed frame height is needed because List
             // doesn't self-size inside a ScrollView.
             List {
-                ForEach(rows) { lookup in
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, lookup in
+                    let isFirst = index == 0
+                    let isLast = index == rows.count - 1
                     Button {
                         // Drive the sheet via a single optional binding
                         // rather than (savedLookup=…, flag=true). The
@@ -474,7 +476,23 @@ struct ContentView: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
-                    .listRowBackground(Color.clear)
+                    // Per-row parchment with rounded outer corners
+                    // only on the first and last rows — same pattern
+                    // Nearby/History use, so the parchment ends
+                    // exactly with the last row instead of leaving
+                    // dead space below it (the fixed-frame approach
+                    // over-allocated by ~12pt per row).
+                    .listRowBackground(
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: isFirst ? 12 : 0,
+                                bottomLeading: isLast ? 12 : 0,
+                                bottomTrailing: isLast ? 12 : 0,
+                                topTrailing: isFirst ? 12 : 0
+                            )
+                        )
+                        .fill(Color("CardBackground"))
+                    )
                     .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                     .listRowSeparatorTint(Color.secondary.opacity(0.2))
                 }
@@ -482,19 +500,17 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
-            // 104pt per row leaves room for thumbnail + headline + 2-line
-            // summary + caption metadata + listRowInsets without clipping
-            // (was 92, just barely fitting on long titles).
+            // 104pt per row is the upper-bound allocation needed for
+            // a row with a two-line summary + caption + listRowInsets.
+            // The frame is required because List doesn't self-size
+            // inside the outer ScrollView. Per-row parchment keeps
+            // any unused tail invisible — the row's parchment ends
+            // with the row regardless of any frame slack.
             .frame(height: CGFloat(rows.count) * 104)
-            // Same `CardBackground` asset Nearby/History rows use:
-            // warm parchment in light mode, iOS-standard dark gray in
-            // dark mode. Keeps the recents card visually parallel to
-            // those list rows. clipShape after the background so row
-            // content actually clips to the rounded outline.
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color("CardBackground"))
-            )
+            // Round the viewport edges so they line up with the
+            // first/last rows' rounded corners. With per-row
+            // backgrounds carrying the parchment, the clipShape's
+            // empty-tail corners fall over invisible space.
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .frame(maxWidth: .infinity, alignment: .leading)

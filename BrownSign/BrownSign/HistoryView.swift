@@ -115,13 +115,19 @@ struct HistoryView: View {
                                         // (subheadline + semibold) so
                                         // the three list-section
                                         // labels read consistently
-                                        // across tabs.
+                                        // across tabs. Bottom padding
+                                        // matches Scan's 8pt VStack
+                                        // spacing between header and
+                                        // list; top stays at 16 for
+                                        // breathing room between the
+                                        // search field above and the
+                                        // section header.
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(Color.accentColor)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(.horizontal, 16)
                                         .padding(.top, 16)
-                                        .padding(.bottom, 16)
+                                        .padding(.bottom, 8)
                                     }
 
                                     List {
@@ -186,11 +192,6 @@ struct HistoryView: View {
                                     // lines up with the chrome above
                                     // it.
                                     .padding(.horizontal)
-                                    // Header bottom padding (8) already
-                                    // gives breathing room above the
-                                    // first row, so the list's own top
-                                    // content margin can be tight.
-                                    .contentMargins(.top, 4, for: .scrollContent)
                                 }
                                 // Match the map case's bottom padding so
                                 // the parchment list card sits the same

@@ -357,12 +357,16 @@ struct NearMeView: View {
                 // values used to live in this string but wrapped to
                 // a second line at the larger size — dropped them
                 // since the user already knows where they are.
+                // Bottom padding matches Scan's 8pt VStack spacing
+                // between header and list; top stays at 16 for
+                // breathing room between the search field above and
+                // the section header.
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
-                .padding(.bottom, 16)
+                .padding(.bottom, 8)
             }
 
             List {
@@ -472,10 +476,6 @@ struct NearMeView: View {
             // Match the picker/search field's horizontal margin so
             // the list lines up with the chrome above it.
             .padding(.horizontal)
-            // Header bottom padding (8) already gives breathing room
-            // above the first row, so the list's own top content
-            // margin can be tight.
-            .contentMargins(.top, 4, for: .scrollContent)
             .refreshable {
                 await startRefresh(force: true).value
             }
