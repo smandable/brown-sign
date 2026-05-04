@@ -22,6 +22,64 @@ enum LandmarkDisplayMode: String, CaseIterable, Identifiable {
     var icon: String { self == .list ? "list.bullet" : "map" }
 }
 
+/// Custom segmented selector that mirrors the textfield height (40pt)
+/// and 12pt corner radius used across the rest of the UI. SwiftUI's
+/// native `.pickerStyle(.segmented)` keeps its inner control at a fixed
+/// ~32pt regardless of any outer `.frame(height:)`, so growing the
+/// wrapper just adds padding above/below the segments. This rebuilds
+/// the same two-option UX with full control over height and corners.
+struct DisplayModeSegmentedPicker: View {
+    @Binding var selection: LandmarkDisplayMode
+
+    /// White in light mode, mid-dark grey in dark mode — chosen so the
+    /// selected segment reads as visibly lighter than the outer
+    /// `.tertiarySystemFill` in both modes. Pure `.systemBackground`
+    /// reads correctly in light (white over light-grey) but inverts in
+    /// dark (black sits darker than the surrounding fill instead of
+    /// floating above it).
+    private static let selectedSegmentFill = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.systemGray3
+            : UIColor.systemBackground
+    })
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(LandmarkDisplayMode.allCases) { mode in
+                let isSelected = selection == mode
+                Button {
+                    if !isSelected {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selection = mode
+                        }
+                    }
+                } label: {
+                    Label(mode.label, systemImage: mode.icon)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(isSelected ? Self.selectedSegmentFill : Color.clear)
+                        .shadow(
+                            color: isSelected ? .black.opacity(0.12) : .clear,
+                            radius: 2, y: 1
+                        )
+                        .padding(2)
+                )
+            }
+        }
+        .frame(height: 40)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.tertiarySystemFill))
+        )
+    }
+}
+
 struct HistoryView: View {
     @Query(sort: \LandmarkLookup.date, order: .reverse)
     private var lookups: [LandmarkLookup]
@@ -48,14 +106,9 @@ struct HistoryView: View {
                 // edit mode — when the user is selecting rows to delete,
                 // the browse/search controls are noise.
                 if !lookups.isEmpty && !editMode.isEditing {
-                    Picker("Display mode", selection: $displayMode) {
-                        ForEach(LandmarkDisplayMode.allCases) { mode in
-                            Label(mode.label, systemImage: mode.icon).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    DisplayModeSegmentedPicker(selection: $displayMode)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
 
                     // 16pt below the picker — matches the VStack(spacing: 16)
                     // gap between the "Snap a landmark sign" button and the
@@ -71,11 +124,31 @@ struct HistoryView: View {
 
                 Group {
                     if lookups.isEmpty {
-                        ContentUnavailableView(
-                            "No lookups yet",
-                            systemImage: "signpost.right.and.left",
-                            description: Text("Snap a landmark sign to get started.")
-                        )
+                        // Mirror Scan's `howItWorksSteps` layout:
+                        // brown signpost on the left, title + helper
+                        // copy stacked on the right. Vertically
+                        // centred in the remaining space so the
+                        // overall emptiness still reads as "centred"
+                        // even though the row itself is left-aligned.
+                        VStack {
+                            Spacer()
+                            HStack(spacing: 16) {
+                                Image(systemName: "signpost.right.and.left")
+                                    .font(.system(size: 40, weight: .semibold))
+                                    .foregroundStyle(Color("BrandBrown"))
+                                    .frame(width: 54)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("No lookups yet")
+                                        .font(.title.weight(.bold))
+                                    Text("Snap a landmark sign to get started.")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal)
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         switch displayMode {
                         case .list:
@@ -327,7 +400,7 @@ struct HistoryMapView: View {
                                 systemImage: "signpost.right.fill",
                                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
                             )
-                            .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                            .tint(Color("BrandBrown"))
                             .tag(lookup)
                         }
                     }
@@ -424,7 +497,7 @@ private struct SelectedLookupCard: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         )
@@ -453,7 +526,7 @@ private struct SelectedLookupCard: View {
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                .tint(Color("BrandBrown"))
                 .controlSize(.small)
                 .padding(.top, 2)
             }
@@ -483,12 +556,12 @@ private struct SelectedLookupCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.brown.opacity(0.18))
+                .fill(Color("BrandBrown").opacity(0.18))
                 .frame(width: 56, height: 56)
                 .overlay {
                     Image(systemName: "signpost.right.fill")
                         .font(.title2)
-                        .foregroundStyle(.brown)
+                        .foregroundStyle(Color("BrandBrown").opacity(0.55))
                 }
         }
     }
@@ -553,9 +626,14 @@ struct HistoryRow: View {
     @ViewBuilder
     private var thumbnail: some View {
         // Preference order:
-        //   1. Persisted Wikipedia article image bytes
-        //   2. User's captured sign photo
-        //   3. Brown signpost placeholder
+        //   1. Persisted Wikipedia article image bytes (instant)
+        //   2. AsyncImage from the article URL — covers the brief
+        //      window after a Nearby tap where the lookup exists but
+        //      its bytes are still downloading. The detail view just
+        //      fetched the same URL, so NSURLCache typically returns
+        //      it instantly and the row never flashes the placeholder.
+        //   3. User's captured sign photo
+        //   4. Brown signpost placeholder
         if let data = lookup.articleImageData, let image = UIImage(data: data) {
             Image(uiImage: image)
                 .resizable()
@@ -564,6 +642,21 @@ struct HistoryRow: View {
                 .clipped()
                 .contentShape(Rectangle())
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else if let url = lookup.articleImageURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    fallbackThumbnail
+                }
+            }
+            .frame(width: 56, height: 56)
+            .clipped()
+            .contentShape(Rectangle())
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             fallbackThumbnail
         }
@@ -581,12 +674,12 @@ struct HistoryRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.brown.opacity(0.18))
+                .fill(Color("BrandBrown").opacity(0.18))
                 .frame(width: 56, height: 56)
                 .overlay {
                     Image(systemName: "signpost.right.fill")
                         .font(.title2)
-                        .foregroundStyle(.brown)
+                        .foregroundStyle(Color("BrandBrown").opacity(0.55))
                 }
         }
     }
@@ -701,8 +794,12 @@ struct LandmarkDetailView: View {
 
                 if !lookup.rawSummary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Full description")
-                            .font(.headline)
+                        HStack(spacing: 6) {
+                            Image(systemName: "text.justify")
+                            Text("Full description")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
                         SelectableText(text: lookup.rawSummary)
                     }
                 }
@@ -716,8 +813,8 @@ struct LandmarkDetailView: View {
                             .frame(maxWidth: .infinity, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                    .buttonBorderShape(.roundedRectangle(radius: 0))
+                    .tint(Color("BrandBrown"))
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
                     .disabled(lookup.pageURL == nil)
 
                     if let url = lookup.pageURL {
@@ -727,8 +824,8 @@ struct LandmarkDetailView: View {
                                 .frame(width: 44, height: 28)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                        .buttonBorderShape(.roundedRectangle(radius: 0))
+                        .tint(Color("BrandBrown"))
+                        .buttonBorderShape(.roundedRectangle(radius: 12))
                     }
                 }
 
@@ -895,13 +992,13 @@ struct LandmarkDetailView: View {
                     .font(.caption)
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Same warm parchment surface as the list rows and the
         // Scan recents card, so the detail view's metadata reads
         // as another card from the same family.
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color("CardBackground"))
         )
     }

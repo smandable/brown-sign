@@ -111,9 +111,11 @@ struct ContentView: View {
                         // AccentColor — needs more saturation in dark
                         // mode for white-text contrast (4.8:1 vs 3.2:1).
                         .tint(Color("AccentButton"))
-                        .buttonBorderShape(.roundedRectangle(radius: 0))
+                        .buttonBorderShape(.roundedRectangle(radius: 12))
 
                         HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
                             LandmarkTextField(
                                 text: $signText,
                                 isFocused: $isSignTextFocused,
@@ -147,12 +149,12 @@ struct ContentView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: 12)
                                 .fill(Color(.secondarySystemBackground))
                                 .onTapGesture { isSignTextFocused = true }
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: 12)
                                 .stroke(
                                     isSignTextFocused
                                         ? Color.accentColor
@@ -224,8 +226,8 @@ struct ContentView: View {
             .background(
                 LinearGradient(
                     stops: [
-                        .init(color: Color(red: 0.38, green: 0.24, blue: 0.10).opacity(0.12), location: 0),
-                        .init(color: Color.brown.opacity(0.04), location: 0.35),
+                        .init(color: Color("BrandBrown").opacity(0.12), location: 0),
+                        .init(color: Color("BrandBrown").opacity(0.04), location: 0.35),
                         .init(color: Color.clear, location: 0.7)
                     ],
                     startPoint: .top,
@@ -242,13 +244,13 @@ struct ContentView: View {
                     guard !lookUpDisabled else { return }
                     Task { await lookUp() }
                 } label: {
-                    Label("Look It Up", systemImage: "magnifyingglass")
+                    Label("Look it up", systemImage: "magnifyingglass")
                         .fontWeight(.regular)
                         .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color("AccentButton"))
-                .buttonBorderShape(.roundedRectangle(radius: 0))
+                .buttonBorderShape(.roundedRectangle(radius: 12))
                 .opacity(lookUpDisabled ? 0.5 : 1)
                 .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
                 .padding(.horizontal)
@@ -320,7 +322,7 @@ struct ContentView: View {
     /// without a visible nudge, users simply get worse results and
     /// never know why. Dismissable per-session via the small X.
     private var locationDeniedBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: "location.slash.fill")
                 .font(.callout)
                 .foregroundStyle(.orange)
@@ -353,13 +355,13 @@ struct ContentView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss location tip")
         }
-        .padding(10)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color.orange.opacity(0.12))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.orange.opacity(0.25), lineWidth: 1)
         )
     }
@@ -371,11 +373,11 @@ struct ContentView: View {
     /// Purely decorative; hidden from VoiceOver since the container
     /// carries the accessibility label.
     private var brownSignHero: some View {
-        let signBrown = Color(red: 0.38, green: 0.24, blue: 0.10)
+        let signBrown = Color("BrandBrown")
         return ZStack {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(signBrown)
-            RoundedRectangle(cornerRadius: 9)
+            RoundedRectangle(cornerRadius: 7)
                 .stroke(Color.white, lineWidth: 2)
                 .padding(6)
             VStack(spacing: 8) {
@@ -397,7 +399,7 @@ struct ContentView: View {
     /// the user has no saved lookups). Compact so it doesn't push
     /// the Look It Up bar off small screens.
     private var howItWorksSteps: some View {
-        let brown = Color(red: 0.38, green: 0.24, blue: 0.10)
+        let brown = Color("BrandBrown")
         let steps: [(String, String, String)] = [
             ("camera.fill", "Snap", "Point your camera at any landmark sign"),
             ("sparkles", "Identify", "We look up the landmark for you"),
@@ -528,7 +530,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: 200)
                     .clipped()
                     .contentShape(Rectangle())
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
             } else if let imageURL = result.articleImageURL {
                 AsyncImage(url: imageURL) { phase in
                     switch phase {
@@ -552,7 +554,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: 200)
                 .clipped()
                 .contentShape(Rectangle())
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
             SelectableText(
@@ -587,8 +589,8 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                .buttonBorderShape(.roundedRectangle(radius: 0))
+                .tint(Color("BrandBrown"))
+                .buttonBorderShape(.roundedRectangle(radius: 12))
                 .disabled(savedLookup == nil)
 
                 HStack(spacing: 8) {
@@ -600,8 +602,8 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                    .buttonBorderShape(.roundedRectangle(radius: 0))
+                    .tint(Color("BrandBrown"))
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
                     .disabled(result.pageURL.absoluteString.isEmpty)
 
                     ShareLink(item: result.pageURL,
@@ -612,14 +614,14 @@ struct ContentView: View {
                             .frame(width: 44, height: 28)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
-                    .buttonBorderShape(.roundedRectangle(radius: 0))
+                    .tint(Color("BrandBrown"))
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
                 }
             }
         }
         .padding(.bottom, 2)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color.secondary.opacity(0.1))
                 .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
         )
@@ -632,9 +634,12 @@ struct ContentView: View {
         let others = candidates.filter { $0.pageURL != result?.pageURL }
         if !others.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Other matches")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "rectangle.stack.fill")
+                    Text("Other matches")
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
 
                 VStack(spacing: 0) {
                     ForEach(Array(others.enumerated()), id: \.offset) { idx, alt in
@@ -682,11 +687,11 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             } else {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.brown.opacity(0.2))
+                    .fill(Color("BrandBrown").opacity(0.2))
                     .frame(width: 44, height: 44)
                     .overlay {
                         Image(systemName: "signpost.right.fill")
-                            .foregroundStyle(.brown)
+                            .foregroundStyle(Color("BrandBrown").opacity(0.55))
                     }
             }
 
@@ -719,7 +724,7 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .padding(10)
+        .padding(12)
         .contentShape(Rectangle())
     }
 
@@ -774,13 +779,13 @@ struct ContentView: View {
                         .font(.caption)
                 }
             }
-            .padding(10)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Same parchment surface as the detail view's metadata
             // block — keeps the Scan result card metadata visually
             // parallel to its History counterpart.
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color("CardBackground"))
             )
         }

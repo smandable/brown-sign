@@ -249,12 +249,12 @@ private struct HiddenLandmarkRow: View {
 
     private var placeholder: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color.brown.opacity(0.18))
+            .fill(Color("BrandBrown").opacity(0.18))
             .frame(width: 56, height: 56)
             .overlay {
                 Image(systemName: "signpost.right.fill")
                     .font(.title2)
-                    .foregroundStyle(.brown)
+                    .foregroundStyle(Color("BrandBrown").opacity(0.55))
             }
     }
 }

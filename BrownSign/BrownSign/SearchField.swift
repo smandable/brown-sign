@@ -56,8 +56,17 @@ struct SearchField: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    isFocused
+                        ? Color.accentColor
+                        : Color.secondary.opacity(0.35),
+                    lineWidth: isFocused ? 2 : 1
+                )
         )
     }
 }

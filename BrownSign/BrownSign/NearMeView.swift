@@ -92,14 +92,9 @@ struct NearMeView: View {
                 // to the map and pan — they need the switcher visible
                 // to actually do that.
                 if displayModePickerVisible {
-                    Picker("Display mode", selection: $displayMode) {
-                        ForEach(LandmarkDisplayMode.allCases) { mode in
-                            Label(mode.label, systemImage: mode.icon).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
+                    DisplayModeSegmentedPicker(selection: $displayMode)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
 
                     // 16pt below the picker — matches the VStack(spacing: 16)
                     // gap between the "Snap a landmark sign" button and the
@@ -130,7 +125,8 @@ struct NearMeView: View {
                                     .fontWeight(.semibold)
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                            .tint(Color("BrandBrown"))
+                            .buttonBorderShape(.roundedRectangle(radius: 12))
                         }
                     case .locationUnavailable:
                         ContentUnavailableView(
@@ -328,7 +324,7 @@ struct NearMeView: View {
     }
 
     private var loadingView: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 16) {
             ProgressView()
             Text("Finding landmarks near you…")
                 .font(.subheadline)
@@ -834,12 +830,12 @@ private struct NearbyRow: View {
 
     private var placeholder: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color.brown.opacity(0.18))
+            .fill(Color("BrandBrown").opacity(0.18))
             .frame(width: 56, height: 56)
             .overlay {
                 Image(systemName: "signpost.right.fill")
                     .font(.title2)
-                    .foregroundStyle(.brown)
+                    .foregroundStyle(Color("BrandBrown").opacity(0.55))
             }
     }
 
@@ -909,7 +905,7 @@ private struct NearbyMapView: View {
                                 longitude: coord.longitude
                             )
                         )
-                        .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                        .tint(Color("BrandBrown"))
                         .tag(result.pageURL.absoluteString)
                     }
                 }
@@ -1021,7 +1017,7 @@ private struct SelectedNearbyCard: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         )
@@ -1050,8 +1046,9 @@ private struct SelectedNearbyCard: View {
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.38, green: 0.24, blue: 0.10))
+                .tint(Color("BrandBrown"))
                 .controlSize(.small)
+                .buttonBorderShape(.roundedRectangle(radius: 8))
                 .padding(.top, 2)
             }
             Spacer(minLength: 0)
@@ -1082,12 +1079,12 @@ private struct SelectedNearbyCard: View {
 
     private var placeholder: some View {
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color.brown.opacity(0.18))
+            .fill(Color("BrandBrown").opacity(0.18))
             .frame(width: 56, height: 56)
             .overlay {
                 Image(systemName: "signpost.right.fill")
                     .font(.title2)
-                    .foregroundStyle(.brown)
+                    .foregroundStyle(Color("BrandBrown").opacity(0.55))
             }
     }
 }
