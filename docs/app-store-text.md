@@ -53,20 +53,18 @@ Brown Sign works on any iPhone running iOS 26. Apple Intelligence enhances the e
 landmarks,brown signs,OCR,travel,history,national parks,historic,road trip,sightseeing,directions
 ```
 
-## What's New (Version 1.4.2)
+## What's New (Version 1.4.4)
 ```
-Faster cold-start on the Nearby tab. Pins from your last session now appear instantly when you reopen the app, while a fresh search runs in the background — and the closest landmarks render before the rest of the list finishes loading.
-
-Pull-to-refresh is smoother: no more jump at the top of the list when results update.
-
-More landmarks show a thumbnail in the list and on map pins. Articles whose photos only appear inline in the body (like swing bridges) used to fall back to a placeholder; we now find those images too.
-
-Polish: list cards across Scan, Nearby, and History now end exactly with the last row instead of extending the parchment past the content; section headers are sized consistently across the three tabs; and Nearby's search field shows an explicit "No results" message when nothing matches.
+Fixed an intermittent "No landmarks nearby" message that could appear in areas that actually contain landmarks. When the Wikidata service was slow or unreachable, the app was treating the failure the same as an empty area. Now you'll see a clear "Couldn't load landmarks" message with a Try again button instead, and the underlying timeout has been widened so transient slowdowns no longer trigger a false empty.
 ```
 
 ### Previous versions
 
 ```
+Version 1.4.3 — Whole-app design unification. Every card, list, textfield, and button across Scan, Nearby, and History now renders at a consistent 12pt corner radius. New custom List/Map switcher matches the search field height. Sentence-case button text. Brand brown extracted to a single asset color. Polished search field focus states, the Nearby empty state, and the History empty state.
+
+Version 1.4.2 — Faster cold-start on the Nearby tab. Pins from your last session now appear instantly when you reopen the app, while a fresh search runs in the background — and the closest landmarks render before the rest of the list finishes loading. Pull-to-refresh is smoother: no more jump at the top of the list when results update. More landmarks show a thumbnail in the list and on map pins. Articles whose photos only appear inline in the body (like swing bridges) used to fall back to a placeholder; we now find those images too. Polish: list cards across Scan, Nearby, and History now end exactly with the last row instead of extending the parchment past the content; section headers are sized consistently across the three tabs; and Nearby's search field shows an explicit "No results" message when nothing matches.
+
 Version 1.0 — Initial release.
 ```
 
