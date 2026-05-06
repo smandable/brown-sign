@@ -11,20 +11,15 @@ struct BrownSignApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                ContentView()
-                    .tabItem {
-                        Label("Scan", systemImage: "camera.fill")
-                    }
-
-                NearMeView()
-                    .tabItem {
-                        Label("Nearby", systemImage: "map.fill")
-                    }
-
-                HistoryView()
-                    .tabItem {
-                        Label("History", systemImage: "clock.fill")
-                    }
+                Tab("Scan", systemImage: "camera.fill") {
+                    ContentView()
+                }
+                Tab("Nearby", systemImage: "map.fill") {
+                    NearMeView()
+                }
+                Tab("History", systemImage: "clock.fill") {
+                    HistoryView()
+                }
             }
             // Pre-warm the GPS at app launch so the Nearby tab doesn't
             // pay cold-radio first-fix latency (2–10 s on a fresh

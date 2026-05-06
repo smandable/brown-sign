@@ -37,6 +37,7 @@ struct NearMeView: View {
         case locationUnavailable
         case loaded([LandmarkResult])
         case empty
+        case serviceUnavailable
     }
 
     /// 5-mile search radius (8047 m via 5 × 1609.344). Passed to
@@ -134,6 +135,29 @@ struct NearMeView: View {
                             systemImage: "location.slash",
                             description: Text("Try again once you have GPS signal.")
                         )
+                    case .serviceUnavailable:
+                        // SPARQL fetch (Wikidata) failed transiently —
+                        // timed out, retries exhausted, or task
+                        // cancelled. Distinct from `.empty`: we can't
+                        // know whether the area has landmarks until
+                        // the service responds. Surface as retryable
+                        // so the user isn't told an area is empty
+                        // when it isn't.
+                        ContentUnavailableView {
+                            Label("Couldn't load landmarks", systemImage: "wifi.exclamationmark")
+                        } description: {
+                            Text("There was a problem reaching the landmark service. This is usually temporary.")
+                        } actions: {
+                            Button {
+                                startRefresh(force: true)
+                            } label: {
+                                Label("Try again", systemImage: "arrow.clockwise")
+                                    .fontWeight(.semibold)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color("BrandBrown"))
+                            .buttonBorderShape(.roundedRectangle(radius: 12))
+                        }
                     case .empty:
                         // In list mode, explain the emptiness and
                         // point the user at the map + pan affordance.
@@ -524,10 +548,28 @@ struct NearMeView: View {
             state = .locationDenied
             return
         }
-        guard let loc = await locationManager.currentLocation(withTimeout: 5) else {
+        // 12 s timeout absorbs post-toggle GPS first-fix latency
+        // (5–15 s). `bypassCache: force` makes an explicit refresh
+        // always re-issue `requestLocation()` — without this, a stale
+        // fix from before a Location-Services toggle survived for the
+        // cache's 5-min TTL and refresh was a no-op against the GPS.
+        guard let loc = await locationManager.currentLocation(withTimeout: 12, bypassCache: force) else {
             if !hasResults { state = .locationUnavailable }
             return
         }
+
+        // `LocationManager.currentLocation` deduplicates concurrent
+        // callers via `inflightFetch` — multiple `refresh` Tasks
+        // waiting for the same GPS fix all resume in the same
+        // microsecond when the fix arrives. If `startRefresh`
+        // cancelled an older Task, that Task is still running here
+        // (cancellation is cooperative; `currentLocation` has no
+        // `Task.isCancelled` check). Without this gate, both the
+        // cancelled and active Task fall through to
+        // `discoverLandmarksAt` simultaneously and we issue two
+        // identical concurrent SPARQL queries.
+        if Task.isCancelled { return }
+
         userLocation = loc
 
         // Spatial cache invalidation: if the rendered pins are from a
@@ -577,24 +619,46 @@ struct NearMeView: View {
             limit: Self.fetchLimit
         )
         var finalResults: [LandmarkResult] = []
-        for await results in stream {
+        var sparqlFailed = false
+        for await yield in stream {
             if Task.isCancelled { return }
-            // Cold-start path: render each non-empty yield as soon as
-            // it's ready so the user sees pins fast. Manual-refresh
-            // path: skip intermediate yields and swap atomically once
-            // the stream finishes. The `.empty` decision in either
-            // case is made after the stream completes — an empty
-            // intermediate yield (rare, e.g. fast batch fully gated)
-            // shouldn't flash "No landmarks nearby".
-            if progressiveRender, !results.isEmpty {
-                state = .loaded(results)
+            switch yield {
+            case .batch(let results):
+                // Cold-start path: render each non-empty yield as
+                // soon as it's ready so the user sees pins fast.
+                // Manual-refresh path: skip intermediate yields and
+                // swap atomically once the stream finishes. The
+                // `.empty` decision in either case is made after the
+                // stream completes — an empty intermediate yield
+                // (rare, e.g. fast batch fully gated) shouldn't flash
+                // "No landmarks nearby".
+                if progressiveRender, !results.isEmpty {
+                    state = .loaded(results)
+                }
+                finalResults = results
+            case .sparqlFailed:
+                sparqlFailed = true
             }
-            finalResults = results
         }
         if Task.isCancelled { return }
 
-        lastFetchCenter = loc.coordinate
+        if sparqlFailed && finalResults.isEmpty {
+            // SPARQL transport failed (timeout, retry exhaustion,
+            // cancel). Don't claim the area is empty when we never
+            // heard back from the service. Leave `lastFetchCenter`
+            // alone — a future pan should still trigger a fetch from
+            // this center. Leave existing pins alone if we already
+            // have some (a refresh that failed shouldn't blow away
+            // the last successful results); only switch to the
+            // explicit failure state when there are no pins to keep.
+            if !hasResults { state = .serviceUnavailable }
+            return
+        }
+
         if finalResults.isEmpty {
+            // SPARQL succeeded with zero hits — area is genuinely
+            // empty within the search radius.
+            lastFetchCenter = loc.coordinate
             state = .empty
         } else {
             // Always commit the final set. In the progressive path
@@ -602,6 +666,7 @@ struct NearMeView: View {
             // state); in the non-progressive path it's the actual
             // atomic swap from the previous results to the fresh
             // fetch.
+            lastFetchCenter = loc.coordinate
             state = .loaded(finalResults)
         }
 
@@ -639,13 +704,26 @@ struct NearMeView: View {
     /// location" header framing.
     private func fetchAroundMapCenter(_ center: CLLocationCoordinate2D) async {
         guard !isFetchingMore else { return }
+        // Pan-search is conceptually an augmentation of an
+        // established result set, never the initial fetch. While a
+        // primary `refresh` is in flight, drop pan triggers — the
+        // map's `.onMapCameraChange` fires during the cold-start
+        // window too (programmatic camera changes from `.onAppear`
+        // and `recenterSignal` trigger it), and racing two SPARQL
+        // queries against `query.wikidata.org` for identical coords
+        // doubles Wikidata load.
+        guard !isReloading else { return }
+        // No anchor center means either the initial fetch hasn't
+        // completed yet or it's mid-refresh (`refresh` nils
+        // `lastFetchCenter` to discard panned pins before
+        // re-fetching). In both windows the GPS-centered `refresh`
+        // is the right path; firing a pan-fetch here would race it.
+        guard let last = lastFetchCenter else { return }
         // Pan threshold: if the new center is still within the
         // current 5-mile fetch's area, we already have its landmarks.
-        if let last = lastFetchCenter {
-            let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
-                .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
-            guard dist > Self.panRefetchThresholdMeters else { return }
-        }
+        let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
+            .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
+        guard dist > Self.panRefetchThresholdMeters else { return }
 
         isFetchingMore = true
         defer { isFetchingMore = false }
@@ -661,11 +739,22 @@ struct NearMeView: View {
             limit: Self.fetchLimit
         )
         var fresh: [LandmarkResult] = []
-        for await results in stream {
+        var sparqlFailed = false
+        for await yield in stream {
             if Task.isCancelled { return }
-            fresh = results
+            switch yield {
+            case .batch(let results):
+                fresh = results
+            case .sparqlFailed:
+                sparqlFailed = true
+            }
         }
         if Task.isCancelled { return }
+
+        // Pan failure path: don't update `lastFetchCenter` (so the
+        // next pan past the threshold tries again) and don't surface
+        // UI — pan augments existing results, not the primary fetch.
+        if sparqlFailed && fresh.isEmpty { return }
 
         lastFetchCenter = center
         guard !fresh.isEmpty else { return }

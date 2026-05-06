@@ -89,13 +89,21 @@ private let wdqsUserAgent = "BrownSign-iOS/1.2 (https://github.com/seanmandable/
 /// Retries on transient errors (5xx + network blips) via
 /// `httpDataWithRetry` — WDQS occasionally returns 502/503 when
 /// load-balancing or backend-restarting and the next retry almost
-/// always succeeds. On terminal failure returns []; the caller
-/// renders an empty Nearby state.
+/// always succeeds.
+///
+/// Returns `nil` on transient transport failure (HTTP retries
+/// exhausted, URL/encoding error). Returns `[]` only when the
+/// endpoint successfully answered with zero hits — i.e. the area
+/// is genuinely empty. The caller distinguishes the two so a
+/// transient WDQS hiccup surfaces as a retryable "service
+/// unavailable" state rather than an indistinguishable
+/// "No landmarks nearby" — the latter would be wrong (and
+/// historically caused intermittent false-empty reports).
 func discoverLandmarksViaSPARQL(
     centerLat: Double,
     centerLon: Double,
     radiusKm: Double
-) async -> [WikidataLandmarkHit] {
+) async -> [WikidataLandmarkHit]? {
     let valuesBlock = landmarkP31QIDs.map { "wd:\($0)" }.joined(separator: " ")
     let query = """
     SELECT DISTINCT ?item ?article ?coord WHERE {
@@ -120,23 +128,26 @@ func discoverLandmarksViaSPARQL(
             withAllowedCharacters: .urlQueryAllowed
           ),
           let url = URL(string: "https://query.wikidata.org/sparql?format=json&query=\(encoded)") else {
-        return []
+        return nil
     }
 
     var request = URLRequest(url: url)
     request.setValue(wdqsUserAgent, forHTTPHeaderField: "User-Agent")
     request.setValue("application/sparql-results+json", forHTTPHeaderField: "Accept")
-    // 8 s per attempt. WDQS normally answers in <2 s for this kind of
-    // geo-spatial query; anything taking 8 s+ is effectively dead and
-    // a retry against another backend instance is the right move. The
-    // cold-start path is the wrong place to wait the old 15 s ceiling.
-    request.timeoutInterval = 8
+    // 12 s per attempt. WDQS normally answers in <2 s for this kind
+    // of geo-spatial query, but the radius branch occasionally blows
+    // past 8 s under load — the previous 8 s ceiling was firing as a
+    // false-empty for users (saw "No landmarks nearby" when the
+    // endpoint just hadn't returned yet). 12 s covers the long tail
+    // without compounding into a 30 s+ wait.
+    request.timeoutInterval = 12
 
-    // Cap to 2 attempts (vs the helper's default 3). With timeout 8 s
-    // the worst case is `8 + 0.5 + 8 = 16.5 s` instead of the 3-attempt
-    // ceiling of `8 + 0.5 + 8 + 1.5 + 8 = 26 s`. WDQS hiccups that
-    // survive two attempts are rare and not worth the extra tail.
-    guard let data = await httpDataWithRetry(request, maxAttempts: 2) else { return [] }
+    // 3 attempts. Worst-case wait is `12 + 0.5 + 12 + 1.5 + 12 = 38 s`,
+    // but the modal case is one of the early attempts succeeding —
+    // the third attempt only runs if both 1 and 2 failed, which
+    // catches WDQS's rarer multi-second hiccups that 2 attempts
+    // dropped on the floor.
+    guard let data = await httpDataWithRetry(request, maxAttempts: 3) else { return nil }
     return parseSPARQLBindings(data)
 }
 

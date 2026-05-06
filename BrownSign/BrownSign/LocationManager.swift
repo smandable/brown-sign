@@ -97,7 +97,19 @@ final class LocationManager: NSObject {
     /// `seconds` for a fresh fix. Designed to be called from a search
     /// path: you want the best location you can get quickly, but you
     /// don't want to stall forever if the GPS is slow.
-    func currentLocation(withTimeout seconds: TimeInterval) async -> CLLocation? {
+    ///
+    /// Pass `bypassCache: true` when the caller is an explicit user
+    /// gesture that needs a guaranteed-fresh fix (toolbar refresh,
+    /// pull-to-refresh) — drops the 5-min cache so the call falls
+    /// through to a real `requestLocation()`. If a fetch is already
+    /// in flight we still adopt its result rather than spawning a
+    /// parallel one, since `CLLocationManager`'s
+    /// `locationContinuation` is single-shot; an in-flight fetch is
+    /// by definition a fresh GPS request, not stale cache.
+    func currentLocation(withTimeout seconds: TimeInterval, bypassCache: Bool = false) async -> CLLocation? {
+        if bypassCache {
+            lastLocation = nil
+        }
         if let cached = lastLocation,
            Date().timeIntervalSince(cached.timestamp) < 300 {
             return cached
@@ -151,6 +163,19 @@ extension LocationManager: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
         Task { @MainActor in
+            // Auth transition (most importantly the off→on Location
+            // Services toggle, which routes through .denied) means
+            // any cached fix is now untrustworthy — the user may have
+            // moved while location was disabled, or GPS will
+            // re-acquire at a slightly different spot. Drop the
+            // cache so the next fetch actually calls
+            // `requestLocation()` instead of short-circuiting on the
+            // pre-toggle fix. Don't touch `inflightFetch` — its
+            // `CheckedContinuation` must resume exactly once, and the
+            // OS will fire `didFailWithError` to do so naturally.
+            if self.authorizationStatus != status {
+                self.lastLocation = nil
+            }
             self.authorizationStatus = status
             let granted: Bool
             switch status {

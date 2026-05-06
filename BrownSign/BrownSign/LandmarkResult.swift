@@ -267,20 +267,42 @@ func searchLandmarkCandidates(
 ///   - Pan-to-search: `center = map center` as the user pans. The pan
 ///     consumer collects only the final yield since pan is already
 ///     non-blocking via `isFetchingMore`.
+/// What `discoverLandmarksAt` yields. `.batch` carries a list of
+/// hydrated landmarks (one yield per fast/rest batch). `.sparqlFailed`
+/// is emitted when the upstream SPARQL fetch returned `nil` —
+/// transient HTTP failure, retry exhaustion, or task cancellation —
+/// so the consumer can surface a retryable "service unavailable"
+/// state rather than mistaking the failure for an empty area.
+enum NearbyStreamYield {
+    case batch([LandmarkResult])
+    case sparqlFailed
+}
+
 func discoverLandmarksAt(
     center: CLLocationCoordinate2D,
     radiusMeters: Int = 8_047,
     limit: Int = 100,
     fastFirstBatch: Int = 30
-) -> AsyncStream<[LandmarkResult]> {
+) -> AsyncStream<NearbyStreamYield> {
     AsyncStream { continuation in
         let task = Task {
             let radiusKm = Double(radiusMeters) / 1000.0
-            let hits = await discoverLandmarksViaSPARQL(
+            let maybeHits = await discoverLandmarksViaSPARQL(
                 centerLat: center.latitude,
                 centerLon: center.longitude,
                 radiusKm: radiusKm
             )
+
+            guard let hits = maybeHits else {
+                // SPARQL returned nil — transient HTTP failure or
+                // cancellation. Tell the consumer so the UI doesn't
+                // collapse this into "No landmarks nearby."
+                if !Task.isCancelled {
+                    continuation.yield(.sparqlFailed)
+                }
+                continuation.finish()
+                return
+            }
 
             guard !hits.isEmpty else {
                 continuation.finish()
@@ -321,7 +343,7 @@ func discoverLandmarksAt(
                 continuation.finish()
                 return
             }
-            continuation.yield(fastBatch.results)
+            continuation.yield(.batch(fastBatch.results))
 
             if !restHits.isEmpty {
                 let restBatch = await hydrateAndGateBatch(
@@ -332,7 +354,7 @@ func discoverLandmarksAt(
                     continuation.finish()
                     return
                 }
-                continuation.yield(fastBatch.results + restBatch.results)
+                continuation.yield(.batch(fastBatch.results + restBatch.results))
             }
 
             continuation.finish()
