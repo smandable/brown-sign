@@ -506,11 +506,16 @@ func enrichLandmark(
         candidateSummary: candidate.rawSummary
     )
     async let imageTask  = downloadArticleImageWithFallback(candidate: candidate)
+    // Backfill coordinates when phase-1 (Wikidata P625) had none. No-op
+    // when candidate.coordinates is already set, so existing happy-path
+    // results don't pay an extra roundtrip.
+    async let coordsTask = backfillCoordinatesIfNeeded(for: candidate)
 
     let kg      = await kgScore
     let polish  = await polished
     let match   = await matchScore
     let imagePair = await imageTask
+    let coords  = await coordsTask
 
     return LandmarkResult(
         title: candidate.title,
@@ -520,7 +525,7 @@ func enrichLandmark(
         source: candidate.source,
         articleImageURL: imagePair.url,
         articleImageData: imagePair.data,
-        coordinates: candidate.coordinates,
+        coordinates: coords,
         inceptionYear: candidate.inceptionYear,
         wikidataType: candidate.wikidataType,
         externalConfidence: kg,
