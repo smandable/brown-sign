@@ -156,6 +156,51 @@ If repro is needed:
 - Reproduced consistently on iPhone 16 Pro running iOS 26.x. Not yet
   tested on simulator or other devices.
 
+## Update 2026-05-11: open mystery retracted
+
+The "multi-fire `.task` / 3× Wikidata bandwidth" claim above was a
+misreading. Re-instrumented shipping main on the same iPhone 16 Pro,
+same iOS 26.4.2 build `23E261`, same Xcode 26.4.1 — no toolchain change
+since this doc was written — with a fresh probe (`diag/sparql-fire-count`,
+not merged) logging `.onAppear`, `refresh` entry, the `discoverLandmarksAt`
+call site, and every `httpDataWithRetry` attempt with attempt#/outcome.
+Every test scenario (cold-launch → tap Nearby, manual refresh button,
+pull-to-refresh) consistently shows **1 `onAppear`, 1 `refresh ENTRY`,
+1 `query.wikidata.org` HTTP attempt with success-200**.
+
+Re-adding the diagnostics-branch `.onAppear { isReloading = true }`
+on top of that probe did **not** bring back the multi-fire — so the
+diagnostic instrumentation itself wasn't the cause either.
+
+What was originally observed and misinterpreted: after the single
+SPARQL succeeds, `discoverLandmarksAt` hydrates each landmark with a
+Wikipedia REST request, producing a burst of ~15-17 simultaneous
+`en.wikipedia.org` HTTP calls in ~400 ms. In Xcode's network inspector
+or a busy Console.app filter, that fan-out reads exactly like "the
+same request firing multiple times". It isn't — it's N parallel
+hydrations of distinct landmarks, working as designed.
+
+Implications:
+
+- **No multi-fire bug.** The "3× Wikidata bandwidth" claim is wrong.
+  Shipping main has been doing 1 SPARQL + N hydrations per refresh
+  all along — correct behavior.
+- **No iOS / Swift Concurrency mystery.** Every primitive (locks,
+  actors, `@State`, MainActor) was working correctly during the
+  original investigation. The diagnostic logs that "proved"
+  serialization failure were either reading the hydration burst or
+  had a measurement bug we never identified.
+- **No "if Apple fixes the underlying issue" path needed.** The
+  `SparqlDeduplicator` actor sitting on `diagnostics/nearby-empty`
+  is a fix for a problem that doesn't exist; don't land it.
+
+The cancellation gate (`if Task.isCancelled { return }` after
+`currentLocation`, in [BrownSign/BrownSign/NearMeView.swift](../../BrownSign/BrownSign/NearMeView.swift))
+is still load-bearing — when a user pull-to-refreshes during an
+in-flight cold-start, it does cancel the cold-start's HTTP request
+mid-flight (observed in the same probe as
+`outcome=error-cancelled`). That part of the fix is real.
+
 ## Lessons
 
 - **Distinguish failure modes at the API boundary.** A function that
@@ -181,3 +226,11 @@ If repro is needed:
   per-instance UUID instrumentation revealed the actual shape (one
   instance, multiple firings, locks not serializing). The diagnostic
   cost up-front would have been one cycle.
+- **Count what you actually observe, not what you assume you're
+  observing.** The 2026-05-11 retraction above happened because the
+  fan-out of parallel landmark-hydration requests looked identical
+  in the network inspector to the multi-fire pattern we were
+  hunting. Before declaring "every primitive in Swift Concurrency
+  is broken", instrument with a *labelled* counter at the layer
+  where you think the bug lives (per-call attempt-number outcome
+  log, in our case) rather than eyeballing the request stream.
