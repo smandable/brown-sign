@@ -18,6 +18,18 @@ import UIKit
 final class LocationManager: NSObject {
     static let shared = LocationManager()
 
+    /// Timeout for the scan-tab GPS hint. Short on purpose — we only
+    /// need a rough location to break geographic ties in
+    /// `searchLandmarkCandidates`, and the search itself shouldn't
+    /// stall waiting for a cold radio fix.
+    nonisolated static let scanHintTimeout: TimeInterval = 3
+
+    /// Timeout for the Nearby-tab fetch. Longer because we have nothing
+    /// to show without a fix — a cold-radio GPS warm-up can take ~10 s
+    /// on a real device, and surfacing "Can't find your location" before
+    /// then would be a false negative.
+    nonisolated static let nearbyTimeout: TimeInterval = 12
+
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored private var permissionContinuation: CheckedContinuation<Bool, Never>?
     @ObservationIgnored private var locationContinuation: CheckedContinuation<CLLocation?, Never>?

@@ -820,10 +820,11 @@ struct ContentView: View {
         candidates = []
 
         let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Get the best location we can in up to 3 seconds. The inflight
-        // guard in LocationManager means concurrent callers share one
-        // fetch, so this composes safely with the .task priming.
-        let userLocation = await locationManager.currentLocation(withTimeout: 3)
+        // The inflight guard in LocationManager means concurrent callers
+        // share one fetch, so this composes safely with the .task priming.
+        let userLocation = await locationManager.currentLocation(
+            withTimeout: LocationManager.scanHintTimeout
+        )
 
         // Phase 1: candidate list (fast — Wikipedia + Wikidata only).
         let found = await searchLandmarkCandidates(

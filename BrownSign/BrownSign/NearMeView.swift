@@ -548,12 +548,14 @@ struct NearMeView: View {
             state = .locationDenied
             return
         }
-        // 12 s timeout absorbs post-toggle GPS first-fix latency
-        // (5–15 s). `bypassCache: force` makes an explicit refresh
-        // always re-issue `requestLocation()` — without this, a stale
-        // fix from before a Location-Services toggle survived for the
-        // cache's 5-min TTL and refresh was a no-op against the GPS.
-        guard let loc = await locationManager.currentLocation(withTimeout: 12, bypassCache: force) else {
+        // `bypassCache: force` makes an explicit refresh always re-issue
+        // `requestLocation()` — without this, a stale fix from before a
+        // Location-Services toggle survived for the cache's 5-min TTL and
+        // refresh was a no-op against the GPS.
+        guard let loc = await locationManager.currentLocation(
+            withTimeout: LocationManager.nearbyTimeout,
+            bypassCache: force
+        ) else {
             if !hasResults { state = .locationUnavailable }
             return
         }
