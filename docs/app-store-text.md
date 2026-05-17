@@ -16,7 +16,7 @@ Ever drive past a brown highway sign and wonder what it's pointing to? Snap a ph
 ## Description
 
 ```
-Ever drive past a brown roadside sign and wonder what it's pointing to? Brown Sign tells you instantly.
+Brown Sign identifies the landmarks behind brown roadside signs — and helps you discover new ones around you.
 
 SNAP OR TYPE
 Point your camera at a brown highway sign — or just type the name — and Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
