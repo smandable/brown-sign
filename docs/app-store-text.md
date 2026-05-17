@@ -56,14 +56,16 @@ Brown Sign works on any iPhone running iOS 26. Apple Intelligence enhances the e
 landmarks,brown signs,trails,travel,history,national parks,historic,road trip,sightseeing,directions
 ```
 
-## What's New (Version 1.4.6)
+## What's New (Version 1.4.7)
 ```
-Hiking trails, long-distance trails, and water trails now show up on the Nearby list and map when one's within range of you. Also fixed three landmark categories that had been quietly missing from Nearby because of stale identifiers in the curated landmark filter: National Wildlife Refuges, National Historic Landmarks, and memorials now appear like the rest.
+Pan-search on the Nearby map is now more responsive: when you sweep the map across a region, Brown Sign cancels the older in-flight search in favor of the spot you actually landed on, so the new pins land faster. Plus a lighter app download.
 ```
 
 ### Previous versions
 
 ```
+Version 1.4.6 — Hiking trails, long-distance trails, and water trails now show up on the Nearby list and map when one's within range of you. Also fixed three landmark categories that had been quietly missing from Nearby because of stale identifiers in the curated landmark filter: National Wildlife Refuges, National Historic Landmarks, and memorials now appear like the rest.
+
 Version 1.4.5 — Sparse-data landmarks now show up on the History map. Some Wikipedia articles publish coordinates in their lead sentence but don't have a structured Wikidata coordinate — Drakes Bay Oyster Company is one example. Those landmarks used to save to History with no coordinates and drop off the map. Brown Sign now reads the article extract itself as a fallback, so the map matches what the article says.
 
 Version 1.4.4 — Fixed an intermittent "No landmarks nearby" message that could appear in areas that actually contain landmarks. When the Wikidata service was slow or unreachable, the app was treating the failure the same as an empty area. Now you'll see a clear "Couldn't load landmarks" message with a Try again button instead, and the underlying timeout has been widened so transient slowdowns no longer trigger a false empty.

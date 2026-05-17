@@ -193,8 +193,10 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `HTTPRetry.swift` | Shared retry helper (`httpDataWithRetry`) — default 3 attempts with 500 ms + 1.5 s backoff, retries on 502/503/504/429 + URL errors, honors task cancellation. Used by the SPARQL fetch and the Nearby Wikipedia REST hydration |
 | `NPSSearch.swift` | `/parks` + `/places` fallback with article images |
 | `GoogleKnowledgeGraphSearch.swift` | External confidence scoring |
-| `LandmarkResult.swift` | Two-phase scan orchestrator + Nearby orchestrator (SPARQL + Wikipedia hydration + operating-institution gate), type filter, title-match filter, place indicators |
+| `LandmarkResult.swift` | The unified result model (`Coordinate` + `LandmarkResult` with Wikipedia/NPS factories). Pure data — orchestration lives in `LandmarkSearch.swift`. |
+| `LandmarkSearch.swift` | Two-phase scan orchestrator + Nearby orchestrator (SPARQL + Wikipedia hydration + operating-institution gate), type filter, title-match filter, place indicators |
 | `LandmarkLookup.swift` | SwiftData `@Model` — history entries with all enrichment fields |
+| `UIImage+Resize.swift` | Shared `resized(to:)` / `resized(toMaxDimension:)` helpers — used by the scan flow (history thumbnails, captured-photo downscale) and the landmark image-hydration path |
 | `APIKeys.swift` | **Gitignored.** Local API keys only. |
 
 ## Privacy
