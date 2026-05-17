@@ -642,7 +642,7 @@ struct ContentView: View {
                 .foregroundStyle(Color.accentColor)
 
                 VStack(spacing: 0) {
-                    ForEach(Array(others.enumerated()), id: \.offset) { idx, alt in
+                    ForEach(Array(others.enumerated()), id: \.element.pageURL) { idx, alt in
                         Button {
                             switchTo(alt)
                         } label: {
