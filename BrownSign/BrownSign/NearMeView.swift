@@ -56,7 +56,6 @@ struct NearMeView: View {
 
     @State private var state: LoadState = .idle
     @State private var isReloading = false
-    @State private var isFetchingMore = false
     @State private var userLocation: CLLocation?
     /// Center of the most recent geosearch. Drives the pan-threshold
     /// check: if the new map center is more than
@@ -71,6 +70,12 @@ struct NearMeView: View {
     /// could both write to `state` and the user would see results
     /// flicker between the two fetches.
     @State private var refreshTask: Task<Void, Never>?
+    /// Latest in-flight pan-search task. Mirrors `refreshTask`:
+    /// rapid map pans (continuous swipe across threshold boundaries)
+    /// cancel the previous fetch instead of dropping the later pan
+    /// position. Also cancelled by `startRefresh` so a primary refresh
+    /// can't be raced by a stale pan-merge.
+    @State private var panTask: Task<Void, Never>?
     @State private var pushedLookup: LandmarkLookup?
     @State private var displayMode: LandmarkDisplayMode = .list
     /// Incremented by `refresh(force: true)` to tell the map view to
@@ -178,7 +183,7 @@ struct NearMeView: View {
                                 recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
                                 onMapCenterChanged: { center in
-                                    Task { await fetchAroundMapCenter(center) }
+                                    startPanFetch(center)
                                 }
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -215,7 +220,7 @@ struct NearMeView: View {
                                 recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
                                 onMapCenterChanged: { center in
-                                    Task { await fetchAroundMapCenter(center) }
+                                    startPanFetch(center)
                                 }
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -307,14 +312,32 @@ struct NearMeView: View {
     /// new task so callers that need to await completion (the initial
     /// `.task` body, pull-to-refresh) can do so. Toolbar button taps
     /// don't need to await — they're fire-and-forget.
+    /// Also cancels any pan-search in flight: a primary refresh
+    /// supersedes a pan-merge, and letting a stale pan write after
+    /// the refresh has reset the list would clobber the fresh results.
     @discardableResult
     private func startRefresh(force: Bool) -> Task<Void, Never> {
         refreshTask?.cancel()
+        panTask?.cancel()
         let task = Task {
             await refresh(force: force)
         }
         refreshTask = task
         return task
+    }
+
+    /// Cancels any in-flight pan-search and starts a new one for the
+    /// given map center. Called from the map's `onMapCenterChanged`
+    /// callback — when the user is actively swipe-panning across
+    /// `panRefetchThresholdMeters`, the most recent pan position is
+    /// the one we want, not whichever earlier pan happened to start
+    /// first. `fetchAroundMapCenter` checks `Task.isCancelled` at every
+    /// await point, so a cancelled fetch stops cheaply.
+    private func startPanFetch(_ center: CLLocationCoordinate2D) {
+        panTask?.cancel()
+        panTask = Task {
+            await fetchAroundMapCenter(center)
+        }
     }
 
     /// Apply the user's hide-list and the search-text filter to the
@@ -705,7 +728,6 @@ struct NearMeView: View {
     /// neighborhood — consistent with the "Within 5 miles of your
     /// location" header framing.
     private func fetchAroundMapCenter(_ center: CLLocationCoordinate2D) async {
-        guard !isFetchingMore else { return }
         // Pan-search is conceptually an augmentation of an
         // established result set, never the initial fetch. While a
         // primary `refresh` is in flight, drop pan triggers — the
@@ -727,14 +749,11 @@ struct NearMeView: View {
             .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
         guard dist > Self.panRefetchThresholdMeters else { return }
 
-        isFetchingMore = true
-        defer { isFetchingMore = false }
-
         // Pan-search consumes the same streaming API as the cold-start
-        // refresh, but only commits the final (full) yield. Pan is
-        // already non-blocking via `isFetchingMore`, so showing a
-        // half-hydrated pin set mid-pan would be UX churn for no
-        // benefit.
+        // refresh, but only commits the final (full) yield. Pan never
+        // blocks the UI (the user keeps panning while the fetch runs),
+        // so showing a half-hydrated pin set mid-pan would be UX churn
+        // for no benefit.
         let stream = discoverLandmarksAt(
             center: center,
             radiusMeters: Self.searchRadiusMeters,
