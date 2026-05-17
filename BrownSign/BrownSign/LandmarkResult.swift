@@ -579,13 +579,7 @@ private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Dat
     guard let image = UIImage(data: data) else { return data }
     let longest = max(image.size.width, image.size.height)
     if longest <= maxDimension { return data }
-    let scale = maxDimension / longest
-    let newSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-    let renderer = UIGraphicsImageRenderer(size: newSize)
-    let resized = renderer.image { _ in
-        image.draw(in: CGRect(origin: .zero, size: newSize))
-    }
-    return resized.jpegData(compressionQuality: 0.8)
+    return image.resized(toMaxDimension: maxDimension).jpegData(compressionQuality: 0.8)
     #else
     return data
     #endif

@@ -271,7 +271,7 @@ struct ContentView: View {
                         // Downscale immediately so we don't hold a
                         // full-resolution ~48MP iPhone photo in memory.
                         // OCR still works great at 800px on the long edge.
-                        let scaled = resized(image, toMaxDimension: 800)
+                        let scaled = image.resized(toMaxDimension: 800)
                         capturedImage = scaled
                         showCamera = false
                         Task { await processImage(scaled) }
@@ -848,7 +848,7 @@ struct ContentView: View {
         statusMessage = ""
         isSearching = false
         let thumb: Data? = capturedImage.flatMap { image -> Data? in
-            resized(image, to: CGSize(width: 112, height: 112))
+            image.resized(to: CGSize(width: 112, height: 112))
                 .jpegData(compressionQuality: 0.7)
         }
         savedLookup = upsertLookup(result: first, rawSignText: trimmed, newThumb: thumb)
@@ -885,7 +885,7 @@ struct ContentView: View {
             result = enriched
         }
         let thumb: Data? = capturedImage.flatMap { image -> Data? in
-            resized(image, to: CGSize(width: 112, height: 112))
+            image.resized(to: CGSize(width: 112, height: 112))
                 .jpegData(compressionQuality: 0.7)
         }
         let saved = upsertLookup(result: enriched, rawSignText: query, newThumb: thumb)
@@ -917,7 +917,7 @@ struct ContentView: View {
         statusMessage = ""
         let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
         let thumb: Data? = capturedImage.flatMap { image -> Data? in
-            resized(image, to: CGSize(width: 112, height: 112))
+            image.resized(to: CGSize(width: 112, height: 112))
                 .jpegData(compressionQuality: 0.7)
         }
         savedLookup = upsertLookup(result: alt, rawSignText: trimmed, newThumb: thumb)
@@ -989,25 +989,4 @@ struct ContentView: View {
         return lookup
     }
 
-    // MARK: - Thumbnail helper
-
-    private func resized(_ image: UIImage, to size: CGSize) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-    }
-
-    /// Resize an image so its longest edge is `maxDimension`, preserving
-    /// aspect ratio. Returns the original image if it's already smaller.
-    private func resized(_ image: UIImage, toMaxDimension maxDimension: CGFloat) -> UIImage {
-        let longest = max(image.size.width, image.size.height)
-        guard longest > maxDimension else { return image }
-        let scale = maxDimension / longest
-        let newSize = CGSize(
-            width: image.size.width * scale,
-            height: image.size.height * scale
-        )
-        return resized(image, to: newSize)
-    }
 }
