@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 100;
 	objects = {
 
 /* Begin PBXFileReference section */
@@ -34,10 +34,8 @@
 /* Begin PBXFrameworksBuildPhase section */
 		148C0FB12F8AE8CA0091888E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -71,14 +69,10 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			fileSystemSynchronizedGroups = (
 				148C0FB62F8AE8CA0091888E /* BrownSign */,
 			);
 			name = BrownSign;
-			packageProductDependencies = (
-			);
 			productName = BrownSign;
 			productReference = 148C0FB42F8AE8CA0091888E /* BrownSign.app */;
 			productType = "com.apple.product-type.application";
@@ -107,7 +101,7 @@
 			);
 			mainGroup = 148C0FAB2F8AE8C90091888E;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 77;
+			preferredProjectObjectVersion = 100;
 			productRefGroup = 148C0FB52F8AE8CA0091888E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -120,25 +114,21 @@
 /* Begin PBXResourcesBuildPhase section */
 		148C0FB22F8AE8CA0091888E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		148C0FB02F8AE8CA0091888E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		148C0FBF2F8AE8CA0091888E /* Debug */ = {
+		148C0FBF2F8AE8CA0091888E /* Debug configuration for PBXProject "BrownSign" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -203,7 +193,7 @@
 			};
 			name = Debug;
 		};
-		148C0FC02F8AE8CA0091888E /* Release */ = {
+		148C0FC02F8AE8CA0091888E /* Release configuration for PBXProject "BrownSign" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -261,7 +251,7 @@
 			};
 			name = Release;
 		};
-		148C0FC22F8AE8CA0091888E /* Debug */ = {
+		148C0FC22F8AE8CA0091888E /* Debug configuration for PBXNativeTarget "BrownSign" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -305,7 +295,7 @@
 			};
 			name = Debug;
 		};
-		148C0FC32F8AE8CA0091888E /* Release */ = {
+		148C0FC32F8AE8CA0091888E /* Release configuration for PBXNativeTarget "BrownSign" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -355,19 +345,17 @@
 		148C0FAF2F8AE8C90091888E /* Build configuration list for PBXProject "BrownSign" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				148C0FBF2F8AE8CA0091888E /* Debug */,
-				148C0FC02F8AE8CA0091888E /* Release */,
+				148C0FBF2F8AE8CA0091888E /* Debug configuration for PBXProject "BrownSign" */,
+				148C0FC02F8AE8CA0091888E /* Release configuration for PBXProject "BrownSign" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		148C0FC12F8AE8CA0091888E /* Build configuration list for PBXNativeTarget "BrownSign" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				148C0FC22F8AE8CA0091888E /* Debug */,
-				148C0FC32F8AE8CA0091888E /* Release */,
+				148C0FC22F8AE8CA0091888E /* Debug configuration for PBXNativeTarget "BrownSign" */,
+				148C0FC32F8AE8CA0091888E /* Release configuration for PBXNativeTarget "BrownSign" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
