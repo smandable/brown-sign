@@ -43,12 +43,12 @@ private let landmarkP31QIDs: [String] = [
     "Q33506",      // museum
     "Q22698",      // park
     "Q4989906",    // monument
-    "Q386426",     // memorial
+    "Q5003624",    // memorial
     "Q839954",     // archaeological site
     "Q15243209",   // historic district
     "Q9259",       // World Heritage Site
-    "Q1058834",    // National Wildlife Refuge
-    "Q2085381",    // National Historic Landmark
+    "Q1410668",    // National Wildlife Refuge
+    "Q624232",     // National Historic Landmark
     "Q570116",     // tourist attraction
     "Q39614",      // cemetery
     "Q39715",      // lighthouse
@@ -61,7 +61,8 @@ private let landmarkP31QIDs: [String] = [
     "Q1361932",    // covered bridge
     "Q1763547",    // windmill
     "Q35509",      // cave
-    "Q5004679",    // natural arch
+    "Q954501",     // natural arch
+    "Q628179",     // trail (subsumes hiking, long-distance, water, National Scenic via P279*)
     "Q108325",     // chapel
     "Q1196645",    // stately home
     "Q207320",     // historic house museum
