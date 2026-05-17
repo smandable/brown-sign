@@ -766,6 +766,9 @@ struct LandmarkDetailView: View {
                     // If the current selection isn't in the slide
                     // list (e.g. extras arrived but selection somehow
                     // drifted), snap back to the first slide.
+                    // Keyed on the full id list rather than `.count`
+                    // so future code paths that replace slides with the
+                    // same count still trigger the validity check.
                     .onChange(of: imageSlides.map(\.id)) { _, ids in
                         if !ids.contains(carouselSelection),
                            let first = ids.first {
