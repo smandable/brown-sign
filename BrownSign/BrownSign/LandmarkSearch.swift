@@ -484,10 +484,13 @@ private func downloadArticleImage(from url: URL?, title: String) async -> Data? 
 }
 
 /// Resolves a candidate's article image URL, falling back to the
-/// Wikipedia REST summary endpoint when the legacy `prop=pageimages`
-/// candidate URL is nil. See `wikipediaRESTSummaryImageURL` for why
-/// the fallback exists. Only attempts REST for Wikipedia-hosted pages;
-/// NPS and other sources return their own image URL directly.
+/// Wikipedia REST summary endpoint and then the media-list endpoint
+/// when the legacy `prop=pageimages` candidate URL is nil. See
+/// `wikipediaResolvedThumbnailURL` for why the chained fallback
+/// exists — it also heals cached-nil thumbnails picked up earlier by
+/// the Nearby pass before the media-list fallback was wired in. Only
+/// attempts REST for Wikipedia-hosted pages; NPS and other sources
+/// return their own image URL directly.
 /// Returns both the resolved URL (so callers can persist it alongside
 /// the downloaded bytes) and the resized JPEG data.
 private func downloadArticleImageWithFallback(
@@ -496,7 +499,7 @@ private func downloadArticleImageWithFallback(
     var resolved = candidate.articleImageURL
     if resolved == nil,
        candidate.pageURL.host?.contains("wikipedia.org") == true {
-        resolved = await wikipediaRESTSummaryImageURL(for: candidate.title)
+        resolved = await wikipediaResolvedThumbnailURL(for: candidate.title)
     }
     let data = await downloadArticleImage(from: resolved, title: candidate.title)
     return (resolved, data)

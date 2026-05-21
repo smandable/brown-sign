@@ -341,29 +341,21 @@ func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
         return nil
     }
-    do {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        if let http = response as? HTTPURLResponse,
-           !(200...299).contains(http.statusCode) {
-            return nil
-        }
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
-        }
-        if let original = root["originalimage"] as? [String: Any],
-           let src = original["source"] as? String,
-           let u = URL(string: src) {
-            return u
-        }
-        if let thumb = root["thumbnail"] as? [String: Any],
-           let src = thumb["source"] as? String,
-           let u = URL(string: src) {
-            return u
-        }
-        return nil
-    } catch {
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
         return nil
     }
+    if let original = root["originalimage"] as? [String: Any],
+       let src = original["source"] as? String,
+       let u = URL(string: src) {
+        return u
+    }
+    if let thumb = root["thumbnail"] as? [String: Any],
+       let src = thumb["source"] as? String,
+       let u = URL(string: src) {
+        return u
+    }
+    return nil
 }
 
 // MARK: - Step 0: strip noise words before searching
