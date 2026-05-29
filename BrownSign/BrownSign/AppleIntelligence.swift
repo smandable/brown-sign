@@ -66,17 +66,6 @@ func normalizeLandmarkName(fromLines lines: [String]) async -> String {
     }
 }
 
-/// Legacy string-based convenience — splits on newlines and delegates
-/// to the lines-based function. Kept so nothing breaks if a caller
-/// still passes a pre-joined OCR string.
-func normalizeLandmarkName(from rawOCR: String) async -> String {
-    let lines = rawOCR
-        .split(whereSeparator: \.isNewline)
-        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-    return await normalizeLandmarkName(fromLines: lines)
-}
-
 // MARK: - (b) Polish a long summary to 2–3 sentences
 
 func polishSummary(_ summary: String) async -> String {

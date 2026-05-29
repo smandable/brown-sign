@@ -14,71 +14,9 @@ import MapKit
 import CoreLocation
 
 // MARK: - HistoryView
-
-enum LandmarkDisplayMode: String, CaseIterable, Identifiable {
-    case list, map
-    var id: String { rawValue }
-    var label: String { self == .list ? "List" : "Map" }
-    var icon: String { self == .list ? "list.bullet" : "map" }
-}
-
-/// Custom segmented selector that mirrors the textfield height (40pt)
-/// and 12pt corner radius used across the rest of the UI. SwiftUI's
-/// native `.pickerStyle(.segmented)` keeps its inner control at a fixed
-/// ~32pt regardless of any outer `.frame(height:)`, so growing the
-/// wrapper just adds padding above/below the segments. This rebuilds
-/// the same two-option UX with full control over height and corners.
-struct DisplayModeSegmentedPicker: View {
-    @Binding var selection: LandmarkDisplayMode
-
-    /// White in light mode, mid-dark grey in dark mode — chosen so the
-    /// selected segment reads as visibly lighter than the outer
-    /// `.tertiarySystemFill` in both modes. Pure `.systemBackground`
-    /// reads correctly in light (white over light-grey) but inverts in
-    /// dark (black sits darker than the surrounding fill instead of
-    /// floating above it).
-    private static let selectedSegmentFill = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor.systemGray3
-            : UIColor.systemBackground
-    })
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(LandmarkDisplayMode.allCases) { mode in
-                let isSelected = selection == mode
-                Button {
-                    if !isSelected {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            selection = mode
-                        }
-                    }
-                } label: {
-                    Label(mode.label, systemImage: mode.icon)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isSelected ? Self.selectedSegmentFill : Color.clear)
-                        .shadow(
-                            color: isSelected ? .black.opacity(0.12) : .clear,
-                            radius: 2, y: 1
-                        )
-                        .padding(2)
-                )
-            }
-        }
-        .frame(height: 40)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color(.tertiarySystemFill))
-        )
-    }
-}
+//
+// `LandmarkDisplayMode` and `DisplayModeSegmentedPicker` are shared with
+// the Nearby tab and now live in Components.swift.
 
 struct HistoryView: View {
     @Query(sort: \LandmarkLookup.date, order: .reverse)
@@ -343,12 +281,6 @@ struct HistoryView: View {
         }
     }
 
-    private func deleteLookups(at offsets: IndexSet) {
-        for index in offsets {
-            modelContext.delete(lookups[index])
-        }
-    }
-
     /// Swipe-delete handler for the displayed (filtered) list. Index
     /// offsets are relative to `filteredLookups`, not the full `lookups`
     /// query, so we resolve through the filtered array first.
@@ -536,34 +468,12 @@ private struct SelectedLookupCard: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
     private var thumbnail: some View {
-        if let data = lookup.articleImageData, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipped()
-                .contentShape(Rectangle())
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else if let data = lookup.imageData, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipped()
-                .contentShape(Rectangle())
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color("BrandBrown").opacity(0.18))
-                .frame(width: 56, height: 56)
-                .overlay {
-                    Image(systemName: "signpost.right.fill")
-                        .font(.title2)
-                        .foregroundStyle(Color("BrandBrown").opacity(0.55))
-                }
-        }
+        LandmarkThumbnail(
+            articleImageData: lookup.articleImageData,
+            articleImageURL: lookup.articleImageURL,
+            capturedImageData: lookup.imageData
+        )
     }
 }
 
@@ -623,65 +533,17 @@ struct HistoryRow: View {
         }
     }
 
-    @ViewBuilder
+    // Preference order: persisted article-image bytes (instant) →
+    // article-image URL (covers the brief window after a Nearby tap
+    // where the lookup exists but its bytes are still downloading;
+    // NSURLCache usually returns it instantly) → the user's captured
+    // sign photo → brown-signpost placeholder. See `LandmarkThumbnail`.
     private var thumbnail: some View {
-        // Preference order:
-        //   1. Persisted Wikipedia article image bytes (instant)
-        //   2. AsyncImage from the article URL — covers the brief
-        //      window after a Nearby tap where the lookup exists but
-        //      its bytes are still downloading. The detail view just
-        //      fetched the same URL, so NSURLCache typically returns
-        //      it instantly and the row never flashes the placeholder.
-        //   3. User's captured sign photo
-        //   4. Brown signpost placeholder
-        if let data = lookup.articleImageData, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipped()
-                .contentShape(Rectangle())
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else if let url = lookup.articleImageURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                default:
-                    fallbackThumbnail
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipped()
-            .contentShape(Rectangle())
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            fallbackThumbnail
-        }
-    }
-
-    @ViewBuilder
-    private var fallbackThumbnail: some View {
-        if let data = lookup.imageData, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipped()
-                .contentShape(Rectangle())
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color("BrandBrown").opacity(0.18))
-                .frame(width: 56, height: 56)
-                .overlay {
-                    Image(systemName: "signpost.right.fill")
-                        .font(.title2)
-                        .foregroundStyle(Color("BrandBrown").opacity(0.55))
-                }
-        }
+        LandmarkThumbnail(
+            articleImageData: lookup.articleImageData,
+            articleImageURL: lookup.articleImageURL,
+            capturedImageData: lookup.imageData
+        )
     }
 
 }

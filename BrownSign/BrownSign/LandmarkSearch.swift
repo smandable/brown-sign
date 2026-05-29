@@ -469,18 +469,14 @@ func enrichLandmark(
 /// reasonable storage size (~800px on its longest edge) before
 /// returning the JPEG-encoded bytes. Returns nil on any failure so the
 /// caller can fall through to a placeholder. Uses `URLSession.shared`.
-private func downloadArticleImage(from url: URL?, title: String) async -> Data? {
+private func downloadArticleImage(from url: URL?) async -> Data? {
     guard let url else { return nil }
-    do {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            return nil
-        }
-        // Resize down if the source image is huge, otherwise keep as-is.
-        return resizeImageDataIfNeeded(data, maxDimension: 800)
-    } catch {
-        return nil
-    }
+    // Route through the shared retry helper so a transient 5xx/429 or
+    // network blip on the Wikimedia image CDN gets the same backoff
+    // ladder as the API calls (it returns nil on non-2xx and exhaustion).
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    // Resize down if the source image is huge, otherwise keep as-is.
+    return resizeImageDataIfNeeded(data, maxDimension: 800)
 }
 
 /// Resolves a candidate's article image URL, falling back to the
@@ -501,7 +497,7 @@ private func downloadArticleImageWithFallback(
        candidate.pageURL.host?.contains("wikipedia.org") == true {
         resolved = await wikipediaResolvedThumbnailURL(for: candidate.title)
     }
-    let data = await downloadArticleImage(from: resolved, title: candidate.title)
+    let data = await downloadArticleImage(from: resolved)
     return (resolved, data)
 }
 
@@ -518,20 +514,6 @@ private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Dat
     #else
     return data
     #endif
-}
-
-/// Convenience: run both phases and return the top candidate, fully
-/// enriched. Kept for any caller that wants the original one-shot API.
-func searchLandmark(
-    query: String,
-    userLocation: CLLocation? = nil
-) async -> LandmarkResult? {
-    let candidates = await searchLandmarkCandidates(
-        query: query,
-        userLocation: userLocation
-    )
-    guard let first = candidates.first else { return nil }
-    return await enrichLandmark(first, query: query)
 }
 
 /// Comprehensive list of words that indicate a physical place. Used

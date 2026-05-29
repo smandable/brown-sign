@@ -2,7 +2,7 @@
 //  OCRHelper.swift
 //  BrownSign
 //
-//  Thin async wrapper around Vision's VNRecognizeTextRequest.
+//  Thin async wrapper around Vision's text recognition.
 //
 
 import Foundation
@@ -10,40 +10,34 @@ import UIKit
 import Vision
 
 /// Returns the ordered list of recognized text lines from a UIImage.
-/// Each element is the top candidate string for one `VNRecognizedTextObservation`,
-/// with empty strings filtered out. Preserves vertical order so the
+/// Each element is the top candidate string for one observation, with
+/// empty strings filtered out. Preserves vertical order so the
 /// downstream normalizer can distinguish "Wadsworth Mansion" (line 1)
 /// from "2 mi" (line 2) on a multi-line brown sign.
+///
+/// Uses the Swift-native `RecognizeTextRequest` (iOS 18+) — its
+/// `perform(on:)` is async and runs off the main actor internally, so
+/// no manual `DispatchQueue` hop or completion-handler bridging is
+/// needed the way the old `VNRecognizeTextRequest` required.
 func recognizeText(from image: UIImage) async -> [String] {
     guard let cgImage = image.cgImage else { return [] }
 
-    return await withCheckedContinuation { continuation in
-        DispatchQueue.global(qos: .userInitiated).async {
-            let request = VNRecognizeTextRequest { req, _ in
-                guard let observations = req.results as? [VNRecognizedTextObservation] else {
-                    continuation.resume(returning: [])
-                    return
-                }
-                // Sort top-to-bottom by boundingBox.maxY descending
-                // (Vision's coordinate origin is bottom-left).
-                let ordered = observations.sorted { a, b in
-                    a.boundingBox.maxY > b.boundingBox.maxY
-                }
-                let lines = ordered
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                continuation.resume(returning: lines)
-            }
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
+    var request = RecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
 
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(returning: [])
-            }
+    do {
+        let observations = try await request.perform(on: cgImage)
+        // Sort top-to-bottom. Vision's normalized rects use a
+        // bottom-left origin, so a larger maxY sits higher on the image.
+        let ordered = observations.sorted {
+            $0.boundingBox.cgRect.maxY > $1.boundingBox.cgRect.maxY
         }
+        return ordered
+            .compactMap { $0.topCandidates(1).first?.string }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    } catch {
+        return []
     }
 }

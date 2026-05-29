@@ -665,35 +665,12 @@ struct ContentView: View {
     @ViewBuilder
     private func alternativeRow(_ alt: LandmarkResult) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            if let data = alt.articleImageData, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 44, height: 44)
-                    .clipped()
-                    .contentShape(Rectangle())
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else if let imageURL = alt.articleImageURL {
-                AsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().scaledToFill()
-                    default:
-                        Color.secondary.opacity(0.15)
-                    }
-                }
-                .frame(width: 44, height: 44)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            } else {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color("BrandBrown").opacity(0.2))
-                    .frame(width: 44, height: 44)
-                    .overlay {
-                        Image(systemName: "signpost.right.fill")
-                            .foregroundStyle(Color("BrandBrown").opacity(0.55))
-                    }
-            }
+            LandmarkThumbnail(
+                articleImageData: alt.articleImageData,
+                articleImageURL: alt.articleImageURL,
+                size: 44,
+                cornerRadius: 6
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(alt.title)
@@ -711,7 +688,7 @@ struct ContentView: View {
                             latitude: coord.latitude,
                             longitude: coord.longitude
                         ))
-                        Text(formatDistance(d))
+                        Text(formatLandmarkDistance(d))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -726,27 +703,6 @@ struct ContentView: View {
         }
         .padding(12)
         .contentShape(Rectangle())
-    }
-
-    private func formatDistance(_ meters: CLLocationDistance) -> String {
-        // Use imperial for US-style locales, metric elsewhere.
-        let usesMetric = Locale.current.measurementSystem == .metric
-        if usesMetric {
-            if meters < 1_000 {
-                return "\(Int(meters)) m"
-            }
-            return String(format: "%.1f km", meters / 1_000)
-        } else {
-            let miles = meters / 1609.344
-            if miles < 0.1 {
-                let feet = meters / 0.3048
-                return "\(Int(feet)) ft"
-            }
-            if miles < 10 {
-                return String(format: "%.1f mi", miles)
-            }
-            return "\(Int(miles)) mi"
-        }
     }
 
     @ViewBuilder
@@ -852,7 +808,9 @@ struct ContentView: View {
             image.resized(to: CGSize(width: 112, height: 112))
                 .jpegData(compressionQuality: 0.7)
         }
-        savedLookup = upsertLookup(result: first, rawSignText: trimmed, newThumb: thumb)
+        savedLookup = LandmarkLookup.upsert(
+            result: first, in: modelContext, rawSignText: trimmed, capturedThumb: thumb
+        )
         maybeRequestReview()
         Task { await selectCandidate(first, query: trimmed) }
     }
@@ -889,7 +847,9 @@ struct ContentView: View {
             image.resized(to: CGSize(width: 112, height: 112))
                 .jpegData(compressionQuality: 0.7)
         }
-        let saved = upsertLookup(result: enriched, rawSignText: query, newThumb: thumb)
+        let saved = LandmarkLookup.upsert(
+            result: enriched, in: modelContext, rawSignText: query, capturedThumb: thumb
+        )
         if result?.pageURL == enriched.pageURL {
             savedLookup = saved
         }
@@ -921,73 +881,10 @@ struct ContentView: View {
             image.resized(to: CGSize(width: 112, height: 112))
                 .jpegData(compressionQuality: 0.7)
         }
-        savedLookup = upsertLookup(result: alt, rawSignText: trimmed, newThumb: thumb)
+        savedLookup = LandmarkLookup.upsert(
+            result: alt, in: modelContext, rawSignText: trimmed, capturedThumb: thumb
+        )
         Task { await selectCandidate(alt, query: trimmed) }
-    }
-
-    // MARK: - Dedupe + upsert
-
-    /// Inserts a new `LandmarkLookup` or updates an existing one keyed on
-    /// `pageURLString`. Updating bumps `date` so the row moves back to the
-    /// top of the history list. Refreshes the summary/metadata/enrichment
-    /// fields to the newest values, but preserves any previously-saved
-    /// captured photo if the new search didn't have one.
-    private func upsertLookup(
-        result res: LandmarkResult,
-        rawSignText: String,
-        newThumb: Data?
-    ) -> LandmarkLookup {
-        let key = res.pageURL.absoluteString
-        let descriptor = FetchDescriptor<LandmarkLookup>(
-            predicate: #Predicate { $0.pageURLString == key }
-        )
-        if let existing = try? modelContext.fetch(descriptor).first {
-            existing.rawSignText = rawSignText
-            existing.resolvedTitle = res.title
-            existing.summary = res.summary
-            existing.rawSummary = res.rawSummary
-            existing.source = res.source
-            existing.articleImageURLString = res.articleImageURL?.absoluteString
-            // Overwrite the persisted image bytes only when the fresh
-            // search actually fetched new ones — preserve the prior
-            // copy if this enrichment pass happened to fail.
-            if let newData = res.articleImageData {
-                existing.articleImageData = newData
-            }
-            existing.latitude = res.coordinates?.latitude
-            existing.longitude = res.coordinates?.longitude
-            existing.inceptionYear = res.inceptionYear
-            existing.wikidataType = res.wikidataType
-            existing.externalConfidence = res.externalConfidence
-            existing.onDeviceMatchScore = res.onDeviceMatchScore
-            // Only overwrite the captured photo if we have a new one —
-            // preserve the user's earlier capture otherwise.
-            if let newThumb {
-                existing.imageData = newThumb
-            }
-            existing.date = Date()
-            return existing
-        }
-
-        let lookup = LandmarkLookup(
-            rawSignText: rawSignText,
-            resolvedTitle: res.title,
-            summary: res.summary,
-            rawSummary: res.rawSummary,
-            pageURLString: res.pageURL.absoluteString,
-            source: res.source,
-            imageData: newThumb,
-            articleImageURLString: res.articleImageURL?.absoluteString,
-            articleImageData: res.articleImageData,
-            latitude: res.coordinates?.latitude,
-            longitude: res.coordinates?.longitude,
-            inceptionYear: res.inceptionYear,
-            wikidataType: res.wikidataType,
-            externalConfidence: res.externalConfidence,
-            onDeviceMatchScore: res.onDeviceMatchScore
-        )
-        modelContext.insert(lookup)
-        return lookup
     }
 
 }

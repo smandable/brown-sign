@@ -813,58 +813,16 @@ struct NearMeView: View {
     /// has something to render, then enrich in the background. Mirrors
     /// the scan flow in ContentView.
     private func open(_ result: LandmarkResult) {
-        let placeholder = upsertLookup(result: result)
-        pushedLookup = placeholder
+        // Upsert an unenriched placeholder so the detail view has
+        // something to render immediately, then enrich in the
+        // background. `LandmarkLookup.upsert` preserves any enrichment
+        // an earlier pass already saved, so the placeholder write never
+        // clears type/year on a re-tap.
+        pushedLookup = LandmarkLookup.upsert(result: result, in: modelContext)
         Task {
             let enriched = await enrichDiscoveredLandmark(result, query: result.title)
-            _ = upsertLookup(result: enriched)
+            LandmarkLookup.upsert(result: enriched, in: modelContext)
         }
-    }
-
-    @discardableResult
-    private func upsertLookup(result res: LandmarkResult) -> LandmarkLookup {
-        let key = res.pageURL.absoluteString
-        let descriptor = FetchDescriptor<LandmarkLookup>(
-            predicate: #Predicate { $0.pageURLString == key }
-        )
-        if let existing = try? modelContext.fetch(descriptor).first {
-            existing.resolvedTitle = res.title
-            existing.summary = res.summary
-            existing.rawSummary = res.rawSummary
-            existing.source = res.source
-            existing.articleImageURLString = res.articleImageURL?.absoluteString
-            if let newData = res.articleImageData {
-                existing.articleImageData = newData
-            }
-            existing.latitude = res.coordinates?.latitude
-            existing.longitude = res.coordinates?.longitude
-            if let year = res.inceptionYear { existing.inceptionYear = year }
-            if let type = res.wikidataType { existing.wikidataType = type }
-            if let kg = res.externalConfidence { existing.externalConfidence = kg }
-            if let m = res.onDeviceMatchScore { existing.onDeviceMatchScore = m }
-            existing.date = Date()
-            return existing
-        }
-
-        let lookup = LandmarkLookup(
-            rawSignText: "",
-            resolvedTitle: res.title,
-            summary: res.summary,
-            rawSummary: res.rawSummary,
-            pageURLString: res.pageURL.absoluteString,
-            source: res.source,
-            imageData: nil,
-            articleImageURLString: res.articleImageURL?.absoluteString,
-            articleImageData: res.articleImageData,
-            latitude: res.coordinates?.latitude,
-            longitude: res.coordinates?.longitude,
-            inceptionYear: res.inceptionYear,
-            wikidataType: res.wikidataType,
-            externalConfidence: res.externalConfidence,
-            onDeviceMatchScore: res.onDeviceMatchScore
-        )
-        modelContext.insert(lookup)
-        return lookup
     }
 }
 
@@ -893,7 +851,7 @@ private struct NearbyRow: View {
                         // the default Label spacing.
                         HStack(spacing: 3) {
                             Image(systemName: "location")
-                            Text(formatDistance(d))
+                            Text(formatLandmarkDistance(d))
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -914,61 +872,21 @@ private struct NearbyRow: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
     private var thumbnail: some View {
-        if let url = result.articleImageURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .failure:
-                    placeholder
-                case .empty:
-                    Color.secondary.opacity(0.1)
-                @unknown default:
-                    placeholder
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipped()
-            .contentShape(Rectangle())
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            placeholder
-        }
-    }
-
-    private var placeholder: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color("BrandBrown").opacity(0.18))
-            .frame(width: 56, height: 56)
-            .overlay {
-                Image(systemName: "signpost.right.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color("BrandBrown").opacity(0.55))
-            }
+        // Nearby list results carry only a remote URL (bytes aren't
+        // downloaded until tap-time enrichment), so this resolves through
+        // AsyncImage; passing the (usually nil) data keeps it correct if
+        // that ever changes. See `LandmarkThumbnail`.
+        LandmarkThumbnail(
+            articleImageData: result.articleImageData,
+            articleImageURL: result.articleImageURL
+        )
     }
 
     private func distanceMeters(from user: CLLocation?, to coord: Coordinate) -> CLLocationDistance {
         guard let user else { return 0 }
         let other = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
         return user.distance(from: other)
-    }
-
-    private func formatDistance(_ meters: CLLocationDistance) -> String {
-        let usesMetric = Locale.current.measurementSystem == .metric
-        if usesMetric {
-            if meters < 1_000 { return "\(Int(meters)) m" }
-            return String(format: "%.1f km", meters / 1_000)
-        } else {
-            let miles = meters / 1609.344
-            if miles < 0.1 {
-                let feet = meters / 0.3048
-                return "\(Int(feet)) ft"
-            }
-            if miles < 10 { return String(format: "%.1f mi", miles) }
-            return "\(Int(miles)) mi"
-        }
     }
 }
 
@@ -1167,34 +1085,10 @@ private struct SelectedNearbyCard: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
     private var thumbnail: some View {
-        if let url = result.articleImageURL {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                default:
-                    placeholder
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipped()
-            .contentShape(Rectangle())
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            placeholder
-        }
-    }
-
-    private var placeholder: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color("BrandBrown").opacity(0.18))
-            .frame(width: 56, height: 56)
-            .overlay {
-                Image(systemName: "signpost.right.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color("BrandBrown").opacity(0.55))
-            }
+        LandmarkThumbnail(
+            articleImageData: result.articleImageData,
+            articleImageURL: result.articleImageURL
+        )
     }
 }

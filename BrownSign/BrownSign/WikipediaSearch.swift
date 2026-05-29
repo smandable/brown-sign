@@ -22,13 +22,6 @@ struct WikiResult {
     let imageURL: URL?
 }
 
-/// Convenience: return only the first non-disambiguation candidate.
-/// Most callers should prefer `searchWikipediaCandidates(query:)` so they
-/// can filter by Wikidata entity type (e.g. reject bands, films, people).
-func searchWikipedia(query: String) async -> WikiResult? {
-    return (await searchWikipediaCandidates(query: query)).first
-}
-
 /// Returns non-disambiguation Wikipedia articles within `radiusMeters` of
 /// the given coordinate whose titles contain the query text (case
 /// insensitive). Used by the orchestrator to prefer genuinely-nearby
@@ -96,14 +89,13 @@ func searchWikipediaNearby(
 
 // MARK: - Plain geosearch (no page details)
 
+/// One nearby page from `list=geosearch`. The response is already
+/// distance-ascending and the consumer preserves that order, so we only
+/// keep the two fields it actually reads — `pageID` (for the details
+/// batch) and `title` (for the client-side title filter).
 private struct NearbyPage {
     let pageID: Int
     let title: String
-    let latitude: Double
-    let longitude: Double
-    /// Wikipedia-provided great-circle distance from the query coordinate,
-    /// in meters. Already distance-ascending in the response.
-    let distanceMeters: Double
 }
 
 /// Truncates text at the last word boundary before `maxLength` and
@@ -129,8 +121,8 @@ private func wikipediaGeosearchPageList(
         return []
     }
 
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [] }
     do {
-        let (data, _) = try await URLSession.shared.data(from: url)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
               let geosearch = queryObj["geosearch"] as? [[String: Any]] else {
@@ -138,17 +130,8 @@ private func wikipediaGeosearchPageList(
         }
         return geosearch.compactMap { entry in
             guard let pageid = entry["pageid"] as? Int,
-                  let title = entry["title"] as? String,
-                  let lat = entry["lat"] as? Double,
-                  let lon = entry["lon"] as? Double else { return nil }
-            let dist = (entry["dist"] as? Double) ?? 0
-            return NearbyPage(
-                pageID: pageid,
-                title: title,
-                latitude: lat,
-                longitude: lon,
-                distanceMeters: dist
-            )
+                  let title = entry["title"] as? String else { return nil }
+            return NearbyPage(pageID: pageid, title: title)
         }
     } catch {
         return []
@@ -405,8 +388,8 @@ private func wikipediaSearchCandidates(_ query: String) async -> [WikiCandidate]
         return []
     }
 
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [] }
     do {
-        let (data, _) = try await URLSession.shared.data(from: url)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
               let searchList = queryObj["search"] as? [[String: Any]] else {
@@ -460,33 +443,53 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
         return acc
     }
 
-    // Fill in empty extracts via REST. `exintro=1` returns "" for the
-    // small set of articles that jump straight from an infobox into a
-    // section header, but those articles have body text the REST
-    // summary heuristic can find. Skip disambiguation pages — empty
-    // there is intentional.
-    let needsFallback: [(Int, String)] = combined.compactMap { id, d in
-        (d.extract.isEmpty && !d.isDisambiguation) ? (id, d.title) : nil
+    await applyDetailFallbacks(to: &combined)
+    return combined
+}
+
+/// Backfills empty extracts and missing thumbnails on a freshly-fetched
+/// page-details map, in place. Generic over the dictionary key so the
+/// pageID-keyed and title-keyed fetches share one implementation.
+///
+/// - Empty extracts (`exintro=1` returns "" for articles that jump
+///   straight from an infobox into a section header) are patched from
+///   the REST summary endpoint, which uses a smarter lead-text heuristic.
+/// - Missing thumbnails (`prop=pageimages` returns nil for fair-use
+///   leads, body-only images, or pages MediaWiki hasn't indexed yet) are
+///   patched via `wikipediaResolvedThumbnailURL`, which chains REST
+///   summary then media-list so body-only-image articles (e.g. the
+///   Middletown–Portland railroad bridge) still surface a thumbnail
+///   consistent with what the detail carousel finds.
+///
+/// Disambiguation pages are skipped in both passes — an empty extract or
+/// absent image there is intentional. The canonical title for the REST
+/// lookups comes from each entry's own `.title`, so title-keyed maps
+/// resolve correctly even when the key is the pre-redirect input title.
+private func applyDetailFallbacks<Key: Hashable & Sendable>(
+    to combined: inout [Key: WikiPageDetails]
+) async {
+    let needsExtract: [(Key, String)] = combined.compactMap { key, d in
+        (d.extract.isEmpty && !d.isDisambiguation) ? (key, d.title) : nil
     }
-    if !needsFallback.isEmpty {
-        let patches: [(Int, String)] = await withTaskGroup(of: (Int, String)?.self) { group in
-            for (id, title) in needsFallback {
+    if !needsExtract.isEmpty {
+        let patches: [(Key, String)] = await withTaskGroup(of: (Key, String)?.self) { group in
+            for (key, title) in needsExtract {
                 group.addTask {
                     guard let fallback = await wikipediaRESTSummaryExtract(for: title) else {
                         return nil
                     }
-                    return (id, fallback)
+                    return (key, fallback)
                 }
             }
-            var out: [(Int, String)] = []
+            var out: [(Key, String)] = []
             for await entry in group {
                 if let entry { out.append(entry) }
             }
             return out
         }
-        for (id, extract) in patches {
-            guard let existing = combined[id] else { continue }
-            combined[id] = WikiPageDetails(
+        for (key, extract) in patches {
+            guard let existing = combined[key] else { continue }
+            combined[key] = WikiPageDetails(
                 title: existing.title,
                 extract: extract,
                 url: existing.url,
@@ -496,33 +499,28 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
         }
     }
 
-    // Same image-URL fallback as the title path — see that function's
-    // matching block for rationale. `wikipediaResolvedThumbnailURL`
-    // chains REST summary then media-list so body-only-image articles
-    // surface a thumbnail consistent with what the detail carousel
-    // finds.
-    let needsImageFallback: [(Int, String)] = combined.compactMap { id, d in
-        (d.imageURL == nil && !d.isDisambiguation) ? (id, d.title) : nil
+    let needsImage: [(Key, String)] = combined.compactMap { key, d in
+        (d.imageURL == nil && !d.isDisambiguation) ? (key, d.title) : nil
     }
-    if !needsImageFallback.isEmpty {
-        let patches: [(Int, URL)] = await withTaskGroup(of: (Int, URL)?.self) { group in
-            for (id, title) in needsImageFallback {
+    if !needsImage.isEmpty {
+        let patches: [(Key, URL)] = await withTaskGroup(of: (Key, URL)?.self) { group in
+            for (key, title) in needsImage {
                 group.addTask {
                     guard let fallback = await wikipediaResolvedThumbnailURL(for: title) else {
                         return nil
                     }
-                    return (id, fallback)
+                    return (key, fallback)
                 }
             }
-            var out: [(Int, URL)] = []
+            var out: [(Key, URL)] = []
             for await entry in group {
                 if let entry { out.append(entry) }
             }
             return out
         }
-        for (id, imageURL) in patches {
-            guard let existing = combined[id] else { continue }
-            combined[id] = WikiPageDetails(
+        for (key, imageURL) in patches {
+            guard let existing = combined[key] else { continue }
+            combined[key] = WikiPageDetails(
                 title: existing.title,
                 extract: existing.extract,
                 url: existing.url,
@@ -531,8 +529,6 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
             )
         }
     }
-
-    return combined
 }
 
 /// Title-keyed variant of `wikipediaFetchPageDetails(pageIDs:)`. The
@@ -559,80 +555,7 @@ func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> [String: Wik
         return acc
     }
 
-    // Same REST extract fallback as the pageID path — articles whose
-    // intro extract is empty (infobox-then-section-header layout) get
-    // patched from the REST summary endpoint.
-    let needsFallback: [String] = combined.compactMap { (key, d) in
-        (d.extract.isEmpty && !d.isDisambiguation) ? key : nil
-    }
-    if !needsFallback.isEmpty {
-        let patches: [(String, String)] = await withTaskGroup(of: (String, String)?.self) { group in
-            for key in needsFallback {
-                let title = combined[key]?.title ?? key
-                group.addTask {
-                    guard let fallback = await wikipediaRESTSummaryExtract(for: title) else {
-                        return nil
-                    }
-                    return (key, fallback)
-                }
-            }
-            var out: [(String, String)] = []
-            for await entry in group {
-                if let entry { out.append(entry) }
-            }
-            return out
-        }
-        for (key, extract) in patches {
-            guard let existing = combined[key] else { continue }
-            combined[key] = WikiPageDetails(
-                title: existing.title,
-                extract: extract,
-                url: existing.url,
-                imageURL: existing.imageURL,
-                isDisambiguation: existing.isDisambiguation
-            )
-        }
-    }
-
-    // Image-URL fallback. `prop=pageimages` returns nil for articles
-    // that have images but lack an indexed lead thumbnail (no infobox
-    // image, fair-use leads, or pages MediaWiki simply hasn't indexed
-    // yet). `wikipediaResolvedThumbnailURL` chains REST summary then
-    // media-list — the latter catches articles whose only images live
-    // inline in the body (e.g. the Middletown–Portland railroad
-    // bridge), which neither `pageimages` nor REST summary surface.
-    let needsImageFallback: [String] = combined.compactMap { (key, d) in
-        (d.imageURL == nil && !d.isDisambiguation) ? key : nil
-    }
-    if !needsImageFallback.isEmpty {
-        let patches: [(String, URL)] = await withTaskGroup(of: (String, URL)?.self) { group in
-            for key in needsImageFallback {
-                let title = combined[key]?.title ?? key
-                group.addTask {
-                    guard let fallback = await wikipediaResolvedThumbnailURL(for: title) else {
-                        return nil
-                    }
-                    return (key, fallback)
-                }
-            }
-            var out: [(String, URL)] = []
-            for await entry in group {
-                if let entry { out.append(entry) }
-            }
-            return out
-        }
-        for (key, imageURL) in patches {
-            guard let existing = combined[key] else { continue }
-            combined[key] = WikiPageDetails(
-                title: existing.title,
-                extract: existing.extract,
-                url: existing.url,
-                imageURL: imageURL,
-                isDisambiguation: existing.isDisambiguation
-            )
-        }
-    }
-
+    await applyDetailFallbacks(to: &combined)
     return combined
 }
 
@@ -729,8 +652,8 @@ private func fetchPageDetailsBatch(pageIDs: [Int]) async -> [Int: WikiPageDetail
         return [:]
     }
 
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [:] }
     do {
-        let (data, _) = try await URLSession.shared.data(from: url)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
               let pages = queryObj["pages"] as? [String: Any] else {

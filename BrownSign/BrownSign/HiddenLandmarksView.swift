@@ -214,47 +214,10 @@ private struct HiddenLandmarkRow: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
     private var thumbnail: some View {
-        if let data = item.articleImageData, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipped()
-                .contentShape(Rectangle())
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else if let urlString = item.articleImageURLString,
-                  let url = URL(string: urlString) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFill()
-                case .failure:
-                    placeholder
-                case .empty:
-                    Color.secondary.opacity(0.1)
-                @unknown default:
-                    placeholder
-                }
-            }
-            .frame(width: 56, height: 56)
-            .clipped()
-            .contentShape(Rectangle())
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        } else {
-            placeholder
-        }
-    }
-
-    private var placeholder: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .fill(Color("BrandBrown").opacity(0.18))
-            .frame(width: 56, height: 56)
-            .overlay {
-                Image(systemName: "signpost.right.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color("BrandBrown").opacity(0.55))
-            }
+        LandmarkThumbnail(
+            articleImageData: item.articleImageData,
+            articleImageURL: item.articleImageURLString.flatMap { URL(string: $0) }
+        )
     }
 }

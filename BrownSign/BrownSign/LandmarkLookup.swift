@@ -81,3 +81,77 @@ final class LandmarkLookup {
     }
     var hasCoordinates: Bool { latitude != nil && longitude != nil }
 }
+
+extension LandmarkLookup {
+    /// Inserts a new lookup or updates the existing one keyed on the
+    /// result's canonical page URL. Updating bumps `date` so the row
+    /// moves back to the top of History.
+    ///
+    /// Title/summary/source/image-URL/coordinates always refresh to the
+    /// latest result. The enrichment fields (inception year, type,
+    /// confidence scores) refresh ONLY when the new result actually
+    /// carries them — a later pass that came back without enrichment
+    /// must not wipe a value an earlier pass found. (This is the
+    /// previously-divergent behaviour: the Scan copy used to overwrite
+    /// these unconditionally, so a re-save with nil enrichment cleared
+    /// them; the Nearby copy preserved them. Preserving is correct — the
+    /// page is the same landmark either way.)
+    ///
+    /// `rawSignText` and `capturedThumb` are only touched when supplied,
+    /// so the Nearby flow (which has neither) never clears the user's
+    /// earlier captured photo or the original OCR text.
+    @MainActor
+    @discardableResult
+    static func upsert(
+        result res: LandmarkResult,
+        in context: ModelContext,
+        rawSignText: String? = nil,
+        capturedThumb: Data? = nil
+    ) -> LandmarkLookup {
+        let key = res.pageURL.absoluteString
+        let descriptor = FetchDescriptor<LandmarkLookup>(
+            predicate: #Predicate { $0.pageURLString == key }
+        )
+        if let existing = try? context.fetch(descriptor).first {
+            if let rawSignText { existing.rawSignText = rawSignText }
+            existing.resolvedTitle = res.title
+            existing.summary = res.summary
+            existing.rawSummary = res.rawSummary
+            existing.source = res.source
+            existing.articleImageURLString = res.articleImageURL?.absoluteString
+            // Overwrite the persisted image bytes only when the fresh
+            // search actually fetched new ones — preserve the prior copy
+            // if this enrichment pass happened to fail.
+            if let newData = res.articleImageData { existing.articleImageData = newData }
+            existing.latitude = res.coordinates?.latitude
+            existing.longitude = res.coordinates?.longitude
+            if let year = res.inceptionYear { existing.inceptionYear = year }
+            if let type = res.wikidataType { existing.wikidataType = type }
+            if let kg = res.externalConfidence { existing.externalConfidence = kg }
+            if let m = res.onDeviceMatchScore { existing.onDeviceMatchScore = m }
+            if let capturedThumb { existing.imageData = capturedThumb }
+            existing.date = Date()
+            return existing
+        }
+
+        let lookup = LandmarkLookup(
+            rawSignText: rawSignText ?? "",
+            resolvedTitle: res.title,
+            summary: res.summary,
+            rawSummary: res.rawSummary,
+            pageURLString: res.pageURL.absoluteString,
+            source: res.source,
+            imageData: capturedThumb,
+            articleImageURLString: res.articleImageURL?.absoluteString,
+            articleImageData: res.articleImageData,
+            latitude: res.coordinates?.latitude,
+            longitude: res.coordinates?.longitude,
+            inceptionYear: res.inceptionYear,
+            wikidataType: res.wikidataType,
+            externalConfidence: res.externalConfidence,
+            onDeviceMatchScore: res.onDeviceMatchScore
+        )
+        context.insert(lookup)
+        return lookup
+    }
+}

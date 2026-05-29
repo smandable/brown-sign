@@ -94,26 +94,22 @@ private func fetchWikidataClaimsByWikipediaTitle(_ title: String) async -> [Stri
         return nil
     }
 
-    do {
-        let (data, _) = try await URLSession.shared.data(from: url)
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entities = root["entities"] as? [String: Any] else {
-            return nil
-        }
-        // entities is keyed by QID on success, or "-1" on miss.
-        // Grab any value whose key isn't "-1" and has claims.
-        for (key, value) in entities {
-            guard key != "-1",
-                  let entity = value as? [String: Any],
-                  let claims = entity["claims"] as? [String: Any] else {
-                continue
-            }
-            return claims
-        }
-        return nil
-    } catch {
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let entities = root["entities"] as? [String: Any] else {
         return nil
     }
+    // entities is keyed by QID on success, or "-1" on miss.
+    // Grab any value whose key isn't "-1" and has claims.
+    for (key, value) in entities {
+        guard key != "-1",
+              let entity = value as? [String: Any],
+              let claims = entity["claims"] as? [String: Any] else {
+            continue
+        }
+        return claims
+    }
+    return nil
 }
 
 // MARK: - Claim parsers
@@ -132,9 +128,12 @@ private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
     return Coordinate(latitude: lat, longitude: lon)
 }
 
-/// Digs `claims.P571[0].mainsnak.datavalue.value.time` (e.g. "+1934-07-01T00:00:00Z").
-private func parseInceptionYear(from claims: [String: Any]) -> Int? {
-    guard let list = claims["P571"] as? [[String: Any]],
+/// Extracts the 4-digit year from a time-valued Wikidata claim
+/// (`claims.<property>[0].mainsnak.datavalue.value.time`, e.g.
+/// "+1934-07-01T00:00:00Z"). Shared by the inception (P571) and
+/// dissolved (P576) parsers since both claims have the same shape.
+private func parseClaimYear(from claims: [String: Any], property: String) -> Int? {
+    guard let list = claims[property] as? [[String: Any]],
           let first = list.first,
           let mainsnak = first["mainsnak"] as? [String: Any],
           let datavalue = mainsnak["datavalue"] as? [String: Any],
@@ -142,12 +141,15 @@ private func parseInceptionYear(from claims: [String: Any]) -> Int? {
           let time = value["time"] as? String else {
         return nil
     }
-    // Expected shape: "+1934-07-01T00:00:00Z"
     let trimmed = time.hasPrefix("+") || time.hasPrefix("-")
         ? String(time.dropFirst())
         : time
-    let yearPart = trimmed.prefix(4)
-    return Int(yearPart)
+    return Int(trimmed.prefix(4))
+}
+
+/// P571 (inception). See `parseClaimYear`.
+private func parseInceptionYear(from claims: [String: Any]) -> Int? {
+    parseClaimYear(from: claims, property: "P571")
 }
 
 /// Digs `claims.P31[0].mainsnak.datavalue.value.id` (e.g. "Q33506").
@@ -172,24 +174,12 @@ private func parseHasHeritageDesignation(from claims: [String: Any]) -> Bool {
     return !list.isEmpty
 }
 
-/// Digs `claims.P576[0].mainsnak.datavalue.value.time` — same shape as
-/// inception year. P576 is "dissolved, abolished or demolished date";
-/// for an institution like a school, having one means it's no longer
-/// operating, so it's safe to surface as a historic landmark.
+/// P576 ("dissolved, abolished or demolished date") — same shape as
+/// inception year. For an institution like a school, having one means
+/// it's no longer operating, so it's safe to surface as a historic
+/// landmark. See `parseClaimYear`.
 private func parseDissolvedYear(from claims: [String: Any]) -> Int? {
-    guard let list = claims["P576"] as? [[String: Any]],
-          let first = list.first,
-          let mainsnak = first["mainsnak"] as? [String: Any],
-          let datavalue = mainsnak["datavalue"] as? [String: Any],
-          let value = datavalue["value"] as? [String: Any],
-          let time = value["time"] as? String else {
-        return nil
-    }
-    let trimmed = time.hasPrefix("+") || time.hasPrefix("-")
-        ? String(time.dropFirst())
-        : time
-    let yearPart = trimmed.prefix(4)
-    return Int(yearPart)
+    parseClaimYear(from: claims, property: "P576")
 }
 
 // MARK: - Step 3: resolve a QID to an English label
@@ -198,18 +188,14 @@ private func fetchWikidataLabel(for qid: String) async -> String? {
     guard let url = URL(string: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=\(qid)&format=json&props=labels&languages=en") else {
         return nil
     }
-    do {
-        let (data, _) = try await URLSession.shared.data(from: url)
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entities = root["entities"] as? [String: Any],
-              let entity = entities[qid] as? [String: Any],
-              let labels = entity["labels"] as? [String: Any],
-              let en = labels["en"] as? [String: Any],
-              let value = en["value"] as? String else {
-            return nil
-        }
-        return value
-    } catch {
+    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let entities = root["entities"] as? [String: Any],
+          let entity = entities[qid] as? [String: Any],
+          let labels = entity["labels"] as? [String: Any],
+          let en = labels["en"] as? [String: Any],
+          let value = en["value"] as? String else {
         return nil
     }
+    return value
 }

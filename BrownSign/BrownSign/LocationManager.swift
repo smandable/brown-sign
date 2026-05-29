@@ -126,18 +126,30 @@ final class LocationManager: NSObject {
            Date().timeIntervalSince(cached.timestamp) < 300 {
             return cached
         }
-        return await withTaskGroup(of: CLLocation?.self) { group in
-            group.addTask {
-                await self.currentLocation()
-            }
-            group.addTask {
+
+        // Race the (deduplicated) GPS fetch against the timeout WITHOUT a
+        // task group. A group would structurally await the GPS branch on
+        // scope exit even after `cancelAll()`, because the underlying
+        // `requestLocation()` wait parks on a non-cancellable
+        // continuation — so a slow cold-radio fix would defeat the
+        // timeout entirely (and the call would still return the timeout's
+        // nil even though a fix had just landed). Two unstructured tasks
+        // resume a single-shot continuation; whichever lands first wins.
+        // The GPS task keeps running and stores its fix in `lastLocation`
+        // regardless, so a fix that arrives after we time out is cached
+        // for the next caller rather than dropped.
+        let box = TimedLocationResume()
+        let result: CLLocation? = await withCheckedContinuation { continuation in
+            box.attach(continuation)
+            Task { box.resume(await self.currentLocation()) }
+            Task {
                 try? await Task.sleep(for: .seconds(seconds))
-                return nil
+                box.resume(nil)
             }
-            let result = await group.next() ?? nil
-            group.cancelAll()
-            return result
         }
+        // Timeout won the race, but the in-flight fetch may have cached a
+        // fix in the meantime — prefer a real location over nil.
+        return result ?? lastLocation
     }
 
     /// Returns the current location if available. Uses a recent cache to
@@ -221,5 +233,24 @@ extension LocationManager: CLLocationManagerDelegate {
             self.locationContinuation?.resume(returning: nil)
             self.locationContinuation = nil
         }
+    }
+}
+
+// MARK: - Timed-fetch resume guard
+
+/// Single-resume guard for the `currentLocation(withTimeout:)` race: the
+/// GPS fetch and the timeout each call `resume`, but only the first one
+/// actually resumes the continuation. MainActor-isolated so the two
+/// racing tasks (which inherit MainActor from the calling context)
+/// mutate it without a data race.
+@MainActor
+private final class TimedLocationResume {
+    private var continuation: CheckedContinuation<CLLocation?, Never>?
+    func attach(_ continuation: CheckedContinuation<CLLocation?, Never>) {
+        self.continuation = continuation
+    }
+    func resume(_ value: CLLocation?) {
+        continuation?.resume(returning: value)
+        continuation = nil
     }
 }

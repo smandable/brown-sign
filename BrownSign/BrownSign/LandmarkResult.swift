@@ -43,38 +43,4 @@ nonisolated struct LandmarkResult: Codable {
     let externalConfidence: Double?
     /// Apple Intelligence on-device match judgment (0.0–1.0).
     let onDeviceMatchScore: Double?
-
-    static func from(wiki: WikiResult) -> LandmarkResult {
-        LandmarkResult(
-            title: wiki.title,
-            summary: wiki.summary,
-            rawSummary: wiki.summary,
-            pageURL: wiki.pageURL,
-            source: "wikipedia",
-            articleImageURL: wiki.imageURL,
-            articleImageData: nil,
-            coordinates: nil,
-            inceptionYear: nil,
-            wikidataType: nil,
-            externalConfidence: nil,
-            onDeviceMatchScore: nil
-        )
-    }
-
-    static func from(nps: NPSResult) -> LandmarkResult {
-        LandmarkResult(
-            title: nps.title,
-            summary: nps.summary,
-            rawSummary: nps.summary,
-            pageURL: nps.pageURL,
-            source: "nps",
-            articleImageURL: nps.imageURL,
-            articleImageData: nil,
-            coordinates: nil,
-            inceptionYear: nil,
-            wikidataType: nil,
-            externalConfidence: nil,
-            onDeviceMatchScore: nil
-        )
-    }
 }
