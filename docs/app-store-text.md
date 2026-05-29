@@ -48,12 +48,20 @@ Share any landmark's article link with friends, family, or fellow travelers in o
 PRIVACY FIRST
 Everything runs on your device. Camera images stay local. Location is used only to rank nearby results — never tracked or shared. No accounts, no analytics, no ads.
 
+Next time you pass a brown sign, you'll know.
+
 Brown Sign works on any iPhone running iOS 26. Apple Intelligence enhances the experience with smarter text cleanup and polished summaries, but the core pipeline works on every supported device.
 ```
 
 ## Keywords (100 characters max, comma-separated)
+
+Note: the app name ("Brown Sign") and subtitle ("Identify roadside
+landmarks") are already search-indexed, so their words (brown, sign,
+identify, roadside, landmarks) are deliberately NOT repeated here.
+Apple auto-combines single keywords, so no multi-word phrases / spaces.
+
 ```
-landmarks,brown signs,trails,travel,history,national parks,historic,road trip,sightseeing,directions
+roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
 ## What's New (Version 1.4.9)
