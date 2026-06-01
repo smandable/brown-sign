@@ -64,14 +64,16 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.4.9)
+## What's New (Version 1.4.10)
 ```
-Reliability improvements. Brown Sign now reads your location more dependably right after launch so your first search and the Nearby tab get it sooner, and landmark lookups now retry automatically through brief Wikipedia or Wikidata hiccups instead of coming back empty on a passing network blip.
+Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign now starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock — so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer — so it never looks stuck when it's really just working.
 ```
 
 ### Previous versions
 
 ```
+Version 1.4.9 — Reliability improvements. Brown Sign now reads your location more dependably right after launch so your first search and the Nearby tab get it sooner, and landmark lookups now retry automatically through brief Wikipedia or Wikidata hiccups instead of coming back empty on a passing network blip.
+
 Version 1.4.8 — More Nearby landmarks now show a photo in the list and on map pins. Some Wikipedia articles host their lead image on a slightly different endpoint, and a brief network hiccup during the initial Nearby fetch could leave those photos blank. Brown Sign now retries the photo lookup when Wikipedia is slow, and runs the full image-fallback chain when you tap a landmark — so missing thumbnails fill in instead of staying blank.
 
 Version 1.4.7 — Pan-search on the Nearby map is now more responsive: when you sweep the map across a region, Brown Sign cancels the older in-flight search in favor of the spot you actually landed on, so the new pins land faster. Plus a lighter app download.

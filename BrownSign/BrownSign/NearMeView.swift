@@ -40,6 +40,20 @@ struct NearMeView: View {
         case serviceUnavailable
     }
 
+    /// Sub-phase of `.loading`, surfaced as the spinner's label so a
+    /// slow cold-start tells the user what it's waiting on instead of
+    /// one static string for the whole location→search→hydrate chain.
+    private enum LoadingPhase {
+        case locating
+        case searching
+        var message: String {
+            switch self {
+            case .locating: return "Getting your location…"
+            case .searching: return "Finding landmarks near you…"
+            }
+        }
+    }
+
     /// 5-mile search radius (8047 m via 5 × 1609.344). Passed to
     /// the SPARQL fetch as 8.047 km — Wikidata's `wikibase:around`
     /// has no hard cap like Wikipedia's geosearch did.
@@ -55,6 +69,7 @@ struct NearMeView: View {
     private static let panRefetchThresholdMeters: CLLocationDistance = 4_023
 
     @State private var state: LoadState = .idle
+    @State private var loadingPhase: LoadingPhase = .locating
     @State private var isReloading = false
     @State private var userLocation: CLLocation?
     /// Center of the most recent geosearch. Drives the pan-threshold
@@ -371,13 +386,7 @@ struct NearMeView: View {
     }
 
     private var loadingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-            Text("Finding landmarks near you…")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        NearbyLoadingView(message: loadingPhase.message)
     }
 
     @ViewBuilder
@@ -562,7 +571,10 @@ struct NearMeView: View {
         // Cached pins from a previous session count as "results" for
         // this purpose — keep them visible while the fresh stream
         // populates.
-        if !hasResults { state = .loading }
+        if !hasResults {
+            loadingPhase = .locating
+            state = .loading
+        }
         isReloading = true
         defer { isReloading = false }
 
@@ -637,6 +649,11 @@ struct NearMeView: View {
         // so the gate doesn't flip if the spatial-invalidation branch
         // above transitioned us into `.loading`.
         let progressiveRender = !hasResults
+
+        // We have a fix — the spinner now reflects the search phase
+        // rather than the locating phase. No-op visually unless the
+        // loading view is on screen (cold start / moved-cities reload).
+        loadingPhase = .searching
 
         let stream = discoverLandmarksAt(
             center: loc.coordinate,
@@ -822,6 +839,50 @@ struct NearMeView: View {
         Task {
             let enriched = await enrichDiscoveredLandmark(result, query: result.title)
             LandmarkLookup.upsert(result: enriched, in: modelContext)
+        }
+    }
+}
+
+// MARK: - Loading
+
+/// Cold-start loading view for Nearby. Shows the current phase
+/// ("Getting your location…" → "Finding landmarks near you…") and,
+/// after a grace period, a reassurance line. A fresh install has no
+/// cached pins to mask the cold-start chain (a cold GPS first-fix plus
+/// a slow Wikidata pass can stack toward ~30 s before any cache
+/// exists), and a static spinner that long reads as "broken" — which
+/// is exactly what a first-run user reported. The grace timer lives
+/// here so it resets each time the loading view appears, and survives
+/// the locating→searching change (that only updates `message`, not
+/// view identity, so `.task` isn't restarted).
+private struct NearbyLoadingView: View {
+    let message: String
+    @State private var showSlowHint = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if showSlowHint {
+                Text("Still working — this can take a moment.")
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 32)
+        .animation(.easeInOut(duration: 0.25), value: message)
+        .animation(.easeInOut(duration: 0.25), value: showSlowHint)
+        .task {
+            // ~12 s: long enough that the common (now interim-fix-seeded)
+            // path never shows it, short enough to reassure before the
+            // user concludes it's frozen and leaves the tab.
+            try? await Task.sleep(for: .seconds(12))
+            showSlowHint = true
         }
     }
 }

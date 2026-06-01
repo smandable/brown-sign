@@ -127,6 +127,25 @@ final class LocationManager: NSObject {
             return cached
         }
 
+        // Interim-fix seed: our own cache is empty/stale, but iOS may
+        // already hold a recent system fix — the radio was warmed by
+        // another app, a prior session, or the launch-time priming
+        // `requestLocation()` (ContentView's `.task`) that hasn't
+        // formally delivered to our delegate yet. Adopt it so a
+        // cold-start Nearby fetch can fire SPARQL immediately instead of
+        // paying a multi-second cold first-fix. Gated on the SAME 5-min
+        // freshness window as `lastLocation` above — this is the
+        // existing trust contract, not a looser one — and a precise fix
+        // still refines `lastLocation` via the normal delegate path.
+        // Skipped when `bypassCache` is set: an explicit refresh
+        // (toolbar / pull) wants a guaranteed-fresh `requestLocation()`,
+        // not whatever the system happened to last have.
+        if !bypassCache, isAuthorized, let system = manager.location,
+           Date().timeIntervalSince(system.timestamp) < 300 {
+            lastLocation = system
+            return system
+        }
+
         // Race the (deduplicated) GPS fetch against the timeout WITHOUT a
         // task group. A group would structurally await the GPS branch on
         // scope exit even after `cancelAll()`, because the underlying
