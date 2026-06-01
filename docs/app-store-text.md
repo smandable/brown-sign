@@ -16,13 +16,13 @@ Ever drive past a brown highway sign and wonder what it's pointing to? Snap a ph
 ## Description
 
 ```
-Brown Sign identifies the landmarks behind brown roadside signs — and helps you discover new ones around you.
+Brown Sign identifies the landmarks behind brown roadside signs, and helps you discover new ones around you.
 
 SNAP OR TYPE
-Point your camera at a brown highway sign — or just type the name — and Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
+Point your camera at a brown highway sign, or just type the name. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
 
 NEARBY DISCOVERY
-Open the Nearby tab to see landmarks within 5 miles of you — no scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
+Open the Nearby tab to see landmarks within 5 miles of you. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
 
 SMART SEARCH
 Brown Sign searches Wikipedia, the National Park Service, and Wikidata to find the right match. It uses Apple Intelligence to clean up messy camera text and polish summaries into quick, readable cards.
@@ -40,13 +40,13 @@ HISTORY
 Every lookup is saved with a photo and full details. Swipe to delete, or tap to revisit any landmark you've looked up before.
 
 RICH DETAIL CARDS
-Each result includes coordinates, founding year, type (museum, park, fort, etc.), a Wikipedia photo, and the full article summary — with a one-tap link to read more in Safari. Text is fully selectable for easy copying.
+Each result includes coordinates, founding year, type (museum, park, fort, etc.), a Wikipedia photo, and the full article summary, with a one-tap link to read more in Safari. Text is fully selectable for easy copying.
 
 SHARE
 Share any landmark's article link with friends, family, or fellow travelers in one tap.
 
 PRIVACY FIRST
-Everything runs on your device. Camera images stay local. Location is used only to rank nearby results — never tracked or shared. No accounts, no analytics, no ads.
+Everything runs on your device. Camera images stay local. Location is used only to rank nearby results, never tracked or shared. No accounts, no analytics, no ads.
 
 Next time you pass a brown sign, you'll know.
 
@@ -66,7 +66,7 @@ roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,tra
 
 ## What's New (Version 1.4.10)
 ```
-Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign now starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock — so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer — so it never looks stuck when it's really just working. The History tab's Map view also works before your first lookup now — switch to Map on an empty History to see a map of where you are.
+Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock, so your landmarks appear sooner. While it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer. No more wondering whether it's stuck. The History tab's Map view now works before your first lookup too: switch to Map on an empty History to see a map of where you are.
 ```
 
 ### Previous versions
