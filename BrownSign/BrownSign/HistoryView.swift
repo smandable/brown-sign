@@ -40,10 +40,15 @@ struct HistoryView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Chrome above the list (picker, search field) hides in
-                // edit mode — when the user is selecting rows to delete,
-                // the browse/search controls are noise.
-                if !lookups.isEmpty && !editMode.isEditing {
+                // Chrome above the list (picker, search field). Shown
+                // even when History is empty so the List/Map switcher
+                // and search stay available before the first lookup —
+                // Map then shows where you are, mirroring how Nearby
+                // keeps its switcher live in the empty state. Only
+                // hidden in edit mode (row-selection makes browse/search
+                // controls noise); edit mode is unreachable while empty
+                // anyway since EditButton is gated on a non-empty list.
+                if !editMode.isEditing {
                     DisplayModeSegmentedPicker(selection: $displayMode)
                         .padding(.horizontal)
                         .padding(.top, 8)
@@ -62,31 +67,21 @@ struct HistoryView: View {
 
                 Group {
                     if lookups.isEmpty {
-                        // Mirror Scan's `howItWorksSteps` layout:
-                        // brown signpost on the left, title + helper
-                        // copy stacked on the right. Vertically
-                        // centred in the remaining space so the
-                        // overall emptiness still reads as "centred"
-                        // even though the row itself is left-aligned.
-                        VStack {
-                            Spacer()
-                            HStack(spacing: 16) {
-                                Image(systemName: "signpost.right.and.left")
-                                    .font(.system(size: 40, weight: .semibold))
-                                    .foregroundStyle(Color("BrandBrown"))
-                                    .frame(width: 54)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("No lookups yet")
-                                        .font(.title.weight(.bold))
-                                    Text("Snap a landmark sign to get started.")
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .padding(.horizontal)
-                            Spacer()
+                        // No saved lookups yet. List mode explains how to
+                        // start; Map mode shows where the user is, so the
+                        // List/Map switcher stays meaningful before the
+                        // first lookup — mirroring how Nearby keeps its
+                        // switcher live in the empty state.
+                        switch displayMode {
+                        case .list:
+                            emptyHistoryView
+                        case .map:
+                            EmptyHistoryMapView()
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .padding(.horizontal)
+                                .padding(.top, 16)
+                                .padding(.bottom, 16)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         switch displayMode {
                         case .list:
@@ -281,6 +276,35 @@ struct HistoryView: View {
         }
     }
 
+    /// Empty-state shown in List mode when there are no saved lookups —
+    /// brown signpost + helper copy, mirroring Scan's `howItWorksSteps`
+    /// layout (signpost left, title + helper copy stacked right,
+    /// vertically centred so the emptiness still reads as "centred").
+    /// Map mode shows `EmptyHistoryMapView` instead (a map of where the
+    /// user is) so the List/Map switcher stays meaningful even before
+    /// the first lookup is saved.
+    private var emptyHistoryView: some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 16) {
+                Image(systemName: "signpost.right.and.left")
+                    .font(.system(size: 40, weight: .semibold))
+                    .foregroundStyle(Color("BrandBrown"))
+                    .frame(width: 54)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("No lookups yet")
+                        .font(.title.weight(.bold))
+                    Text("Snap a landmark sign to get started.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     /// Swipe-delete handler for the displayed (filtered) list. Index
     /// offsets are relative to `filteredLookups`, not the full `lookups`
     /// query, so we resolve through the filtered array first.
@@ -296,6 +320,54 @@ struct HistoryView: View {
             modelContext.delete(lookup)
         }
         editMode = .inactive
+    }
+}
+
+// MARK: - EmptyHistoryMapView
+
+/// Map shown on the History tab's Map toggle when there are no saved
+/// lookups yet. Centres on the user at a ~5-mile radius (mirroring the
+/// Nearby tab's "within 5 miles" framing) so the empty Map view shows
+/// where you are rather than a blank panel. Uses the shared
+/// `LocationManager` (same instance as Nearby/Scan, so its cache +
+/// interim-fix seed make the fix near-instant when warm); falls back to
+/// a continental-US default if location is denied or unavailable.
+private struct EmptyHistoryMapView: View {
+    @State private var cameraPosition: MapCameraPosition = .userLocation(
+        fallback: .region(MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
+            span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
+        ))
+    )
+    private let locationManager = LocationManager.shared
+
+    var body: some View {
+        Map(position: $cameraPosition) {
+            UserAnnotation()
+        }
+        .mapControls {
+            MapUserLocationButton()
+            MapCompass()
+        }
+        .task {
+            // `.userLocation` already centres on the dot at MapKit's
+            // default zoom the moment a fix is available; refine that to
+            // a ~5-mile radius. Keeps the US-default fallback the camera
+            // started with if location is denied/unavailable.
+            guard await locationManager.ensurePermission(),
+                  let loc = await locationManager.currentLocation(
+                      withTimeout: LocationManager.nearbyTimeout
+                  ) else { return }
+            cameraPosition = .region(MKCoordinateRegion(
+                center: loc.coordinate,
+                latitudinalMeters: 16_093,   // ~5-mile radius (10 mi across)
+                longitudinalMeters: 16_093
+            ))
+        }
+        // Liquid Glass tab bars are translucent; force a visible
+        // background so map tiles don't show through (matches
+        // HistoryMapView / NearbyMapView).
+        .toolbarBackground(.visible, for: .tabBar)
     }
 }
 

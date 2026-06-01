@@ -66,7 +66,7 @@ roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,tra
 
 ## What's New (Version 1.4.10)
 ```
-Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign now starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock — so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer — so it never looks stuck when it's really just working.
+Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign now starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock — so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer — so it never looks stuck when it's really just working. The History tab's Map view also works before your first lookup now — switch to Map on an empty History to see a map of where you are.
 ```
 
 ### Previous versions
