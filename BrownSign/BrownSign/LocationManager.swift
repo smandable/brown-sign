@@ -31,7 +31,7 @@ final class LocationManager: NSObject {
     nonisolated static let nearbyTimeout: TimeInterval = 12
 
     @ObservationIgnored private let manager = CLLocationManager()
-    @ObservationIgnored private var permissionContinuation: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var permissionContinuations: [CheckedContinuation<Bool, Never>] = []
     @ObservationIgnored private var locationContinuation: CheckedContinuation<CLLocation?, Never>?
     @ObservationIgnored private var inflightFetch: Task<CLLocation?, Never>?
 
@@ -97,8 +97,18 @@ final class LocationManager: NSObject {
             return false
         case .notDetermined:
             return await withCheckedContinuation { continuation in
-                permissionContinuation = continuation
-                manager.requestWhenInUseAuthorization()
+                // Coalesce concurrent callers: append every waiter and only
+                // fire the system prompt for the first. The old single-slot
+                // assignment dropped any earlier waiter's continuation on the
+                // floor when a second caller arrived — that `await` then hung
+                // forever, and with it any `defer` the caller was holding
+                // (e.g. the Nearby reload spinner's count, leaving it stuck
+                // spinning). iOS shows just one dialog and one auth-change
+                // callback resumes all waiters together.
+                permissionContinuations.append(continuation)
+                if permissionContinuations.count == 1 {
+                    manager.requestWhenInUseAuthorization()
+                }
             }
         @unknown default:
             return false
@@ -227,8 +237,11 @@ extension LocationManager: CLLocationManagerDelegate {
             default:
                 granted = false
             }
-            permissionContinuation?.resume(returning: granted)
-            permissionContinuation = nil
+            let waiters = permissionContinuations
+            permissionContinuations.removeAll()
+            for waiter in waiters {
+                waiter.resume(returning: granted)
+            }
         }
     }
 

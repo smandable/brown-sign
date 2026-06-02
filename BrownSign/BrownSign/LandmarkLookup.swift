@@ -154,4 +154,34 @@ extension LandmarkLookup {
         context.insert(lookup)
         return lookup
     }
+
+    /// Backfill an empty summary for legacy rows saved before the REST
+    /// summary fallback existed. No-op unless `summary` is empty and the
+    /// source is Wikipedia (NPS doesn't exhibit the empty-intro failure
+    /// mode). Reuses a stored `rawSummary` when present, otherwise fetches
+    /// the REST extract, then polishes. Shared by the history row (runs on
+    /// appear) and the detail view (safety net) so the logic lives once.
+    ///
+    /// Guarded on `summary`, not `rawSummary`, because earlier versions of
+    /// this fix populated only `rawSummary`; those rows still need their
+    /// list-row summary filled in and should reuse the stored extract
+    /// instead of re-fetching.
+    @MainActor
+    func backfillSummaryIfNeeded() async {
+        guard summary.isEmpty, source == "wikipedia" else { return }
+        let text: String
+        if !rawSummary.isEmpty {
+            text = rawSummary
+        } else if let fetched = await wikipediaRESTSummaryExtract(for: resolvedTitle) {
+            rawSummary = fetched
+            text = fetched
+        } else {
+            return
+        }
+        summary = text
+        let polished = await polishSummary(text)
+        if polished != text {
+            summary = polished
+        }
+    }
 }

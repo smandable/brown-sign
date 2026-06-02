@@ -6,7 +6,7 @@
 // PBXFileSystemSynchronizedRootGroup and has no test target).
 //
 // `Sources/CoordinateParser/CoordinateParser.swift` is a symlink to
-// `../../BrownSign/CoordinateParser.swift` — the iOS app's
+// `../../../BrownSign/CoordinateParser.swift` — the iOS app's
 // pure-logic parser. Single source of truth: editing either path
 // edits the same underlying file.
 //

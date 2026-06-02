@@ -63,25 +63,21 @@ private func fetchNPSPark(query: String) async -> NPSResult? {
         return nil
     }
 
-    do {
-        let (data, _) = try await URLSession.shared.data(from: url)
-        let decoded = try JSONDecoder().decode(ParksResponse.self, from: data)
-        guard let first = decoded.data.first,
-              let name = first.fullName, !name.isEmpty,
-              let desc = first.description,
-              let urlString = first.url,
-              let pageURL = URL(string: urlString) else {
-            return nil
-        }
-        return NPSResult(
-            title: name,
-            summary: desc,
-            pageURL: pageURL,
-            imageURL: firstValidImageURL(first.images)
-        )
-    } catch {
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let decoded = try? JSONDecoder().decode(ParksResponse.self, from: data),
+          let first = decoded.data.first,
+          let name = first.fullName, !name.isEmpty,
+          let desc = first.description, !desc.isEmpty,
+          let urlString = first.url,
+          let pageURL = URL(string: urlString) else {
         return nil
     }
+    return NPSResult(
+        title: name,
+        summary: desc,
+        pageURL: pageURL,
+        imageURL: firstValidImageURL(first.images)
+    )
 }
 
 // MARK: - /places endpoint (NRHP + NPS historic places)
@@ -103,23 +99,19 @@ private func fetchNPSPlace(query: String) async -> NPSResult? {
         return nil
     }
 
-    do {
-        let (data, _) = try await URLSession.shared.data(from: url)
-        let decoded = try JSONDecoder().decode(PlacesResponse.self, from: data)
-        guard let first = decoded.data.first,
-              let name = first.title, !name.isEmpty,
-              let desc = first.listingDescription,
-              let urlString = first.url,
-              let pageURL = URL(string: urlString) else {
-            return nil
-        }
-        return NPSResult(
-            title: name,
-            summary: desc,
-            pageURL: pageURL,
-            imageURL: firstValidImageURL(first.images)
-        )
-    } catch {
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let decoded = try? JSONDecoder().decode(PlacesResponse.self, from: data),
+          let first = decoded.data.first,
+          let name = first.title, !name.isEmpty,
+          let desc = first.listingDescription, !desc.isEmpty,
+          let urlString = first.url,
+          let pageURL = URL(string: urlString) else {
         return nil
     }
+    return NPSResult(
+        title: name,
+        summary: desc,
+        pageURL: pageURL,
+        imageURL: firstValidImageURL(first.images)
+    )
 }

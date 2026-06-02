@@ -79,10 +79,6 @@ nonisolated private let landmarkP31QIDs: [String] = [
 /// the stream wrapper (`discoverLandmarksAt`) can detect a full page.
 nonisolated let sparqlResultLimit = 300
 
-/// WDQS recommends a descriptive User-Agent. Without one, queries can
-/// be aggressively rate-limited.
-nonisolated private let wdqsUserAgent = "BrownSign-iOS/1.2 (https://github.com/seanmandable/brown-sign)"
-
 /// Fetches landmark candidates within `radiusKm` of (`lat`, `lon`)
 /// from the Wikidata Query Service. Returns hits with QID, Wikipedia
 /// article title, and coordinate. Hydration of summary/thumbnail and
@@ -145,7 +141,7 @@ nonisolated func discoverLandmarksViaSPARQL(
     }
 
     var request = URLRequest(url: url)
-    request.setValue(wdqsUserAgent, forHTTPHeaderField: "User-Agent")
+    request.setValue(brownSignUserAgent, forHTTPHeaderField: "User-Agent")
     request.setValue("application/sparql-results+json", forHTTPHeaderField: "Accept")
     // Per-attempt timeout. WDQS answers a 5-mile query in <2 s, but a
     // wide-radius query (e.g. 25 miles in a dense area) has to materialise
@@ -169,7 +165,7 @@ nonisolated func discoverLandmarksViaSPARQL(
 /// fields — matches the function's "graceful empty on any error"
 /// contract.
 nonisolated private func parseSPARQLBindings(_ data: Data) -> [WikidataLandmarkHit] {
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let root = jsonObject(data),
           let results = root["results"] as? [String: Any],
           let bindings = results["bindings"] as? [[String: Any]] else {
         return []

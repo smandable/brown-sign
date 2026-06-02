@@ -121,7 +121,7 @@ private func wikipediaGeosearchPageList(
         return []
     }
 
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [] }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [] }
     do {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
@@ -188,8 +188,8 @@ nonisolated func wikipediaRESTSummaryExtract(for title: String) async -> String?
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
         return nil
     }
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let root = jsonObject(data),
           let extract = root["extract"] as? String,
           !extract.isEmpty else {
         return nil
@@ -226,8 +226,8 @@ nonisolated func wikipediaArticleImageURLs(
         return []
     }
 
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [] }
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [] }
+    guard let root = jsonObject(data),
           let items = root["items"] as? [[String: Any]] else {
         return []
     }
@@ -324,8 +324,8 @@ nonisolated func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
         return nil
     }
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let root = jsonObject(data) else {
         return nil
     }
     if let original = root["originalimage"] as? [String: Any],
@@ -372,7 +372,11 @@ private func cleanWikipediaQuery(_ raw: String) -> String {
         with: " ",
         options: .regularExpression
     )
-    return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
+    // If cleaning stripped the whole query (e.g. a sign reading only
+    // "SITE OF"), fall back to the original so the search isn't silently
+    // empty.
+    return cleaned.isEmpty ? raw.trimmingCharacters(in: .whitespacesAndNewlines) : cleaned
 }
 
 // MARK: - Step 1: list=search
@@ -388,7 +392,7 @@ private func wikipediaSearchCandidates(_ query: String) async -> [WikiCandidate]
         return []
     }
 
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [] }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [] }
     do {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
@@ -591,7 +595,7 @@ nonisolated private func fetchPageDetailsBatchByTitles(_ titles: [String]) async
         return [:]
     }
 
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [:] }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [:] }
     do {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],
@@ -670,7 +674,7 @@ nonisolated private func fetchPageDetailsBatch(pageIDs: [Int]) async -> [Int: Wi
         return [:]
     }
 
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return [:] }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [:] }
     do {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let queryObj = root["query"] as? [String: Any],

@@ -30,11 +30,7 @@ func fetchGoogleKGConfidence(for title: String) async -> Double? {
         return nil
     }
 
-    do {
-        let (data, _) = try await URLSession.shared.data(from: url)
-        let decoded = try JSONDecoder().decode(KGResponse.self, from: data)
-        return decoded.itemListElement?.first?.resultScore
-    } catch {
-        return nil
-    }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let decoded = try? JSONDecoder().decode(KGResponse.self, from: data) else { return nil }
+    return decoded.itemListElement?.first?.resultScore
 }

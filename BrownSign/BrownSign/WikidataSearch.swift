@@ -94,8 +94,8 @@ nonisolated private func fetchWikidataClaimsByWikipediaTitle(_ title: String) as
         return nil
     }
 
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let root = jsonObject(data),
           let entities = root["entities"] as? [String: Any] else {
         return nil
     }
@@ -188,8 +188,8 @@ private func fetchWikidataLabel(for qid: String) async -> String? {
     guard let url = URL(string: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=\(qid)&format=json&props=labels&languages=en") else {
         return nil
     }
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let root = jsonObject(data),
           let entities = root["entities"] as? [String: Any],
           let entity = entities[qid] as? [String: Any],
           let labels = entity["labels"] as? [String: Any],

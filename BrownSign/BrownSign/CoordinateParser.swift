@@ -127,13 +127,17 @@ private func parseDecimalCoordinates(_ text: String) -> (Double, Double)? {
 }
 
 private func parseDecimalWithHemisphere(_ text: String) -> (Double, Double)? {
-    // `(-)?DDD(.DDD)? °? <hemi>` — degree symbol optional, sign optional.
-    let half = #"(-?\d{1,3}(?:\.\d+)?)\s*°?\s*([NSEWnsew])"#
+    // `(-)?DDD(.DDD)? (°)? <hemi>` for each half. The degree symbol is now
+    // captured (group 2/5) so we can require each half to carry either a
+    // decimal point OR an explicit degree symbol. Without that, this
+    // last-resort prose scan matched bare integers like "5 N … 10 W" in
+    // running text and produced bogus coordinates.
+    let half = #"(-?\d{1,3}(?:\.\d+)?)\s*(°?)\s*([NSEWnsew])"#
     let pattern = "\(half)\\s*[, /]?\\s*\(half)"
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
     let range = NSRange(text.startIndex..<text.endIndex, in: text)
     guard let match = regex.firstMatch(in: text, range: range),
-          match.numberOfRanges == 5 else { return nil }
+          match.numberOfRanges == 7 else { return nil }
 
     func substr(_ idx: Int) -> String? {
         let r = match.range(at: idx)
@@ -142,10 +146,17 @@ private func parseDecimalWithHemisphere(_ text: String) -> (Double, Double)? {
         }
         return String(text[swiftRange])
     }
-    guard let n1 = substr(1).flatMap(Double.init),
-          let h1 = substr(2),
-          let n2 = substr(3).flatMap(Double.init),
-          let h2 = substr(4) else { return nil }
+    guard let num1 = substr(1), let h1 = substr(3),
+          let num2 = substr(4), let h2 = substr(6) else { return nil }
+
+    // Reject a half that is a bare integer with no degree symbol — the
+    // realistic false-positive source in lead prose.
+    let hasDegree1 = !(substr(2) ?? "").isEmpty
+    let hasDegree2 = !(substr(5) ?? "").isEmpty
+    guard num1.contains(".") || hasDegree1,
+          num2.contains(".") || hasDegree2 else { return nil }
+
+    guard let n1 = Double(num1), let n2 = Double(num2) else { return nil }
 
     guard let v1 = applyHemisphere(magnitude: n1, hemisphere: h1),
           let v2 = applyHemisphere(magnitude: n2, hemisphere: h2) else {

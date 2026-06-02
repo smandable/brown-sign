@@ -72,6 +72,12 @@ struct NearMeView: View {
     /// artificial 100, which in a dense area filled up within ~10 miles and
     /// made 25-mile look identical to 10-mile.
     private static let fetchLimit = 300
+    /// Upper bound on accumulated nearby results. Pan-merge and load-more
+    /// both append into the set; without a ceiling a long session grows it
+    /// (and its re-sorts) without bound. Sorted nearest-first before the
+    /// cap, so it keeps the closest results. Generous enough that no real
+    /// session reaches it.
+    private static let maxNearbyResults = 1000
 
     @State private var state: LoadState = .idle
     @State private var loadingPhase: LoadingPhase = .locating
@@ -379,30 +385,7 @@ struct NearMeView: View {
                                 description: Text("No geo-tagged Wikipedia landmarks within \(currentRadiusMiles) miles of your location. Switch to the map to widen the search, or pan to a different area to keep exploring.")
                             )
                         case .map:
-                            NearbyMapView(
-                                results: [],
-                                userLocation: userLocation,
-                                recenterSignal: recenterSignal,
-                                onSelect: { open($0) },
-                                onMapCenterChanged: { center in
-                                    mapCenter = center
-                                    startPanFetch(center)
-                                },
-                                radiusMiles: currentRadiusMiles,
-                                canIncreaseRadius: canIncreaseRadius,
-                                canDecreaseRadius: canDecreaseRadius,
-                                onIncreaseRadius: { changeRadius(by: 1) },
-                                onDecreaseRadius: { changeRadius(by: -1) },
-                                isLoading: isReloading || panFetchCount > 0,
-                                recenterRegion: recenterRegion
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal)
-                            .padding(.top, 16)
-                            // Same gap below the map as above so the
-                            // tab bar has breathing room — matches
-                            // the search-field-to-map gap.
-                            .padding(.bottom, 16)
+                            nearbyMap([])
                         }
                     case .loaded(let results):
                         let visible = visibleResults(from: results)
@@ -424,30 +407,7 @@ struct NearMeView: View {
                                 list(visible)
                             }
                         case .map:
-                            NearbyMapView(
-                                results: visible,
-                                userLocation: userLocation,
-                                recenterSignal: recenterSignal,
-                                onSelect: { open($0) },
-                                onMapCenterChanged: { center in
-                                    mapCenter = center
-                                    startPanFetch(center)
-                                },
-                                radiusMiles: currentRadiusMiles,
-                                canIncreaseRadius: canIncreaseRadius,
-                                canDecreaseRadius: canDecreaseRadius,
-                                onIncreaseRadius: { changeRadius(by: 1) },
-                                onDecreaseRadius: { changeRadius(by: -1) },
-                                isLoading: isReloading || panFetchCount > 0,
-                                recenterRegion: recenterRegion
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal)
-                            .padding(.top, 16)
-                            // Same gap below the map as above so the
-                            // tab bar has breathing room — matches
-                            // the search-field-to-map gap.
-                            .padding(.bottom, 16)
+                            nearbyMap(visible)
                         }
                     }
                 }
@@ -526,6 +486,16 @@ struct NearMeView: View {
                 }
             }
         }
+        .onDisappear {
+            // Stop streaming SPARQL + Wikipedia hydration when the user
+            // leaves the Nearby tab. These are stored unstructured tasks, so
+            // SwiftUI's `.task` auto-cancellation doesn't reach them; without
+            // this they keep fetching and writing state off-screen. Re-entry
+            // re-runs `.task`, which refetches in the background while the
+            // retained in-memory pins stay visible.
+            refreshTask?.cancel()
+            panTask?.cancel()
+        }
     }
 
     /// True while the initial-load state is one a retry can plausibly
@@ -576,8 +546,11 @@ struct NearMeView: View {
     /// is hidden never appears, and what's left is narrowed by partial
     /// (case-insensitive) substring match against the title.
     private func visibleResults(from results: [LandmarkResult]) -> [LandmarkResult] {
-        let hiddenURLs = Set(hiddenLandmarks.map(\.pageURLString))
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Common case (nothing hidden, no active search): skip the Set
+        // build and the filter pass entirely.
+        if hiddenLandmarks.isEmpty && q.isEmpty { return results }
+        let hiddenURLs = Set(hiddenLandmarks.map(\.pageURLString))
         return results.filter { r in
             if hiddenURLs.contains(r.pageURL.absoluteString) { return false }
             if q.isEmpty { return true }
@@ -588,6 +561,35 @@ struct NearMeView: View {
     private var hasResults: Bool {
         if case .loaded = state { return true }
         return false
+    }
+
+    /// The Nearby map for `results`, with the shared controls and chrome.
+    /// Both the empty-state map (no pins) and the loaded map route through
+    /// this so the long parameter list lives in one place.
+    private func nearbyMap(_ results: [LandmarkResult]) -> some View {
+        NearbyMapView(
+            results: results,
+            userLocation: userLocation,
+            recenterSignal: recenterSignal,
+            onSelect: { open($0) },
+            onMapCenterChanged: { center in
+                mapCenter = center
+                startPanFetch(center)
+            },
+            radiusMiles: currentRadiusMiles,
+            canIncreaseRadius: canIncreaseRadius,
+            canDecreaseRadius: canDecreaseRadius,
+            onIncreaseRadius: { changeRadius(by: 1) },
+            onDecreaseRadius: { changeRadius(by: -1) },
+            isLoading: isReloading || panFetchCount > 0,
+            recenterRegion: recenterRegion
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+        .padding(.top, 16)
+        // Same gap below the map as above so the tab bar has breathing
+        // room, matching the search-field-to-map gap.
+        .padding(.bottom, 16)
     }
 
     /// True when a map is currently on screen (loaded pins or the
@@ -1146,31 +1148,14 @@ struct NearMeView: View {
         lastFetchCenter = center
         guard !fresh.isEmpty else { return }
 
-        // Merge into existing results. Dedup by canonical page URL —
-        // the same landmark surfaced by two overlapping geosearches
-        // would otherwise appear as two pins.
-        guard case .loaded(var existing) = state else {
+        // Merge into existing results (dedup by canonical URL, re-sorted by
+        // distance from the USER so the list stays anchored where the user
+        // actually is, capped). See `mergeResults`.
+        guard case .loaded(let existing) = state else {
             state = .loaded(fresh)
             return
         }
-        let seen = Set(existing.map(\.pageURL))
-        for result in fresh where !seen.contains(result.pageURL) {
-            existing.append(result)
-        }
-        // Re-sort by distance from USER (not from the map center) so
-        // the list remains anchored to where the user actually is.
-        if let user = userLocation {
-            existing.sort { a, b in
-                let da = a.coordinates.map {
-                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
-                } ?? .infinity
-                let db = b.coordinates.map {
-                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
-                } ?? .infinity
-                return da < db
-            }
-        }
-        state = .loaded(existing)
+        state = .loaded(mergeResults(fresh, into: existing, user: userLocation, cap: Self.maxNearbyResults).merged)
     }
 
     /// Widen the search around `center` (the panned map center) at the current
@@ -1224,30 +1209,51 @@ struct NearMeView: View {
             if sparqlFailed && fresh.isEmpty { return }
             lastFetchCenter = center
             guard !fresh.isEmpty else { return }
-            // Merge + dedup into the existing pins, re-sorted by distance from
-            // the user (mirrors fetchAroundMapCenter so the list stays
-            // user-anchored even for panned results).
-            guard case .loaded(var existing) = state else {
+            // Merge into the existing pins (dedup + user-anchored sort,
+            // capped), mirroring fetchAroundMapCenter. See `mergeResults`.
+            guard case .loaded(let existing) = state else {
                 state = .loaded(fresh)
                 return
             }
-            let seen = Set(existing.map(\.pageURL))
-            for result in fresh where !seen.contains(result.pageURL) {
-                existing.append(result)
-            }
-            if let user = userLocation {
-                existing.sort { a, b in
-                    let da = a.coordinates.map {
-                        user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
-                    } ?? .infinity
-                    let db = b.coordinates.map {
-                        user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
-                    } ?? .infinity
-                    return da < db
-                }
-            }
-            state = .loaded(existing)
+            state = .loaded(mergeResults(fresh, into: existing, user: userLocation, cap: Self.maxNearbyResults).merged)
         }
+    }
+
+    /// Merge `fresh` into `existing`, de-duplicated by canonical page URL
+    /// and (when `user` is known) re-sorted nearest-first so the list stays
+    /// anchored to the user's location. When `cap` is set, keeps only the
+    /// nearest `cap` results so continuous panning / load-more can't grow
+    /// the set without bound. Returns the merged list and the count of
+    /// genuinely new rows (before any cap) so "load more" can tell whether a
+    /// page actually contributed anything.
+    private func mergeResults(
+        _ fresh: [LandmarkResult],
+        into existing: [LandmarkResult],
+        user: CLLocation?,
+        cap: Int? = nil
+    ) -> (merged: [LandmarkResult], added: Int) {
+        var merged = existing
+        let seen = Set(existing.map(\.pageURL))
+        let before = merged.count
+        for result in fresh where !seen.contains(result.pageURL) {
+            merged.append(result)
+        }
+        let added = merged.count - before
+        if let user {
+            merged.sort { a, b in
+                let da = a.coordinates.map {
+                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                } ?? .infinity
+                let db = b.coordinates.map {
+                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                } ?? .infinity
+                return da < db
+            }
+        }
+        if let cap, merged.count > cap {
+            merged = Array(merged.prefix(cap))
+        }
+        return (merged, added)
     }
 
     // MARK: - Load more
@@ -1284,24 +1290,18 @@ struct NearMeView: View {
             // On failure, leave hasMore/pagesLoaded alone so the footer
             // stays and the user can retry.
             guard !failed else { return }
-            // Merge into the current set, dedup by canonical URL.
-            guard case .loaded(var current) = state else { return }
-            let seen = Set(current.map(\.pageURL))
-            for r in fresh where !seen.contains(r.pageURL) {
-                current.append(r)
-            }
-            current.sort { a, b in
-                let da = a.coordinates.map {
-                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
-                } ?? .infinity
-                let db = b.coordinates.map {
-                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
-                } ?? .infinity
-                return da < db
-            }
-            state = .loaded(current)
+            // Merge into the current set (dedup + user-anchored sort, capped).
+            guard case .loaded(let current) = state else { return }
+            let (merged, added) = mergeResults(fresh, into: current, user: user, cap: Self.maxNearbyResults)
+            state = .loaded(merged)
             pagesLoaded += 1
-            hasMore = more
+            // `more` only reflects that the raw SPARQL page came back full.
+            // After the operating-institution gate + URL dedup, a full page
+            // can still contribute zero new rows (dense area, mostly gated or
+            // already-shown landmarks). Retire the footer if this page added
+            // nothing, or once we've hit the result cap, so the user can't tap
+            // "Load more" on a list that won't grow.
+            hasMore = more && added > 0 && merged.count < Self.maxNearbyResults
         }
     }
 
@@ -1432,69 +1432,6 @@ private struct NearbyRow: View {
     }
 }
 
-// MARK: - Scroll-view finder
-
-/// Resolves the `UIScrollView` backing the Nearby `List` so a radius increase
-/// can nudge the content by an exact pixel offset (half a row) — a sub-row
-/// scroll that `List` + `ScrollViewReader.scrollTo` (row-granular) can't
-/// express. Placed as a `.background` on the List; it walks up from its marker
-/// view and searches each ancestor's subtree for the first scroll view. On a
-/// fixed iOS target the collection-view hierarchy is stable enough for this.
-/// If it ever fails to resolve, the nudge simply no-ops — the list is otherwise
-/// untouched, so scrolling and swipe-to-hide stay fully native.
-private struct ListScrollViewFinder: UIViewRepresentable {
-    let onResolve: (UIScrollView) -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        var resolved = false
-    }
-
-    func makeUIView(context: Context) -> UIView {
-        let marker = UIView(frame: .zero)
-        marker.isUserInteractionEnabled = false
-        attemptResolve(from: marker, context: context)
-        return marker
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        attemptResolve(from: uiView, context: context)
-    }
-
-    private func attemptResolve(from marker: UIView, context: Context) {
-        guard !context.coordinator.resolved else { return }
-        DispatchQueue.main.async {
-            guard !context.coordinator.resolved,
-                  let scrollView = marker.enclosingScrollView() else { return }
-            context.coordinator.resolved = true
-            onResolve(scrollView)
-        }
-    }
-}
-
-private extension UIView {
-    /// Walk up to each ancestor and search its subtree for the first
-    /// `UIScrollView` (the List's backing collection view).
-    func enclosingScrollView() -> UIScrollView? {
-        var ancestor: UIView? = self
-        while let current = ancestor {
-            if let scrollView = current as? UIScrollView { return scrollView }
-            if let scrollView = current.firstScrollViewInSubtree() { return scrollView }
-            ancestor = current.superview
-        }
-        return nil
-    }
-
-    func firstScrollViewInSubtree() -> UIScrollView? {
-        for subview in subviews {
-            if let scrollView = subview as? UIScrollView { return scrollView }
-            if let nested = subview.firstScrollViewInSubtree() { return nested }
-        }
-        return nil
-    }
-}
-
 // MARK: - Map mode
 
 /// Map alternative for the Nearby tab. Drops a brown signpost pin per
@@ -1535,12 +1472,6 @@ private struct NearbyMapView: View {
 
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
-
-    /// Pageurl-keyed lookup so the Map's selection binding (which has to
-    /// be Hashable) doesn't need LandmarkResult itself to be Hashable.
-    private var resultsByID: [String: LandmarkResult] {
-        Dictionary(uniqueKeysWithValues: results.map { ($0.pageURL.absoluteString, $0) })
-    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -1621,7 +1552,8 @@ private struct NearbyMapView: View {
                 .transition(.opacity)
             }
 
-            if let id = selectedID, let selected = resultsByID[id] {
+            if let id = selectedID,
+               let selected = results.first(where: { $0.pageURL.absoluteString == id }) {
                 SelectedNearbyCard(
                     result: selected,
                     onView: { onSelect(selected) },

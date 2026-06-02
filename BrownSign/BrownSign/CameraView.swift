@@ -32,6 +32,16 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     private let sessionQueue = DispatchQueue(label: "com.seanmandable.brownsign.session")
     private var captureButton: UIButton!
     private var closeButton: UIButton!
+    /// True once the capture session + preview have been wired up, which
+    /// only happens with camera authorization. Gates session start/stop so
+    /// the denied state (no session) never touches an unconfigured session
+    /// or a nil `previewLayer`.
+    private var captureConfigured = false
+    /// Whether the view is currently on screen. Guards the async camera-
+    /// permission completion so it never starts the session after the user
+    /// has already dismissed the camera (which would otherwise leave the
+    /// capture session running until the VC deallocates).
+    private var isAppeared = false
 
     var onCapture: ((UIImage) -> Void)?
     var onCancel: (() -> Void)?
@@ -41,25 +51,21 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        configureSession()
-        configurePreviewLayer()
-        configureCaptureButton()
+        // The close button is always available so the user can back out of
+        // every state, including the permission-denied one.
         configureCloseButton()
-        configureTapToFocus()
+        requestCameraAccessAndConfigure()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        sessionQueue.async { [weak self] in
-            guard let self else { return }
-            if !self.session.isRunning {
-                self.session.startRunning()
-            }
-        }
+        isAppeared = true
+        startSessionIfNeeded()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        isAppeared = false
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.session.isRunning {
@@ -70,7 +76,60 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        previewLayer.frame = view.bounds
+        // nil in the permission-denied state, where no preview was built.
+        previewLayer?.frame = view.bounds
+    }
+
+    // MARK: - Authorization
+
+    /// Branch on camera authorization: configure capture when allowed,
+    /// prompt when undecided, and show an in-view "access needed" state
+    /// (instead of a silent black screen) when denied or restricted.
+    private func requestCameraAccessAndConfigure() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            setUpCaptureUI()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if granted {
+                        self.setUpCaptureUI()
+                        // `viewWillAppear` already ran (and no-op'd) while the
+                        // system prompt was up, so kick the session off now.
+                        self.startSessionIfNeeded()
+                    } else {
+                        self.showPermissionDeniedState()
+                    }
+                }
+            }
+        default: // .denied, .restricted, and any future case
+            showPermissionDeniedState()
+        }
+    }
+
+    private func setUpCaptureUI() {
+        configureSession()
+        configurePreviewLayer()
+        configureCaptureButton()
+        configureTapToFocus()
+        captureConfigured = true
+        // Keep the close button above the freshly-inserted preview + capture
+        // button so it stays tappable.
+        view.bringSubviewToFront(closeButton)
+    }
+
+    private func startSessionIfNeeded() {
+        // `isAppeared` guards the async-permission path: the requestAccess
+        // completion can land after the user dismissed the camera while the
+        // system prompt was up — don't start a session on an off-screen VC.
+        guard captureConfigured, isAppeared else { return }
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+        }
     }
 
     // MARK: - Configuration
@@ -95,7 +154,9 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         previewLayer = AVCaptureVideoPreviewLayer(session: session)
         previewLayer.videoGravity = .resizeAspectFill
         previewLayer.frame = view.bounds
-        view.layer.addSublayer(previewLayer)
+        // Insert at the bottom: the close button is added as a subview before
+        // the preview exists, so a plain `addSublayer` would cover it.
+        view.layer.insertSublayer(previewLayer, at: 0)
     }
 
     private func configureCaptureButton() {
@@ -149,6 +210,98 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         view.addGestureRecognizer(tap)
     }
 
+    // MARK: - Permission denied
+
+    /// Shown in place of the live preview when camera access is denied or
+    /// restricted. Explains why the camera is needed and offers a jump to
+    /// Settings, instead of leaving the user staring at a black screen with
+    /// a capture button that does nothing.
+    private func showPermissionDeniedState() {
+        let icon = UIImageView(image: UIImage(systemName: "video.slash.fill"))
+        icon.tintColor = .white
+        icon.contentMode = .scaleAspectFit
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 44, weight: .regular)
+        icon.isAccessibilityElement = false
+
+        let title = UILabel()
+        title.text = "Camera access needed"
+        title.font = .preferredFont(forTextStyle: .headline)
+        title.adjustsFontForContentSizeCategory = true
+        title.textColor = .white
+        title.textAlignment = .center
+        title.numberOfLines = 0
+
+        let message = UILabel()
+        message.text = "Brown Sign uses the camera to read brown tourist signs. Turn on camera access in Settings to snap a sign."
+        message.font = .preferredFont(forTextStyle: .subheadline)
+        message.adjustsFontForContentSizeCategory = true
+        message.textColor = UIColor.white.withAlphaComponent(0.75)
+        message.textAlignment = .center
+        message.numberOfLines = 0
+
+        var config = UIButton.Configuration.borderedProminent()
+        config.title = "Open Settings"
+        config.baseBackgroundColor = .white
+        config.baseForegroundColor = .black
+        config.cornerStyle = .large
+        let settingsButton = UIButton(
+            configuration: config,
+            primaryAction: UIAction { [weak self] _ in self?.openSystemSettings() }
+        )
+
+        let stack = UIStackView(arrangedSubviews: [icon, title, message, settingsButton])
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.spacing = 12
+        stack.setCustomSpacing(24, after: message)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        // Host the content in a scroll view so the largest Dynamic Type
+        // sizes scroll instead of clipping off-screen on short devices. The
+        // `content` wrapper is pinned at least as tall as the viewport (low
+        // priority), so the stack stays vertically centred when it fits and
+        // only scrolls when it genuinely overflows.
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = false
+        view.addSubview(scrollView)
+
+        let content = UIView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(content)
+        content.addSubview(stack)
+
+        let contentHeight = content.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        contentHeight.priority = .defaultLow
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+
+            content.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            content.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            content.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            contentHeight,
+
+            stack.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -16),
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -32),
+            stack.centerYAnchor.constraint(equalTo: content.centerYAnchor)
+        ])
+
+        view.bringSubviewToFront(closeButton)
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
     // MARK: - Cancel
 
     @objc private func closeTapped() {
@@ -193,6 +346,10 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     // MARK: - Tap-to-focus
 
     @objc private func handleTapToFocus(_ recognizer: UITapGestureRecognizer) {
+        // The recognizer is only installed in `setUpCaptureUI`, so these are
+        // non-nil here — but guard explicitly so a future change can't crash
+        // in the denied state, where the preview and buttons were never built.
+        guard captureConfigured, let previewLayer else { return }
         let point = recognizer.location(in: view)
         // Don't refocus when the user is tapping the UI chrome.
         if captureButton.frame.contains(point) || closeButton.frame.contains(point) {

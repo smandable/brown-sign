@@ -58,18 +58,17 @@ func searchLandmarkCandidates(
         let wiki: WikiResult
         let wd: WikidataEnrichment?
     }
-    var enriched: [Enriched] = await withTaskGroup(of: Enriched.self) { group in
-        for (idx, candidate) in wikiCandidates.enumerated() {
-            group.addTask {
-                let wd = await fetchWikidataEnrichment(for: candidate.title)
-                return Enriched(index: idx, wiki: candidate, wd: wd)
-            }
-        }
-        var results: [Enriched] = []
-        for await item in group { results.append(item) }
-        results.sort { $0.index < $1.index }
-        return results
+    // Bounded fan-out (<=6 concurrent) rather than one task per candidate, so
+    // a Wikidata 429 can't fan into a retry storm. `mapBounded` returns
+    // completion order, so re-sort by the original merge index afterwards.
+    var enriched: [Enriched] = await mapBounded(
+        Array(wikiCandidates.enumerated()),
+        maxConcurrent: 6
+    ) { item in
+        let wd = await fetchWikidataEnrichment(for: item.element.title)
+        return Enriched(index: item.offset, wiki: item.element, wd: wd)
     }
+    enriched.sort { $0.index < $1.index }
 
     // 3. Drop non-landmark types.
     enriched.removeAll { pair in
@@ -369,18 +368,19 @@ nonisolated private func computeGateDrops(
 ) async -> Set<Int> {
     guard !gates.isEmpty else { return [] }
     var dropped = Set<Int>()
-    await withTaskGroup(of: (Int, InstitutionGate, WikidataHistoricSignals?).self) { group in
-        for (idx, gate) in gates {
-            let title = topHits[idx].wikipediaTitle
-            group.addTask {
-                (idx, gate, await fetchWikidataHistoricSignals(for: title))
-            }
-        }
-        for await (idx, gate, signals) in group {
-            guard let s = signals else { continue }
-            if !institutionPassesGate(s, gate: gate) {
-                dropped.insert(idx)
-            }
+    let gateByIdx = Dictionary(gates, uniquingKeysWith: { first, _ in first })
+    // Bounded fan-out (<=6 concurrent) so the gate's Wikidata lookups don't
+    // burst unbounded and risk a 429 retry storm, mirroring the Wikipedia
+    // hydration path. Titles are resolved up front so the concurrent closure
+    // captures only Sendable values.
+    let inputs: [(Int, String)] = gates.map { (idx, _) in (idx, topHits[idx].wikipediaTitle) }
+    let outcomes = await mapBounded(inputs, maxConcurrent: 6) { input -> (Int, WikidataHistoricSignals?) in
+        (input.0, await fetchWikidataHistoricSignals(for: input.1))
+    }
+    for (idx, signals) in outcomes {
+        guard let s = signals, let gate = gateByIdx[idx] else { continue }
+        if !institutionPassesGate(s, gate: gate) {
+            dropped.insert(idx)
         }
     }
     return dropped
@@ -478,13 +478,14 @@ func enrichLandmark(
 /// Fetches the article image at the given URL and resizes it to a
 /// reasonable storage size (~800px on its longest edge) before
 /// returning the JPEG-encoded bytes. Returns nil on any failure so the
-/// caller can fall through to a placeholder. Uses `URLSession.shared`.
+/// caller can fall through to a placeholder. Routes through the shared
+/// retry helper (`apiRequest` + `httpDataWithRetry`).
 private func downloadArticleImage(from url: URL?) async -> Data? {
     guard let url else { return nil }
     // Route through the shared retry helper so a transient 5xx/429 or
     // network blip on the Wikimedia image CDN gets the same backoff
     // ladder as the API calls (it returns nil on non-2xx and exhaustion).
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
     // Resize down if the source image is huge, otherwise keep as-is.
     return resizeImageDataIfNeeded(data, maxDimension: 800)
 }

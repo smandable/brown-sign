@@ -59,9 +59,9 @@ func fetchWikipediaCoordinates(forTitle title: String) async -> Coordinate? {
           let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=coordinates&redirects=1&titles=\(encoded)") else {
         return nil
     }
-    guard let data = await httpDataWithRetry(URLRequest(url: url)) else { return nil }
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
 
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    guard let root = jsonObject(data),
           let queryObj = root["query"] as? [String: Any],
           let pages = queryObj["pages"] as? [String: Any] else {
         return nil

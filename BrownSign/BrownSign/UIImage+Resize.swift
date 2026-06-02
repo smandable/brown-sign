@@ -13,8 +13,17 @@ import UIKit
 extension UIImage {
     /// Redraw at exactly `size`. Caller is responsible for picking a
     /// size that preserves aspect ratio if that matters.
+    ///
+    /// `format.scale = 1` so `size` means *pixels*, not points. Without
+    /// it `UIGraphicsImageRenderer` defaults to the device screen scale
+    /// (2x–3x), so a "800px" downscale would silently produce a
+    /// 1600–2400px image — inflating OCR input and the persisted
+    /// SwiftData thumbnails by ~4–9x. `draw(in:)` still bakes in the
+    /// source's `imageOrientation`, so the result is upright regardless.
     func resized(to size: CGSize) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { _ in
             draw(in: CGRect(origin: .zero, size: size))
         }

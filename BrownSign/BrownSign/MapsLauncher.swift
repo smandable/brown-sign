@@ -98,7 +98,7 @@ struct DirectionsSheet: View {
                 }
 
                 Button {
-                    MapsLauncher.openInAppleMaps(latitude: latitude, longitude: longitude, name: name)
+                    MapsLauncher.openInAppleMaps(latitude: latitude, longitude: longitude)
                     dismiss()
                 } label: {
                     VStack(spacing: 4) {
@@ -153,10 +153,13 @@ enum MapsLauncher {
         UIApplication.shared.open(url)
     }
 
-    static func openInAppleMaps(latitude: Double, longitude: Double, name: String) {
-        let encodedName = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+    static func openInAppleMaps(latitude: Double, longitude: Double) {
+        // `daddr=lat,lng` + `dirflg=d` is the documented driving-directions
+        // form. A `q=` label was previously appended too, but with a
+        // coordinate `daddr` (and no `ll`) Apple Maps ignores it, so it was
+        // dead weight.
         guard let url = URL(
-            string: "https://maps.apple.com/?daddr=\(latitude),\(longitude)&dirflg=d&t=m&q=\(encodedName)"
+            string: "https://maps.apple.com/?daddr=\(latitude),\(longitude)&dirflg=d&t=m"
         ) else { return }
         UIApplication.shared.open(url)
     }

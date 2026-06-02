@@ -17,6 +17,10 @@ struct ContentView: View {
     @State private var signText = ""
     @State private var showCamera = false
     @State private var capturedImage: UIImage?
+    /// 112px history thumbnail for `capturedImage`, encoded once when the
+    /// photo is captured and reused across every lookup path instead of
+    /// re-encoding the JPEG three times per result.
+    @State private var capturedThumbnailData: Data?
     @State private var isProcessing = false
     @State private var isSearching = false
     @State private var result: LandmarkResult?
@@ -34,6 +38,13 @@ struct ContentView: View {
     /// Cached decoded UIImage for the current result's article image.
     /// Prevents re-decoding the JPEG on every view re-render.
     @State private var resultArticleImage: UIImage?
+
+    /// Per-row height for the "Recent finds" list. Scales with Dynamic
+    /// Type so the fixed-height List (which can't self-size inside the
+    /// outer ScrollView) grows with the user's text size instead of
+    /// clipping rows. Over-allocation is harmless: each row carries its
+    /// own parchment background, so any unused tail stays transparent.
+    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 104
 
     @State private var isSignTextFocused = false
 
@@ -81,6 +92,7 @@ struct ContentView: View {
                                 .overlay(alignment: .topTrailing) {
                                     Button {
                                         capturedImage = nil
+                                        capturedThumbnailData = nil
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .font(.title2)
@@ -199,7 +211,7 @@ struct ContentView: View {
                             .padding(.vertical, 32)
                             .opacity(isSignTextFocused ? 0 : 1)
                             .accessibilityElement(children: .contain)
-                            .accessibilityLabel("Brown Sign — snap a sign or type to look up a landmark")
+                            .accessibilityLabel("Brown Sign. Snap a sign or type to look up a landmark.")
                         }
                     }
                     .padding()
@@ -251,6 +263,10 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color("AccentButton"))
                 .buttonBorderShape(.roundedRectangle(radius: 12))
+                // `.disabled` gives the real disabled trait (VoiceOver
+                // announces it, taps are blocked); the opacity is just the
+                // visual dim on top of it.
+                .disabled(lookUpDisabled)
                 .opacity(lookUpDisabled ? 0.5 : 1)
                 .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
                 .padding(.horizontal)
@@ -273,6 +289,10 @@ struct ContentView: View {
                         // OCR still works great at 800px on the long edge.
                         let scaled = image.resized(toMaxDimension: 800)
                         capturedImage = scaled
+                        // Encode the history thumbnail once here instead of
+                        // re-deriving it in each lookup path.
+                        capturedThumbnailData = scaled.resized(to: CGSize(width: 112, height: 112))
+                            .jpegData(compressionQuality: 0.7)
                         showCamera = false
                         Task { await processImage(scaled) }
                     },
@@ -502,13 +522,13 @@ struct ContentView: View {
             .listStyle(.plain)
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
-            // 104pt per row is the upper-bound allocation needed for
-            // a row with a two-line summary + caption + listRowInsets.
-            // The frame is required because List doesn't self-size
-            // inside the outer ScrollView. Per-row parchment keeps
-            // any unused tail invisible — the row's parchment ends
-            // with the row regardless of any frame slack.
-            .frame(height: CGFloat(rows.count) * 104)
+            // ~104pt per row at default text size, scaled with Dynamic
+            // Type via `recentRowHeight` so large accessibility sizes no
+            // longer clip the rows (List can't self-size inside the outer
+            // ScrollView, so the height is fixed per render). Per-row
+            // parchment keeps any unused tail invisible: the row's
+            // parchment ends with the row regardless of frame slack.
+            .frame(height: CGFloat(rows.count) * recentRowHeight)
             // Round the viewport edges so they line up with the
             // first/last rows' rounded corners. With per-row
             // backgrounds carrying the parchment, the clipShape's
@@ -804,10 +824,7 @@ struct ContentView: View {
         result = first
         statusMessage = ""
         isSearching = false
-        let thumb: Data? = capturedImage.flatMap { image -> Data? in
-            image.resized(to: CGSize(width: 112, height: 112))
-                .jpegData(compressionQuality: 0.7)
-        }
+        let thumb: Data? = capturedThumbnailData
         savedLookup = LandmarkLookup.upsert(
             result: first, in: modelContext, rawSignText: trimmed, capturedThumb: thumb
         )
@@ -843,10 +860,7 @@ struct ContentView: View {
         if result?.pageURL == candidate.pageURL {
             result = enriched
         }
-        let thumb: Data? = capturedImage.flatMap { image -> Data? in
-            image.resized(to: CGSize(width: 112, height: 112))
-                .jpegData(compressionQuality: 0.7)
-        }
+        let thumb: Data? = capturedThumbnailData
         let saved = LandmarkLookup.upsert(
             result: enriched, in: modelContext, rawSignText: query, capturedThumb: thumb
         )
@@ -866,6 +880,7 @@ struct ContentView: View {
         candidates = []
         statusMessage = ""
         capturedImage = nil
+        capturedThumbnailData = nil
     }
 
     /// Called when the user taps an alternative in the "Other matches"
@@ -877,10 +892,7 @@ struct ContentView: View {
         result = alt
         statusMessage = ""
         let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let thumb: Data? = capturedImage.flatMap { image -> Data? in
-            image.resized(to: CGSize(width: 112, height: 112))
-                .jpegData(compressionQuality: 0.7)
-        }
+        let thumb: Data? = capturedThumbnailData
         savedLookup = LandmarkLookup.upsert(
             result: alt, in: modelContext, rawSignText: trimmed, capturedThumb: thumb
         )
