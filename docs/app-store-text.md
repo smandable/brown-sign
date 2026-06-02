@@ -48,8 +48,6 @@ Share any landmark's article link with friends, family, or fellow travelers in o
 PRIVACY FIRST
 Everything runs on your device. Camera images stay local. Location is used only to rank nearby results, never tracked or shared. No accounts, no analytics, no ads.
 
-Next time you pass a brown sign, you'll know.
-
 Brown Sign works on any iPhone running iOS 26. Apple Intelligence enhances the experience with smarter text cleanup and polished summaries, but the core pipeline works on every supported device.
 ```
 
