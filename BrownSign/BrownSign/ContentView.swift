@@ -41,6 +41,12 @@ struct ContentView: View {
 
     @State private var isSignTextFocused = false
 
+    /// Per-row height for the non-scrolling "Recent finds" List, which can't
+    /// self-size inside the outer ScrollView. Scales with Dynamic Type, with
+    /// a little headroom so large text sizes don't clip; the per-row
+    /// parchment hides any slack.
+    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 112
+
     /// Per-session dismiss for the "Turn on location" banner. Flips back
     /// to false every cold launch, so a user who taps the X still sees
     /// it next time they open the app — but we don't nag them during
@@ -256,10 +262,11 @@ struct ContentView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color("AccentButton"))
                 .buttonBorderShape(.roundedRectangle(radius: 12))
-                // `.disabled` gives the real disabled trait (VoiceOver
-                // announces it, taps are blocked); the opacity is just the
-                // visual dim on top of it.
-                .disabled(lookUpDisabled)
+                // Dim via opacity, NOT `.disabled`: `.disabled` greys a
+                // bordered-prominent button's fill, which stacked with this
+                // opacity to near-invisible. The action already guards on
+                // `lookUpDisabled`, so taps stay no-ops when there's nothing
+                // to look up.
                 .opacity(lookUpDisabled ? 0.5 : 1)
                 .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
                 .padding(.horizontal)
@@ -456,12 +463,12 @@ struct ContentView: View {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.accentColor)
 
-            // Plain VStack of rows (not a List): it self-sizes to its
-            // content, so the rows never clip at large Dynamic Type sizes,
-            // which a fixed-height List inside the outer ScrollView did.
-            // Delete moves to a long-press context menu (.swipeActions only
-            // works inside a List); the History tab keeps full swipe-to-delete.
-            VStack(spacing: 0) {
+            // A non-scrolling List, so swipe-to-delete works (.swipeActions
+            // only exists on List). List can't self-size inside the outer
+            // ScrollView, so the height is `recentRowHeight` per row, scaled
+            // with Dynamic Type. The per-row parchment makes any slack
+            // invisible, so this errs generous rather than clipping.
+            List {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, lookup in
                     let isFirst = index == 0
                     let isLast = index == rows.count - 1
@@ -481,14 +488,20 @@ struct ContentView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            modelContext.delete(lookup)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                     // Per-row parchment with rounded outer corners only on
                     // the first and last rows, matching the Nearby/History
                     // card look.
-                    .background(
+                    .listRowBackground(
                         UnevenRoundedRectangle(
                             cornerRadii: .init(
                                 topLeading: isFirst ? 12 : 0,
@@ -499,21 +512,14 @@ struct ContentView: View {
                         )
                         .fill(Color("CardBackground"))
                     )
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            modelContext.delete(lookup)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                    if !isLast {
-                        Rectangle()
-                            .fill(Color.secondary.opacity(0.2))
-                            .frame(height: 0.5)
-                            .padding(.leading, 12)
-                    }
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    .listRowSeparatorTint(Color.secondary.opacity(0.2))
                 }
             }
+            .listStyle(.plain)
+            .scrollDisabled(true)
+            .scrollContentBackground(.hidden)
+            .frame(height: CGFloat(rows.count) * recentRowHeight)
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
