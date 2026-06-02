@@ -93,6 +93,24 @@ final class CoordinateParserTests: XCTestCase {
         XCTAssertEqual(result.longitude, -0.1278, accuracy: 0.0001)
     }
 
+    func testDecimalHemisphereRejectsBareIntegers() {
+        // A bare integer + hemisphere with no degree symbol and no decimal
+        // is prose, not a coordinate (e.g. directions "5 N ... 10 W"). The
+        // hemisphere path now requires a decimal point or a degree symbol
+        // per half, so this must NOT parse.
+        XCTAssertNil(parseCoordinatesFromText("take 5 N 10 W to the site"))
+    }
+
+    func testDecimalHemisphereAcceptsIntegerDegreesWithSymbol() {
+        // Integer degrees ARE valid when the degree symbol is present — the
+        // symbol is what distinguishes a coordinate from prose.
+        let result = parseCoordinatesFromText("the marker sits at 12° N 77° E roughly")
+        XCTAssertNotNil(result)
+        guard let result else { return }
+        XCTAssertEqual(result.latitude, 12, accuracy: 0.0001)
+        XCTAssertEqual(result.longitude, 77, accuracy: 0.0001)
+    }
+
     // MARK: - Signed decimal pair
 
     func testParsesSignedDecimalPair() {

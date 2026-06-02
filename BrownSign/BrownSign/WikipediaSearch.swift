@@ -444,15 +444,12 @@ nonisolated private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int
         Array(pageIDs[$0..<min($0 + wikipediaPageDetailsBatchSize, pageIDs.count)])
     }
 
-    var combined = await withTaskGroup(of: [Int: WikiPageDetails].self) { group in
-        for batch in batches {
-            group.addTask { await fetchPageDetailsBatch(pageIDs: batch) }
-        }
-        var acc: [Int: WikiPageDetails] = [:]
-        for await partial in group {
-            acc.merge(partial) { _, new in new }
-        }
-        return acc
+    var combined: [Int: WikiPageDetails] = [:]
+    let partials = await mapBounded(batches, maxConcurrent: wikipediaMaxInFlight) {
+        await fetchPageDetailsBatch(pageIDs: $0)
+    }
+    for partial in partials {
+        combined.merge(partial) { _, new in new }
     }
 
     await applyDetailFallbacks(to: &combined)

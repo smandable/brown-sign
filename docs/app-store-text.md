@@ -66,7 +66,7 @@ roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,tra
 
 ## What's New (Version 1.4.11)
 ```
-A search-radius control on the Nearby tab. Tap plus or minus, on the list or right on the map, to widen or tighten your search from 2 up to 25 miles, and the results refresh around you. Widen the search and the list gives a gentle nudge so the landmarks that just came into range are easy to spot. Nearby is also noticeably more responsive: the heavy searching and photo loading now run off the main thread, so the screen stays smooth while results stream in, and more landmarks show their photo on the list and map thanks to a more reliable thumbnail fetch. When an area holds more landmarks than fit in one pass, a Load more button pulls in the rest.
+A search-radius control on the Nearby tab. Tap plus or minus, on the list or right on the map, to widen or tighten your search from 2 up to 25 miles, and the results refresh around you. Widen the search and the list gives a gentle nudge so the landmarks that just came into range are easy to spot. Nearby is also noticeably more responsive: the heavy searching and photo loading now run off the main thread, so the screen stays smooth while results stream in, and more landmarks show their photo on the list and map thanks to a more reliable thumbnail fetch. When an area holds more landmarks than fit in one pass, a Load more button pulls in the rest. This update also adds reliability polish: if camera access is off you get a clear prompt to turn it back on instead of a blank screen, nearby loading holds up better on flaky connections, and the Scan screen stays tidy at the largest text sizes.
 ```
 
 ### Previous versions

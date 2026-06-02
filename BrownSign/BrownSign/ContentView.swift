@@ -39,13 +39,6 @@ struct ContentView: View {
     /// Prevents re-decoding the JPEG on every view re-render.
     @State private var resultArticleImage: UIImage?
 
-    /// Per-row height for the "Recent finds" list. Scales with Dynamic
-    /// Type so the fixed-height List (which can't self-size inside the
-    /// outer ScrollView) grows with the user's text size instead of
-    /// clipping rows. Over-allocation is harmless: each row carries its
-    /// own parchment background, so any unused tail stays transparent.
-    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 104
-
     @State private var isSignTextFocused = false
 
     /// Per-session dismiss for the "Turn on location" banner. Flips back
@@ -463,12 +456,12 @@ struct ContentView: View {
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.accentColor)
 
-            // Embedding a List inside the outer ScrollView so we get the
-            // native iOS swipe-to-delete gesture — .swipeActions only
-            // works on List. scrollDisabled passes the scroll through to
-            // the parent; the fixed frame height is needed because List
-            // doesn't self-size inside a ScrollView.
-            List {
+            // Plain VStack of rows (not a List): it self-sizes to its
+            // content, so the rows never clip at large Dynamic Type sizes,
+            // which a fixed-height List inside the outer ScrollView did.
+            // Delete moves to a long-press context menu (.swipeActions only
+            // works inside a List); the History tab keeps full swipe-to-delete.
+            VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, lookup in
                     let isFirst = index == 0
                     let isLast = index == rows.count - 1
@@ -488,23 +481,14 @@ struct ContentView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            modelContext.delete(lookup)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                    // Per-row parchment with rounded outer corners
-                    // only on the first and last rows — same pattern
-                    // Nearby/History use, so the parchment ends
-                    // exactly with the last row instead of leaving
-                    // dead space below it (the fixed-frame approach
-                    // over-allocated by ~12pt per row).
-                    .listRowBackground(
+                    // Per-row parchment with rounded outer corners only on
+                    // the first and last rows, matching the Nearby/History
+                    // card look.
+                    .background(
                         UnevenRoundedRectangle(
                             cornerRadii: .init(
                                 topLeading: isFirst ? 12 : 0,
@@ -515,24 +499,21 @@ struct ContentView: View {
                         )
                         .fill(Color("CardBackground"))
                     )
-                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
-                    .listRowSeparatorTint(Color.secondary.opacity(0.2))
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            modelContext.delete(lookup)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    if !isLast {
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.2))
+                            .frame(height: 0.5)
+                            .padding(.leading, 12)
+                    }
                 }
             }
-            .listStyle(.plain)
-            .scrollDisabled(true)
-            .scrollContentBackground(.hidden)
-            // ~104pt per row at default text size, scaled with Dynamic
-            // Type via `recentRowHeight` so large accessibility sizes no
-            // longer clip the rows (List can't self-size inside the outer
-            // ScrollView, so the height is fixed per render). Per-row
-            // parchment keeps any unused tail invisible: the row's
-            // parchment ends with the row regardless of frame slack.
-            .frame(height: CGFloat(rows.count) * recentRowHeight)
-            // Round the viewport edges so they line up with the
-            // first/last rows' rounded corners. With per-row
-            // backgrounds carrying the parchment, the clipShape's
-            // empty-tail corners fall over invisible space.
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .frame(maxWidth: .infinity, alignment: .leading)

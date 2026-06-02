@@ -128,6 +128,10 @@ struct NearMeView: View {
     /// position. Also cancelled by `startRefresh` so a primary refresh
     /// can't be raced by a stale pan-merge.
     @State private var panTask: Task<Void, Never>?
+    /// Latest in-flight "load more" page fetch. Cancelled on tab-switch
+    /// (`.onDisappear`) and superseded by a primary refresh, like the other
+    /// two — its `Task.isCancelled` checks then bail cleanly.
+    @State private var loadMoreTask: Task<Void, Never>?
     @State private var pushedLookup: LandmarkLookup?
     @State private var displayMode: LandmarkDisplayMode = .list
     /// Incremented by `refresh(force: true)` to tell the map view to
@@ -495,6 +499,7 @@ struct NearMeView: View {
             // retained in-memory pins stay visible.
             refreshTask?.cancel()
             panTask?.cancel()
+            loadMoreTask?.cancel()
         }
     }
 
@@ -520,6 +525,7 @@ struct NearMeView: View {
     private func startRefresh(force: Bool, recenter: Bool = true, reuseLocation: Bool = false) -> Task<Void, Never> {
         refreshTask?.cancel()
         panTask?.cancel()
+        loadMoreTask?.cancel()
         let task = Task {
             await refresh(force: force, recenter: recenter, reuseLocation: reuseLocation)
         }
@@ -1265,7 +1271,7 @@ struct NearMeView: View {
     private func loadMore() {
         guard !isLoadingMore, hasMore, let user = userLocation else { return }
         isLoadingMore = true
-        Task {
+        loadMoreTask = Task {
             defer { isLoadingMore = false }
             let stream = discoverLandmarksAt(
                 center: user.coordinate,
