@@ -100,16 +100,16 @@ struct NearMeView: View {
     /// anchor to what's on screen once the user has panned away from their
     /// GPS, instead of snapping home. nil until the map first reports a center.
     @State private var mapCenter: CLLocationCoordinate2D?
-    /// When set, the Nearby list scrolls this row to the top: a one-row "more
-    /// appeared below" nudge after a radius increase loads new rows. Reset to
-    /// nil once consumed. List can't scroll by raw offset, so this drives a
-    /// `ScrollViewReader.scrollTo` at the list's call site.
-    @State private var scrollNudgeTargetID: URL?
-    /// Indices of the Nearby list rows currently rendered (tracked via each
-    /// row's onAppear/onDisappear). The radius-increase nudge advances one row
-    /// past the topmost rendered row, so it's a one-row scroll relative to the
-    /// user's current position rather than a jump to the top.
-    @State private var visibleRowIndices: Set<Int> = []
+    /// The `UIScrollView` backing the Nearby `List`, resolved via a small
+    /// introspection finder. A radius increase nudges the content DOWN by half
+    /// a row as a "more appeared below" cue — a precise sub-row offset that
+    /// `List` + `ScrollViewReader.scrollTo` (row-granular) can't express, so we
+    /// set `contentOffset` directly. nil until the list first lays out.
+    @State private var listScrollView: UIScrollView?
+    /// Measured height of a Nearby list row (the first one), so the nudge moves
+    /// exactly half a row regardless of the dynamic-type size that drives row
+    /// height. Includes the row's vertical insets.
+    @State private var measuredRowHeight: CGFloat = 0
     /// Latest in-flight refresh task. Tracked so a second refresh
     /// (rapid toolbar-tap, pull-then-tap) cancels the first instead
     /// of racing with it. Without this, two `AsyncStream` consumers
@@ -253,27 +253,39 @@ struct NearMeView: View {
             let task = startRefresh(force: false, recenter: true, reuseLocation: true)
             // List + widening: the wider-radius rows append below the fold, so
             // from the top it looks unchanged. Once the fetch commits more
-            // rows, nudge the list (scroll its 2nd row to the top, ~one row) to
-            // cue that more appeared. (Map mode recenters instead; a narrowing
-            // refetch adds no rows.)
+            // rows, nudge the content DOWN by half a row as a "more appeared
+            // below" cue. Half a row (not a full one) reads as a gentle hint,
+            // and because the new rows append below, the same downward nudge
+            // works whether the user was at the top (0 → half-row) or at the
+            // bottom (the old max-scroll now has rows below to advance into).
+            // (Map mode recenters instead; a narrowing refetch adds no rows.)
             if displayMode == .list, !decreasing, case .loaded(let before) = state {
                 let beforeCount = before.count
                 Task {
                     await task.value
-                    // One-row nudge relative to where the user is. At the
-                    // bottom the list is already at max scroll (can't go down,
-                    // and scrolling a near-bottom row to .top just clamps), so
-                    // nudge UP one row; otherwise nudge DOWN one to reveal more.
-                    // Never a jump to the top.
+                    // Let the widened set commit and lay out so the new rows
+                    // exist below the fold (and contentSize has grown) before we
+                    // scroll toward them.
+                    try? await Task.sleep(for: .milliseconds(150))
                     guard displayMode == .list,
                           case .loaded(let after) = state,
-                          after.count > beforeCount, after.count > 1 else { return }
-                    let top = visibleRowIndices.min() ?? 0
-                    let bottom = visibleRowIndices.max() ?? 0
-                    let target = bottom >= after.count - 1
-                        ? max(top - 1, 0)
-                        : min(top + 1, after.count - 1)
-                    scrollNudgeTargetID = after[target].pageURL
+                          after.count > beforeCount,
+                          let scrollView = listScrollView else { return }
+                    // Read the live offset (List keeps it put when rows append
+                    // below) and advance half a row, clamped so it never
+                    // overscrolls past the content's end.
+                    let halfRow = (measuredRowHeight > 0 ? measuredRowHeight : 84) / 2
+                    let maxOffsetY = max(
+                        scrollView.contentSize.height
+                            + scrollView.adjustedContentInset.bottom
+                            - scrollView.bounds.height,
+                        -scrollView.adjustedContentInset.top
+                    )
+                    let targetY = min(scrollView.contentOffset.y + halfRow, maxOffsetY)
+                    scrollView.setContentOffset(
+                        CGPoint(x: scrollView.contentOffset.x, y: targetY),
+                        animated: true
+                    )
                 }
             }
         }
@@ -409,19 +421,7 @@ struct NearMeView: View {
                                     description: Text("No nearby landmarks match \"\(trimmedSearch)\".")
                                 )
                             } else {
-                                ScrollViewReader { proxy in
-                                    list(visible)
-                                        // A radius increase sets
-                                        // scrollNudgeTargetID; scroll that row
-                                        // to the top as a "more appeared below"
-                                        // cue (List has no offset scroll, so
-                                        // ScrollViewReader is the reliable path).
-                                        .onChange(of: scrollNudgeTargetID) { _, target in
-                                            guard let target else { return }
-                                            withAnimation { proxy.scrollTo(target, anchor: .top) }
-                                            scrollNudgeTargetID = nil
-                                        }
-                                }
+                                list(visible)
                             }
                         case .map:
                             NearbyMapView(
@@ -714,11 +714,20 @@ struct NearMeView: View {
                         }
                         .tint(.orange)
                     }
-                    // Track which rows are on screen so the radius-increase
-                    // nudge can advance one row relative to the user's current
-                    // position (see changeRadius).
-                    .onAppear { visibleRowIndices.insert(index) }
-                    .onDisappear { visibleRowIndices.remove(index) }
+                    // Measure the first row (content + the 12pt vertical insets)
+                    // so the radius nudge can advance exactly half a row at the
+                    // current dynamic-type size.
+                    .background {
+                        if isFirst {
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .onAppear { measuredRowHeight = proxy.size.height + 12 }
+                                    .onChange(of: proxy.size.height) { _, h in
+                                        measuredRowHeight = h + 12
+                                    }
+                            }
+                        }
+                    }
                 }
 
                 if !hiddenLandmarks.isEmpty {
@@ -818,6 +827,13 @@ struct NearMeView: View {
             // the parchment so it ends exactly at the last visible
             // row.
             .scrollContentBackground(.hidden)
+            // Resolve the List's backing UIScrollView so a radius increase can
+            // nudge the content by an exact half-row offset (see changeRadius).
+            .background(
+                ListScrollViewFinder { scrollView in
+                    if listScrollView !== scrollView { listScrollView = scrollView }
+                }
+            )
             // Round the viewport edges so the top corners stay
             // rounded as the first row scrolls out of view. Without
             // this clip, the per-row rounded corners leave the
@@ -1413,6 +1429,69 @@ private struct NearbyRow: View {
         guard let user else { return 0 }
         let other = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
         return user.distance(from: other)
+    }
+}
+
+// MARK: - Scroll-view finder
+
+/// Resolves the `UIScrollView` backing the Nearby `List` so a radius increase
+/// can nudge the content by an exact pixel offset (half a row) — a sub-row
+/// scroll that `List` + `ScrollViewReader.scrollTo` (row-granular) can't
+/// express. Placed as a `.background` on the List; it walks up from its marker
+/// view and searches each ancestor's subtree for the first scroll view. On a
+/// fixed iOS target the collection-view hierarchy is stable enough for this.
+/// If it ever fails to resolve, the nudge simply no-ops — the list is otherwise
+/// untouched, so scrolling and swipe-to-hide stay fully native.
+private struct ListScrollViewFinder: UIViewRepresentable {
+    let onResolve: (UIScrollView) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var resolved = false
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let marker = UIView(frame: .zero)
+        marker.isUserInteractionEnabled = false
+        attemptResolve(from: marker, context: context)
+        return marker
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        attemptResolve(from: uiView, context: context)
+    }
+
+    private func attemptResolve(from marker: UIView, context: Context) {
+        guard !context.coordinator.resolved else { return }
+        DispatchQueue.main.async {
+            guard !context.coordinator.resolved,
+                  let scrollView = marker.enclosingScrollView() else { return }
+            context.coordinator.resolved = true
+            onResolve(scrollView)
+        }
+    }
+}
+
+private extension UIView {
+    /// Walk up to each ancestor and search its subtree for the first
+    /// `UIScrollView` (the List's backing collection view).
+    func enclosingScrollView() -> UIScrollView? {
+        var ancestor: UIView? = self
+        while let current = ancestor {
+            if let scrollView = current as? UIScrollView { return scrollView }
+            if let scrollView = current.firstScrollViewInSubtree() { return scrollView }
+            ancestor = current.superview
+        }
+        return nil
+    }
+
+    func firstScrollViewInSubtree() -> UIScrollView? {
+        for subview in subviews {
+            if let scrollView = subview as? UIScrollView { return scrollView }
+            if let nested = subview.firstScrollViewInSubtree() { return nested }
+        }
+        return nil
     }
 }
 
