@@ -785,25 +785,31 @@ struct NearMeView: View {
                     Button {
                         loadMore()
                     } label: {
-                        Group {
-                            if isLoadingMore {
-                                HStack(spacing: 8) {
-                                    ProgressView().tint(.white)
-                                    Text("Loading…")
+                        // Keep the "Load more" label always in the layout and
+                        // fade it under the spinner instead of swapping the
+                        // whole label in and out (the structural if/else swap
+                        // flashed on the text change). The label also updates
+                        // its count while hidden, so it reappears already
+                        // showing the new total rather than animating it.
+                        Label("Load more (\(results.count) shown)", systemImage: "arrow.down.circle")
+                            .opacity(isLoadingMore ? 0 : 1)
+                            .overlay {
+                                if isLoadingMore {
+                                    HStack(spacing: 8) {
+                                        ProgressView().tint(.white)
+                                        Text("Loading…")
+                                    }
                                 }
-                            } else {
-                                Label("Load more (\(results.count) shown)", systemImage: "arrow.down.circle")
                             }
-                        }
-                        .fontWeight(.regular)
-                        // Force both text and icon white (don't rely on the
-                        // button style tinting the SF Symbol).
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 28)
-                        // Swap "Load more" ↔ "Loading…" instantly instead of
-                        // cross-fading, which briefly overlaps the two
-                        // centered labels.
-                        .animation(nil, value: isLoadingMore)
+                            .fontWeight(.regular)
+                            // Force both text and icon white (don't rely on
+                            // the button style tinting the SF Symbol).
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 28)
+                            // Swap instantly, no cross-fade, on the loading
+                            // toggle or the count update.
+                            .animation(nil, value: isLoadingMore)
+                            .animation(nil, value: results.count)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color("BrandBrown"))
