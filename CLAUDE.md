@@ -25,3 +25,31 @@ leave a "docs catch-up" follow-up commit behind.
 Equally, never bump the version without writing the user-facing copy:
 if there's nothing worth telling users about, the version probably
 shouldn't be bumping.
+
+## Which version digit to bump
+
+The version is `major.minor.patch` and Apple does not enforce it, so the
+digits are purely the signal sent to users. Use:
+
+- **Patch** (`1.4.13`, `1.4.14`, …) — bug fixes, reliability, small
+  tweaks, copy. (1.4.12 was correctly a patch: "reliability and polish.")
+- **Minor** (`1.5.0`) — a new user-facing feature or capability, the kind
+  of thing the "What's New" opens with as "New: …": a new thing the app
+  *does* (offline / saved regions, sharing or collections of finds, a new
+  discovery mode, route planning, widgets, an AR viewfinder), not a better
+  version of something that already exists.
+- **Major** (`2.0`) — a redesign, a paid tier, or a milestone worth
+  marketing as a relaunch.
+
+Two practical notes, both learned the hard way:
+
+- Any `MARKETING_VERSION` increase is a **new-version** submission in App
+  Store Connect (the create-new-version flow), whether it is `1.4.13` or
+  `1.5.0` — the digit choice costs nothing technically, it only changes
+  the story told to users.
+- A marketing version that is live or approved ("Ready for Distribution")
+  is a **closed train**: you cannot attach another build to it (ASC
+  errors 90186 / 90062). The next build then needs a fresh
+  `MARKETING_VERSION`. The build number (`CURRENT_PROJECT_VERSION`) may
+  carry across that bump (1.4.8 → 1.4.9 kept build 24; 1.4.11 → 1.4.12
+  kept build 29).
