@@ -205,16 +205,20 @@ func searchLandmarkCandidates(
 /// transient HTTP failure, retry exhaustion, or task cancellation —
 /// so the consumer can surface a retryable "service unavailable"
 /// state rather than mistaking the failure for an empty area.
-enum NearbyStreamYield {
-    case batch([LandmarkResult])
+nonisolated enum NearbyStreamYield {
+    /// A hydrated batch of results. `hasMore` is true when the SPARQL
+    /// fetch came back a full page (== `sparqlResultLimit`), i.e. the
+    /// radius holds more than this page — drives the "load more" footer.
+    case batch([LandmarkResult], hasMore: Bool)
     case sparqlFailed
 }
 
-func discoverLandmarksAt(
+nonisolated func discoverLandmarksAt(
     center: CLLocationCoordinate2D,
     radiusMeters: Int = 8_047,
     limit: Int = 100,
-    fastFirstBatch: Int = 30
+    fastFirstBatch: Int = 30,
+    offset: Int = 0
 ) -> AsyncStream<NearbyStreamYield> {
     AsyncStream { continuation in
         let task = Task {
@@ -222,7 +226,8 @@ func discoverLandmarksAt(
             let maybeHits = await discoverLandmarksViaSPARQL(
                 centerLat: center.latitude,
                 centerLon: center.longitude,
-                radiusKm: radiusKm
+                radiusKm: radiusKm,
+                offset: offset
             )
 
             guard let hits = maybeHits else {
@@ -240,6 +245,11 @@ func discoverLandmarksAt(
                 continuation.finish()
                 return
             }
+
+            // A full page (count == the SPARQL limit) means the radius
+            // holds more than we fetched — surfaced so the UI can offer
+            // "load more" (next page via OFFSET).
+            let hasMore = hits.count >= sparqlResultLimit
 
             if Task.isCancelled {
                 continuation.finish()
@@ -275,7 +285,7 @@ func discoverLandmarksAt(
                 continuation.finish()
                 return
             }
-            continuation.yield(.batch(fastBatch.results))
+            continuation.yield(.batch(fastBatch.results, hasMore: hasMore))
 
             if !restHits.isEmpty {
                 let restBatch = await hydrateAndGateBatch(
@@ -286,7 +296,7 @@ func discoverLandmarksAt(
                     continuation.finish()
                     return
                 }
-                continuation.yield(.batch(fastBatch.results + restBatch.results))
+                continuation.yield(.batch(fastBatch.results + restBatch.results, hasMore: hasMore))
             }
 
             continuation.finish()
@@ -305,7 +315,7 @@ func discoverLandmarksAt(
 /// titles that have been emitted, so the next batch can dedup against
 /// this one (Wikipedia redirects can route two different SPARQL hits
 /// to the same canonical title).
-private func hydrateAndGateBatch(
+nonisolated private func hydrateAndGateBatch(
     _ hits: [WikidataLandmarkHit],
     seenTitles: Set<String>
 ) async -> (results: [LandmarkResult], seenTitles: Set<String>) {
@@ -353,7 +363,7 @@ private func hydrateAndGateBatch(
 /// to keep — better to show a few extras than a blank list when
 /// offline. Strict gate requires P576 (closure date); lenient also
 /// accepts P1435 (heritage designation).
-private func computeGateDrops(
+nonisolated private func computeGateDrops(
     topHits: [WikidataLandmarkHit],
     gates: [(Int, InstitutionGate)]
 ) async -> Set<Int> {
@@ -616,7 +626,7 @@ private func titleContainsPlaceWord(_ title: String) -> Bool {
 /// "school") so generic historic schoolhouse titles like "Burrows Hill
 /// School" never trigger the gate. Matching is a substring check on
 /// the lowercased title.
-private let strictOperatingInstitutionPatterns: [String] = [
+nonisolated private let strictOperatingInstitutionPatterns: [String] = [
     "high school", "middle school", "elementary school", "primary school",
     "junior high", "secondary school", "preparatory school", "technical school",
     "hospital", "medical center", "medical centre",
@@ -629,7 +639,7 @@ private let strictOperatingInstitutionPatterns: [String] = [
     " station"
 ]
 
-private let lenientOperatingInstitutionPatterns: [String] = [
+nonisolated private let lenientOperatingInstitutionPatterns: [String] = [
     " church"
 ]
 
@@ -637,11 +647,11 @@ private let lenientOperatingInstitutionPatterns: [String] = [
 /// historic on its face, so we can skip the Wikidata fetch entirely.
 /// Trailing spaces on "old " and "former " avoid compound-word matches
 /// like "golden" or "informer".
-private let historicInstitutionQualifiers: [String] = [
+nonisolated private let historicInstitutionQualifiers: [String] = [
     "historic", "historical", "former ", "old ", "abandoned"
 ]
 
-private enum InstitutionGate {
+nonisolated private enum InstitutionGate {
     /// P576 required — heritage designation alone is not enough.
     case strict
     /// P576 or P1435 acceptable — a recognized landmark church or
@@ -652,7 +662,7 @@ private enum InstitutionGate {
 /// Returns the gate to apply to a title, or nil if the title isn't
 /// flagged as an operating-institution pattern (or already advertises
 /// itself as historic via a qualifier like "Old" / "Former").
-private func institutionGateFor(_ title: String) -> InstitutionGate? {
+nonisolated private func institutionGateFor(_ title: String) -> InstitutionGate? {
     let lower = title.lowercased()
     if historicInstitutionQualifiers.contains(where: { lower.contains($0) }) {
         return nil
@@ -669,7 +679,7 @@ private func institutionGateFor(_ title: String) -> InstitutionGate? {
 /// True if Wikidata signals satisfy the gate. For strict, only P576
 /// (closure date) keeps the candidate. For lenient, P1435 (heritage
 /// designation) also keeps it.
-private func institutionPassesGate(
+nonisolated private func institutionPassesGate(
     _ signals: WikidataHistoricSignals,
     gate: InstitutionGate
 ) -> Bool {

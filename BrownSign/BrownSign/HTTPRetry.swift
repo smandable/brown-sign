@@ -16,7 +16,7 @@ import Foundation
 /// transient backend failures; 429 (rate-limited) gets the same
 /// backoff — strictly we'd honor Retry-After, but our request
 /// volume is low enough that the fixed ladder is fine.
-func isTransientHTTPStatus(_ code: Int) -> Bool {
+nonisolated func isTransientHTTPStatus(_ code: Int) -> Bool {
     return code == 429 || code == 502 || code == 503 || code == 504
 }
 
@@ -32,7 +32,7 @@ func isTransientHTTPStatus(_ code: Int) -> Bool {
 /// `maxAttempts = 3` the cadence is: try → wait 500 ms → try →
 /// wait 1.5 s → try. Worst case for a transient hiccup is ~2 s
 /// before the third attempt succeeds.
-func httpDataWithRetry(
+nonisolated func httpDataWithRetry(
     _ request: URLRequest,
     maxAttempts: Int = 3,
     delays: [UInt64] = [500_000_000, 1_500_000_000]

@@ -28,7 +28,7 @@ struct WikidataEnrichment {
 /// (e.g. "Staples High School"). Same claims payload as
 /// `fetchWikidataEnrichment` but skips the second request for the P31
 /// type label — the filter doesn't need it.
-struct WikidataHistoricSignals {
+nonisolated struct WikidataHistoricSignals {
     let hasHeritageDesignation: Bool
     let dissolvedYear: Int?
     let inceptionYear: Int?
@@ -75,7 +75,7 @@ func fetchWikidataEnrichment(for wikipediaTitle: String) async -> WikidataEnrich
 /// to know whether the entity is officially historic, not what type it
 /// is. Returns nil if the entity doesn't exist or the fetch fails; the
 /// caller should treat nil as "keep" to avoid punishing offline users.
-func fetchWikidataHistoricSignals(for wikipediaTitle: String) async -> WikidataHistoricSignals? {
+nonisolated func fetchWikidataHistoricSignals(for wikipediaTitle: String) async -> WikidataHistoricSignals? {
     guard let claims = await fetchWikidataClaimsByWikipediaTitle(wikipediaTitle) else {
         return nil
     }
@@ -88,7 +88,7 @@ func fetchWikidataHistoricSignals(for wikipediaTitle: String) async -> WikidataH
 
 // MARK: - Step 1: fetch claims by exact Wikipedia title (sitelink lookup)
 
-private func fetchWikidataClaimsByWikipediaTitle(_ title: String) async -> [String: Any]? {
+nonisolated private func fetchWikidataClaimsByWikipediaTitle(_ title: String) async -> [String: Any]? {
     guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
           let url = URL(string: "https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=\(encoded)&format=json&props=claims&normalize=1") else {
         return nil
@@ -132,7 +132,7 @@ private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
 /// (`claims.<property>[0].mainsnak.datavalue.value.time`, e.g.
 /// "+1934-07-01T00:00:00Z"). Shared by the inception (P571) and
 /// dissolved (P576) parsers since both claims have the same shape.
-private func parseClaimYear(from claims: [String: Any], property: String) -> Int? {
+nonisolated private func parseClaimYear(from claims: [String: Any], property: String) -> Int? {
     guard let list = claims[property] as? [[String: Any]],
           let first = list.first,
           let mainsnak = first["mainsnak"] as? [String: Any],
@@ -148,7 +148,7 @@ private func parseClaimYear(from claims: [String: Any], property: String) -> Int
 }
 
 /// P571 (inception). See `parseClaimYear`.
-private func parseInceptionYear(from claims: [String: Any]) -> Int? {
+nonisolated private func parseInceptionYear(from claims: [String: Any]) -> Int? {
     parseClaimYear(from: claims, property: "P571")
 }
 
@@ -169,7 +169,7 @@ private func parseInstanceOfQID(from claims: [String: Any]) -> String? {
 /// We don't care which designation — NRHP, state register, local
 /// landmark, "national monument" — they all mean the place is
 /// officially historic, which is exactly the Nearby filter's bar.
-private func parseHasHeritageDesignation(from claims: [String: Any]) -> Bool {
+nonisolated private func parseHasHeritageDesignation(from claims: [String: Any]) -> Bool {
     guard let list = claims["P1435"] as? [[String: Any]] else { return false }
     return !list.isEmpty
 }
@@ -178,7 +178,7 @@ private func parseHasHeritageDesignation(from claims: [String: Any]) -> Bool {
 /// inception year. For an institution like a school, having one means
 /// it's no longer operating, so it's safe to surface as a historic
 /// landmark. See `parseClaimYear`.
-private func parseDissolvedYear(from claims: [String: Any]) -> Int? {
+nonisolated private func parseDissolvedYear(from claims: [String: Any]) -> Int? {
     parseClaimYear(from: claims, property: "P576")
 }
 

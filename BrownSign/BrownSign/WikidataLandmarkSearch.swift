@@ -25,7 +25,7 @@
 import Foundation
 import CoreLocation
 
-struct WikidataLandmarkHit {
+nonisolated struct WikidataLandmarkHit {
     let qid: String
     /// Wikipedia article title, decoded from the Wikidata sitelink URL
     /// path — percent-decoded, underscores replaced with spaces.
@@ -39,7 +39,7 @@ struct WikidataLandmarkHit {
 /// theatre building) come along for free. Items covered by P1435
 /// don't need to be enumerated here — they pass via the heritage
 /// branch of the UNION.
-private let landmarkP31QIDs: [String] = [
+nonisolated private let landmarkP31QIDs: [String] = [
     "Q33506",      // museum
     "Q22698",      // park
     "Q4989906",    // monument
@@ -72,15 +72,16 @@ private let landmarkP31QIDs: [String] = [
     "Q5113893"     // university campus building (Harkness Tower, Yale Bowl)
 ]
 
-/// Oversized result limit. Bumped above the on-screen cap so dense
-/// areas (New Haven returns ~125 hits in testing) don't get clipped
-/// before client-side distance ordering. Caller still truncates to
-/// the display cap.
-private let sparqlResultLimit = 300
+/// SPARQL page size. Each fetch returns up to this many hits, closest
+/// first (server-side `ORDER BY ?dist`); the Nearby "load more" footer
+/// pages through with `OFFSET` when a fetch comes back full (count ==
+/// this), which means the radius holds more than one page. Non-private so
+/// the stream wrapper (`discoverLandmarksAt`) can detect a full page.
+nonisolated let sparqlResultLimit = 300
 
 /// WDQS recommends a descriptive User-Agent. Without one, queries can
 /// be aggressively rate-limited.
-private let wdqsUserAgent = "BrownSign-iOS/1.2 (https://github.com/seanmandable/brown-sign)"
+nonisolated private let wdqsUserAgent = "BrownSign-iOS/1.2 (https://github.com/seanmandable/brown-sign)"
 
 /// Fetches landmark candidates within `radiusKm` of (`lat`, `lon`)
 /// from the Wikidata Query Service. Returns hits with QID, Wikipedia
@@ -100,18 +101,27 @@ private let wdqsUserAgent = "BrownSign-iOS/1.2 (https://github.com/seanmandable/
 /// unavailable" state rather than an indistinguishable
 /// "No landmarks nearby" — the latter would be wrong (and
 /// historically caused intermittent false-empty reports).
-func discoverLandmarksViaSPARQL(
+nonisolated func discoverLandmarksViaSPARQL(
     centerLat: Double,
     centerLon: Double,
-    radiusKm: Double
+    radiusKm: Double,
+    offset: Int = 0
 ) async -> [WikidataLandmarkHit]? {
     let valuesBlock = landmarkP31QIDs.map { "wd:\($0)" }.joined(separator: " ")
+    // `wikibase:distance ?dist` binds each hit's distance from center (km),
+    // so `ORDER BY ?dist` returns the CLOSEST results first. Without it the
+    // `LIMIT` cut was arbitrary: in a dense area (or at a large radius) the
+    // service could return any `sparqlResultLimit` matches, so the
+    // client-side "closest 100" was 100-closest-of-an-arbitrary-subset, not
+    // the true closest. Ordering server-side guarantees the limit drops only
+    // the FARTHEST items — correct at any radius the radius control allows.
     let query = """
-    SELECT DISTINCT ?item ?article ?coord WHERE {
+    SELECT DISTINCT ?item ?article ?coord ?dist WHERE {
       SERVICE wikibase:around {
         ?item wdt:P625 ?coord .
         bd:serviceParam wikibase:center "Point(\(centerLon) \(centerLat))"^^geo:wktLiteral .
         bd:serviceParam wikibase:radius "\(radiusKm)" .
+        bd:serviceParam wikibase:distance ?dist .
       }
       {
         ?item wdt:P1435 [] .
@@ -122,7 +132,9 @@ func discoverLandmarksViaSPARQL(
       ?article schema:about ?item ;
                schema:isPartOf <https://en.wikipedia.org/> .
     }
+    ORDER BY ?dist
     LIMIT \(sparqlResultLimit)
+    OFFSET \(offset)
     """
 
     guard let encoded = query.addingPercentEncoding(
@@ -135,13 +147,13 @@ func discoverLandmarksViaSPARQL(
     var request = URLRequest(url: url)
     request.setValue(wdqsUserAgent, forHTTPHeaderField: "User-Agent")
     request.setValue("application/sparql-results+json", forHTTPHeaderField: "Accept")
-    // 12 s per attempt. WDQS normally answers in <2 s for this kind
-    // of geo-spatial query, but the radius branch occasionally blows
-    // past 8 s under load — the previous 8 s ceiling was firing as a
-    // false-empty for users (saw "No landmarks nearby" when the
-    // endpoint just hadn't returned yet). 12 s covers the long tail
-    // without compounding into a 30 s+ wait.
-    request.timeoutInterval = 12
+    // Per-attempt timeout. WDQS answers a 5-mile query in <2 s, but a
+    // wide-radius query (e.g. 25 miles in a dense area) has to materialise
+    // + distance-sort a much larger result set server-side and runs ~10 s,
+    // so the wide end needs more headroom before the timeout trips a false
+    // failure — the fixed 12 s was firing right at that ~10 s runtime. Keep
+    // the common small-radius case at 12 s so it still fails fast.
+    request.timeoutInterval = radiusKm > 20 ? 20 : 12
 
     // 3 attempts. Worst-case wait is `12 + 0.5 + 12 + 1.5 + 12 = 38 s`,
     // but the modal case is one of the early attempts succeeding —
@@ -156,7 +168,7 @@ func discoverLandmarksViaSPARQL(
 /// `[WikidataLandmarkHit]`. Returns [] on malformed JSON or missing
 /// fields — matches the function's "graceful empty on any error"
 /// contract.
-private func parseSPARQLBindings(_ data: Data) -> [WikidataLandmarkHit] {
+nonisolated private func parseSPARQLBindings(_ data: Data) -> [WikidataLandmarkHit] {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let results = root["results"] as? [String: Any],
           let bindings = results["bindings"] as? [[String: Any]] else {
@@ -192,7 +204,7 @@ private func parseSPARQLBindings(_ data: Data) -> [WikidataLandmarkHit] {
 
 /// Parses a WKT `Point(lon lat)` literal as Wikidata returns from
 /// P625. Lon comes first in WKT.
-private func parseSPARQLPoint(_ value: String) -> Coordinate? {
+nonisolated private func parseSPARQLPoint(_ value: String) -> Coordinate? {
     guard value.hasPrefix("Point("), value.hasSuffix(")") else { return nil }
     let inner = value.dropFirst("Point(".count).dropLast(")".count)
     let parts = inner.split(separator: " ")

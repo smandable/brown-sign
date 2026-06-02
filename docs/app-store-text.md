@@ -22,7 +22,7 @@ SNAP OR TYPE
 Point your camera at a brown highway sign, or just type the name. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
 
 NEARBY DISCOVERY
-Open the Nearby tab to see landmarks within 5 miles of you. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
+Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
 
 SMART SEARCH
 Brown Sign searches Wikipedia, the National Park Service, and Wikidata to find the right match. It uses Apple Intelligence to clean up messy camera text and polish summaries into quick, readable cards.
@@ -64,14 +64,16 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.4.10)
+## What's New (Version 1.4.11)
 ```
-Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock, so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer. No more wondering whether it's stuck. The History tab's Map view now works before your first lookup. Switch to Map on an empty History to see a map of where you are.
+A search-radius control on the Nearby tab. Tap plus or minus, on the list or right on the map, to widen or tighten your search from 2 up to 25 miles, and the results refresh around you. Nearby is also noticeably more responsive: the heavy searching and photo loading now run off the main thread, so the screen stays smooth while results stream in, and more landmarks show their photo on the list and map thanks to a more reliable thumbnail fetch. When an area holds more landmarks than fit in one pass, a Load more button pulls in the rest.
 ```
 
 ### Previous versions
 
 ```
+Version 1.4.10: Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock, so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer. No more wondering whether it's stuck. The History tab's Map view now works before your first lookup. Switch to Map on an empty History to see a map of where you are.
+
 Version 1.4.9 — Reliability improvements. Brown Sign now reads your location more dependably right after launch so your first search and the Nearby tab get it sooner, and landmark lookups now retry automatically through brief Wikipedia or Wikidata hiccups instead of coming back empty on a passing network blip.
 
 Version 1.4.8 — More Nearby landmarks now show a photo in the list and on map pins. Some Wikipedia articles host their lead image on a slightly different endpoint, and a brief network hiccup during the initial Nearby fetch could leave those photos blank. Brown Sign now retries the photo lookup when Wikipedia is slow, and runs the full image-fallback chain when you tap a landmark — so missing thumbnails fill in instead of staying blank.

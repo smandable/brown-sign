@@ -54,23 +54,39 @@ struct NearMeView: View {
         }
     }
 
-    /// 5-mile search radius (8047 m via 5 × 1609.344). Passed to
-    /// the SPARQL fetch as 8.047 km — Wikidata's `wikibase:around`
-    /// has no hard cap like Wikipedia's geosearch did.
-    private static let searchRadiusMeters = 8_047
-    /// How many landmarks to hydrate + render per fetch. The SPARQL
-    /// query returns up to 300 hits in dense areas; we sort by
-    /// distance and truncate to this cap before hydrating.
-    private static let fetchLimit = 100
-    /// Minimum distance the map center must move before we fire a new
-    /// pan-centered geosearch — half the search radius (~2.5 miles).
-    /// Below this, the existing 5-mile fetch already covers where the
-    /// user is looking.
-    private static let panRefetchThresholdMeters: CLLocationDistance = 4_023
+    /// Search-radius options (miles), stepped by the map zoom control and
+    /// the list-header stepper. 2 mi is the default (cleanest, least
+    /// cluttered first view); 5/10/25 widen out for sparser areas or a
+    /// broader sweep. Server-side distance ordering (see
+    /// `discoverLandmarksViaSPARQL`) keeps the closest results correct even
+    /// at the wide end. The pan-refetch threshold is half the current
+    /// radius, so it scales with the chosen radius.
+    private static let radiusOptionsMiles = [2, 5, 10, 25]
+    private static let defaultRadiusIndex = 0   // 2 mi
+    private static func radiusMeters(forMiles miles: Int) -> Int {
+        Int(Double(miles) * 1609.344)
+    }
+    /// How many landmarks to hydrate + render per fetch. Set to the SPARQL
+    /// result cap so the *radius* governs how many show: widening always
+    /// surfaces more (and farther) landmarks instead of stopping at an
+    /// artificial 100, which in a dense area filled up within ~10 miles and
+    /// made 25-mile look identical to 10-mile.
+    private static let fetchLimit = 300
 
     @State private var state: LoadState = .idle
     @State private var loadingPhase: LoadingPhase = .locating
-    @State private var isReloading = false
+    /// Index into `radiusOptionsMiles` for the current search radius.
+    /// Stepped by the +/- controls; seeded from the disk cache on
+    /// cold-start so the restored pins and the "Within N miles" header
+    /// agree.
+    @State private var radiusIndex = NearMeView.defaultRadiusIndex
+    /// In-flight primary refreshes. A COUNTER, not a Bool: `startRefresh`
+    /// cancels the prior refresh, but a cancelled task's `defer` decrement can
+    /// land after the superseding task's increment, so a Bool would flicker
+    /// the toolbar spinner off mid-fetch when the radius is stepped quickly.
+    /// Same reason `panFetchCount` is a counter.
+    @State private var reloadingCount = 0
+    private var isReloading: Bool { reloadingCount > 0 }
     @State private var userLocation: CLLocation?
     /// Center of the most recent geosearch. Drives the pan-threshold
     /// check: if the new map center is more than
@@ -79,6 +95,21 @@ struct NearMeView: View {
     /// invalidation check (current GPS vs. cached center) can run as
     /// soon as the fresh GPS fix lands.
     @State private var lastFetchCenter: CLLocationCoordinate2D?
+    /// The map's current visible center, updated on every pan (and on the
+    /// programmatic camera moves the map reports). Lets a radius change
+    /// anchor to what's on screen once the user has panned away from their
+    /// GPS, instead of snapping home. nil until the map first reports a center.
+    @State private var mapCenter: CLLocationCoordinate2D?
+    /// When set, the Nearby list scrolls this row to the top: a one-row "more
+    /// appeared below" nudge after a radius increase loads new rows. Reset to
+    /// nil once consumed. List can't scroll by raw offset, so this drives a
+    /// `ScrollViewReader.scrollTo` at the list's call site.
+    @State private var scrollNudgeTargetID: URL?
+    /// Indices of the Nearby list rows currently rendered (tracked via each
+    /// row's onAppear/onDisappear). The radius-increase nudge advances one row
+    /// past the topmost rendered row, so it's a one-row scroll relative to the
+    /// user's current position rather than a jump to the top.
+    @State private var visibleRowIndices: Set<Int> = []
     /// Latest in-flight refresh task. Tracked so a second refresh
     /// (rapid toolbar-tap, pull-then-tap) cancels the first instead
     /// of racing with it. Without this, two `AsyncStream` consumers
@@ -99,10 +130,154 @@ struct NearMeView: View {
     /// directly — so we pass this counter down and the map observes
     /// it via `.onChange`.
     @State private var recenterSignal = 0
+    /// Explicit recenter target for the map. Set by a radius-decrease so
+    /// the camera zooms IN before the pins are trimmed; nil = fit the
+    /// current pins (the normal recenter).
+    @State private var recenterRegion: MKCoordinateRegion?
     @State private var searchText: String = ""
     @State private var showHiddenSheet = false
+    /// True when the current fetch returned a full SPARQL page, i.e. the
+    /// radius holds more landmarks than are shown — drives the "Load more"
+    /// list footer. Reset on each primary fetch.
+    @State private var hasMore = false
+    /// SPARQL pages loaded at the current center/radius (1 after the
+    /// initial fetch). "Load more" fetches page `pagesLoaded` via
+    /// OFFSET = pagesLoaded × `sparqlResultLimit`, then increments.
+    @State private var pagesLoaded = 0
+    /// True while a "load more" page is in flight (footer shows a spinner).
+    @State private var isLoadingMore = false
+    /// Count of in-flight pan-search fetches (a counter, not a Bool, so
+    /// overlapping fetches during continuous panning keep the map's
+    /// "Loading…" pill up until the last one finishes).
+    @State private var panFetchCount = 0
 
     private let locationManager = LocationManager.shared
+
+    // MARK: - Radius
+
+    private var currentRadiusMiles: Int { Self.radiusOptionsMiles[radiusIndex] }
+    private var currentRadiusMeters: Int { Self.radiusMeters(forMiles: currentRadiusMiles) }
+    private var canIncreaseRadius: Bool { radiusIndex < Self.radiusOptionsMiles.count - 1 }
+    private var canDecreaseRadius: Bool { radiusIndex > 0 }
+
+    /// When the user has panned the map away from their GPS by more than the
+    /// pan-search threshold (half the current radius), the live map center;
+    /// otherwise nil. When non-nil a radius change anchors here (filter/fetch
+    /// + zoom around what's on screen) instead of snapping back to the user.
+    /// Only meaningful on the map; the list is always user-anchored.
+    private var pannedMapCenter: CLLocationCoordinate2D? {
+        guard displayMode == .map, let center = mapCenter, let user = userLocation else { return nil }
+        let centerLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
+        guard centerLoc.distance(from: user) > Double(currentRadiusMeters) / 2 else { return nil }
+        return center
+    }
+
+    /// Step the search radius by `delta` (+1 wider, −1 tighter), clamped to
+    /// the ladder, then refetch at the new radius. `force: false` keeps the
+    /// current pins visible (no full-screen spinner) and reuses the cached
+    /// GPS fix; the existing recenter refits the map to the new extent once
+    /// the fetch lands.
+    private func changeRadius(by delta: Int) {
+        let newIndex = max(0, min(Self.radiusOptionsMiles.count - 1, radiusIndex + delta))
+        guard newIndex != radiusIndex else { return }
+        let decreasing = newIndex < radiusIndex
+        // Capture the pan anchor BEFORE mutating radiusIndex (so the "panned
+        // away" test uses the radius currently on screen). Non-nil = the user
+        // panned the map away from their GPS, so anchor the change to the map
+        // center instead of snapping home; nil = default GPS-anchored path.
+        let anchor = pannedMapCenter
+        radiusIndex = newIndex
+
+        // Narrowing the radius: the smaller radius is a subset of what's
+        // already loaded, so just filter the current results by distance —
+        // instant, no network, no loading flash. Only valid when our data
+        // actually reaches past the new radius (we trimmed something);
+        // otherwise (a dense area where even the wider fetch capped short)
+        // fall through to a real fetch.
+        if decreasing, case .loaded(let current) = state, let user = userLocation {
+            // Trim + zoom around the panned map center when panned away, else
+            // the user's location (the default).
+            let centerCoord = anchor ?? user.coordinate
+            let centerLoc = CLLocation(latitude: centerCoord.latitude, longitude: centerCoord.longitude)
+            let maxMeters = Double(currentRadiusMeters)
+            let filtered = current.filter { r in
+                guard let c = r.coordinates else { return true }
+                return centerLoc.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude)) <= maxMeters
+            }
+            if filtered.count < current.count {
+                hasMore = false
+                if displayMode == .map {
+                    // Map: zoom IN first (to the new radius) keeping the
+                    // current pins, THEN trim the out-of-range ones once the
+                    // camera has moved — so they leave off-screen instead of
+                    // popping out from under the camera.
+                    recenterRegion = MKCoordinateRegion(
+                        center: centerCoord,
+                        latitudinalMeters: maxMeters * 2,
+                        longitudinalMeters: maxMeters * 2
+                    )
+                    recenterSignal += 1
+                    let targetIndex = radiusIndex
+                    Task {
+                        // Wait for the zoom-in camera animation to visually
+                        // settle before removing the now-out-of-range pins, so
+                        // they leave after the map has finished zooming rather
+                        // than mid-animation (which looked odd). The camera
+                        // animation runs ~0.8s; 0.9s clears it with a small
+                        // margin. Erring long is fine (pins linger a beat);
+                        // too short trims mid-zoom.
+                        try? await Task.sleep(for: .seconds(0.9))
+                        guard radiusIndex == targetIndex, case .loaded = state else { return }
+                        state = .loaded(filtered)
+                        recenterRegion = nil
+                    }
+                } else {
+                    // List: trim immediately (no camera to animate).
+                    state = .loaded(filtered)
+                }
+                return
+            }
+        }
+
+        // Widening (or a narrow we can't satisfy from cache): refetch,
+        // keeping the current list/pins visible during the fetch (the
+        // toolbar spinner and the map's "Loading…" pill show progress).
+        // recenter: true — fit the map to the new (wider) result set once
+        // it lands. reuseLocation: true — a radius change doesn't move the
+        // user.
+        if let anchor = anchor {
+            // Panned away on the map: widen around the map center, not the
+            // user, and zoom out around it. Never snaps back to the GPS.
+            fetchAroundCenterForRadiusChange(anchor)
+        } else {
+            let task = startRefresh(force: false, recenter: true, reuseLocation: true)
+            // List + widening: the wider-radius rows append below the fold, so
+            // from the top it looks unchanged. Once the fetch commits more
+            // rows, nudge the list (scroll its 2nd row to the top, ~one row) to
+            // cue that more appeared. (Map mode recenters instead; a narrowing
+            // refetch adds no rows.)
+            if displayMode == .list, !decreasing, case .loaded(let before) = state {
+                let beforeCount = before.count
+                Task {
+                    await task.value
+                    // One-row nudge relative to where the user is. At the
+                    // bottom the list is already at max scroll (can't go down,
+                    // and scrolling a near-bottom row to .top just clamps), so
+                    // nudge UP one row; otherwise nudge DOWN one to reveal more.
+                    // Never a jump to the top.
+                    guard displayMode == .list,
+                          case .loaded(let after) = state,
+                          after.count > beforeCount, after.count > 1 else { return }
+                    let top = visibleRowIndices.min() ?? 0
+                    let bottom = visibleRowIndices.max() ?? 0
+                    let target = bottom >= after.count - 1
+                        ? max(top - 1, 0)
+                        : min(top + 1, after.count - 1)
+                    scrollNudgeTargetID = after[target].pageURL
+                }
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -137,7 +312,7 @@ struct NearMeView: View {
                         ContentUnavailableView {
                             Label("Location permission needed", systemImage: "location.slash")
                         } description: {
-                            Text("Brown Sign uses your location to find landmarks within 5 miles of you. Turn on location access in Settings.")
+                            Text("Brown Sign uses your location to find landmarks near you. Turn on location access in Settings.")
                         } actions: {
                             Button {
                                 LocationManager.openAppSettings()
@@ -189,7 +364,7 @@ struct NearMeView: View {
                             ContentUnavailableView(
                                 "No landmarks nearby",
                                 systemImage: "signpost.right.and.left",
-                                description: Text("No geo-tagged Wikipedia landmarks within 5 miles of your location. Switch to the map and pan to a different area to keep exploring.")
+                                description: Text("No geo-tagged Wikipedia landmarks within \(currentRadiusMiles) miles of your location. Switch to the map to widen the search, or pan to a different area to keep exploring.")
                             )
                         case .map:
                             NearbyMapView(
@@ -198,8 +373,16 @@ struct NearMeView: View {
                                 recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
                                 onMapCenterChanged: { center in
+                                    mapCenter = center
                                     startPanFetch(center)
-                                }
+                                },
+                                radiusMiles: currentRadiusMiles,
+                                canIncreaseRadius: canIncreaseRadius,
+                                canDecreaseRadius: canDecreaseRadius,
+                                onIncreaseRadius: { changeRadius(by: 1) },
+                                onDecreaseRadius: { changeRadius(by: -1) },
+                                isLoading: isReloading || panFetchCount > 0,
+                                recenterRegion: recenterRegion
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .padding(.horizontal)
@@ -226,7 +409,19 @@ struct NearMeView: View {
                                     description: Text("No nearby landmarks match \"\(trimmedSearch)\".")
                                 )
                             } else {
-                                list(visible)
+                                ScrollViewReader { proxy in
+                                    list(visible)
+                                        // A radius increase sets
+                                        // scrollNudgeTargetID; scroll that row
+                                        // to the top as a "more appeared below"
+                                        // cue (List has no offset scroll, so
+                                        // ScrollViewReader is the reliable path).
+                                        .onChange(of: scrollNudgeTargetID) { _, target in
+                                            guard let target else { return }
+                                            withAnimation { proxy.scrollTo(target, anchor: .top) }
+                                            scrollNudgeTargetID = nil
+                                        }
+                                }
                             }
                         case .map:
                             NearbyMapView(
@@ -235,8 +430,16 @@ struct NearMeView: View {
                                 recenterSignal: recenterSignal,
                                 onSelect: { open($0) },
                                 onMapCenterChanged: { center in
+                                    mapCenter = center
                                     startPanFetch(center)
-                                }
+                                },
+                                radiusMiles: currentRadiusMiles,
+                                canIncreaseRadius: canIncreaseRadius,
+                                canDecreaseRadius: canDecreaseRadius,
+                                onIncreaseRadius: { changeRadius(by: 1) },
+                                onDecreaseRadius: { changeRadius(by: -1) },
+                                isLoading: isReloading || panFetchCount > 0,
+                                recenterRegion: recenterRegion
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .padding(.horizontal)
@@ -259,7 +462,12 @@ struct NearMeView: View {
                         .font(.system(size: 21, weight: .semibold))
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if isReloading {
+                    // Spin whenever a fetch is in flight, including a
+                    // pan-search on the map: mirrors the map's "Loading…"
+                    // pill (isReloading || panFetchCount > 0) so the two
+                    // loading cues stay in sync. panFetchCount is only ever
+                    // > 0 on the map, so list mode still keys off isReloading.
+                    if isReloading || panFetchCount > 0 {
                         ProgressView()
                     } else {
                         Button {
@@ -287,11 +495,19 @@ struct NearMeView: View {
             // seeded so `refresh` can spatially invalidate the cache
             // if the user has moved cities between sessions.
             if case .idle = state, let cached = NearbyResultsCache.load() {
-                state = cached.results.isEmpty ? .empty : .loaded(cached.results)
-                lastFetchCenter = CLLocationCoordinate2D(
-                    latitude: cached.fetchCenter.latitude,
-                    longitude: cached.fetchCenter.longitude
-                )
+                // Always start at the default radius (we don't restore the
+                // last-used one). Only render last session's pins instantly
+                // when they were fetched at that same default radius;
+                // otherwise (e.g. a 25-mile cache) start clean and let the
+                // fast 2-mile fetch populate, so we never flash wide-radius
+                // pins under a "Within 2 miles" header.
+                if cached.radiusMeters == currentRadiusMeters {
+                    state = cached.results.isEmpty ? .empty : .loaded(cached.results)
+                    lastFetchCenter = CLLocationCoordinate2D(
+                        latitude: cached.fetchCenter.latitude,
+                        longitude: cached.fetchCenter.longitude
+                    )
+                }
             }
 
             await startRefresh(force: false).value
@@ -331,11 +547,11 @@ struct NearMeView: View {
     /// supersedes a pan-merge, and letting a stale pan write after
     /// the refresh has reset the list would clobber the fresh results.
     @discardableResult
-    private func startRefresh(force: Bool) -> Task<Void, Never> {
+    private func startRefresh(force: Bool, recenter: Bool = true, reuseLocation: Bool = false) -> Task<Void, Never> {
         refreshTask?.cancel()
         panTask?.cancel()
         let task = Task {
-            await refresh(force: force)
+            await refresh(force: force, recenter: recenter, reuseLocation: reuseLocation)
         }
         refreshTask = task
         return task
@@ -374,6 +590,18 @@ struct NearMeView: View {
         return false
     }
 
+    /// True when a map is currently on screen (loaded pins or the
+    /// empty-area map), so a background refetch — e.g. a radius change that
+    /// widens an empty search — keeps the map visible instead of flashing
+    /// the full-screen spinner.
+    private var isShowingMap: Bool {
+        guard displayMode == .map else { return false }
+        switch state {
+        case .loaded, .empty: return true
+        default: return false
+        }
+    }
+
     /// Show the list/map picker any time the user has a location —
     /// even in the .empty state, because the empty-state copy tells
     /// the user to switch to map and pan, and we need the picker
@@ -391,6 +619,10 @@ struct NearMeView: View {
 
     @ViewBuilder
     private func list(_ results: [LandmarkResult]) -> some View {
+        // "Load more" footer shows only when the radius holds more than
+        // the current page AND we're not filtering (paging a filtered
+        // list would be confusing).
+        let showLoadMore = hasMore && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Lat/long context row sits OUTSIDE the List so it doesn't
         // steal the inset-grouped section's rounded top corners from
         // the first landmark row. Inside the List with a clear
@@ -399,9 +631,21 @@ struct NearMeView: View {
         // look chopped.
         VStack(spacing: 0) {
             if userLocation != nil {
-                HStack(spacing: 6) {
-                    Image(systemName: "location.fill")
-                    Text("Within 5 miles of your location")
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "location.fill")
+                        Text("Within \(currentRadiusMiles) miles of your location")
+                    }
+                    Spacer(minLength: 8)
+                    // Trailing radius stepper so the list can widen/tighten
+                    // the search without switching to the map. Same step
+                    // logic as the map's zoom control.
+                    RadiusStepper(
+                        canIncrease: canIncreaseRadius,
+                        canDecrease: canDecreaseRadius,
+                        onIncrease: { changeRadius(by: 1) },
+                        onDecrease: { changeRadius(by: -1) }
+                    )
                 }
                 // Match the "Recent finds" section header on Scan
                 // (subheadline + semibold) so the three list-section
@@ -432,7 +676,7 @@ struct NearMeView: View {
                     // Last result row is also the visual last row of
                     // the card UNLESS the "Hidden landmarks (N)"
                     // footer button is present below it.
-                    let isLastVisible = index == results.count - 1 && hiddenLandmarks.isEmpty
+                    let isLastVisible = index == results.count - 1 && hiddenLandmarks.isEmpty && !showLoadMore
                     Button {
                         open(result)
                     } label: {
@@ -470,6 +714,11 @@ struct NearMeView: View {
                         }
                         .tint(.orange)
                     }
+                    // Track which rows are on screen so the radius-increase
+                    // nudge can advance one row relative to the user's current
+                    // position (see changeRadius).
+                    .onAppear { visibleRowIndices.insert(index) }
+                    .onDisappear { visibleRowIndices.remove(index) }
                 }
 
                 if !hiddenLandmarks.isEmpty {
@@ -499,6 +748,56 @@ struct NearMeView: View {
                         UnevenRoundedRectangle(
                             cornerRadii: .init(
                                 topLeading: 0,
+                                bottomLeading: showLoadMore ? 0 : 12,
+                                bottomTrailing: showLoadMore ? 0 : 12,
+                                topTrailing: 0
+                            )
+                        )
+                        .fill(Color("CardBackground"))
+                    )
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                }
+
+                if showLoadMore {
+                    // A full-width brand-brown action button matching the
+                    // "Snap a landmark sign" treatment (borderedProminent,
+                    // .infinity width, minHeight 28, regular weight, 12pt
+                    // corners) — prominent, white text + icon, with the
+                    // current count. Reads as "tap to fetch more", distinct
+                    // from the small Hidden landmarks navigation row.
+                    Button {
+                        loadMore()
+                    } label: {
+                        Group {
+                            if isLoadingMore {
+                                HStack(spacing: 8) {
+                                    ProgressView().tint(.white)
+                                    Text("Loading…")
+                                }
+                            } else {
+                                Label("Load more (\(results.count) shown)", systemImage: "arrow.down.circle")
+                            }
+                        }
+                        .fontWeight(.regular)
+                        // Force both text and icon white (don't rely on the
+                        // button style tinting the SF Symbol).
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                        // Swap "Load more" ↔ "Loading…" instantly instead of
+                        // cross-fading, which briefly overlaps the two
+                        // centered labels.
+                        .animation(nil, value: isLoadingMore)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color("BrandBrown"))
+                    .buttonBorderShape(.roundedRectangle(radius: 12))
+                    .disabled(isLoadingMore)
+                    // Visual last row of the card, so the parchment behind
+                    // it carries the rounded bottom corners.
+                    .listRowBackground(
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: 0,
                                 bottomLeading: 12,
                                 bottomTrailing: 12,
                                 topTrailing: 0
@@ -506,7 +805,7 @@ struct NearMeView: View {
                         )
                         .fill(Color("CardBackground"))
                     )
-                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
                 }
             }
             // Plain style instead of the default inset-grouped, so
@@ -564,35 +863,50 @@ struct NearMeView: View {
 
     // MARK: - Load
 
-    private func refresh(force: Bool) async {
+    private func refresh(force: Bool, recenter: Bool = true, reuseLocation: Bool = false) async {
         // Preserve existing results while reloading so pull-to-refresh
         // and the toolbar button don't wipe the list. Only flip to the
         // full-screen loading view when we have nothing to show yet.
         // Cached pins from a previous session count as "results" for
         // this purpose — keep them visible while the fresh stream
         // populates.
-        if !hasResults {
+        // Only flip to the full-screen spinner when there's genuinely
+        // nothing on screen. If a map is already showing (loaded pins or
+        // the empty-area map), keep it visible during the refetch — when
+        // the radius control widens an empty search, the user should watch
+        // the map fill in, not lose it to a spinner.
+        if !hasResults && !isShowingMap {
             loadingPhase = .locating
             state = .loading
         }
-        isReloading = true
-        defer { isReloading = false }
+        reloadingCount += 1
+        defer { reloadingCount -= 1 }
 
-        let granted = await locationManager.ensurePermission()
-        guard granted else {
-            state = .locationDenied
-            return
-        }
-        // `bypassCache: force` makes an explicit refresh always re-issue
-        // `requestLocation()` — without this, a stale fix from before a
-        // Location-Services toggle survived for the cache's 5-min TTL and
-        // refresh was a no-op against the GPS.
-        guard let loc = await locationManager.currentLocation(
-            withTimeout: LocationManager.nearbyTimeout,
-            bypassCache: force
-        ) else {
-            if !hasResults { state = .locationUnavailable }
-            return
+        // A radius change doesn't move the user, so reuse the known fix
+        // (skips a fresh GPS round-trip that can stall up to the 12 s
+        // timeout if the cached fix went stale). Cold start and
+        // pull-to-refresh still fetch a fresh fix.
+        let loc: CLLocation
+        if reuseLocation, let known = userLocation {
+            loc = known
+        } else {
+            let granted = await locationManager.ensurePermission()
+            guard granted else {
+                state = .locationDenied
+                return
+            }
+            // `bypassCache: force` makes an explicit refresh always re-issue
+            // `requestLocation()` — without this, a stale fix from before a
+            // Location-Services toggle survived for the cache's 5-min TTL and
+            // refresh was a no-op against the GPS.
+            guard let fetched = await locationManager.currentLocation(
+                withTimeout: LocationManager.nearbyTimeout,
+                bypassCache: force
+            ) else {
+                if !hasResults { state = .locationUnavailable }
+                return
+            }
+            loc = fetched
         }
 
         // `LocationManager.currentLocation` deduplicates concurrent
@@ -621,7 +935,7 @@ struct NearMeView: View {
                 latitude: cachedCenter.latitude,
                 longitude: cachedCenter.longitude
             )
-            if loc.distance(from: cachedLoc) > Double(Self.searchRadiusMeters) {
+            if loc.distance(from: cachedLoc) > Double(currentRadiusMeters) {
                 state = .loading
                 NearbyResultsCache.clear()
             }
@@ -657,15 +971,16 @@ struct NearMeView: View {
 
         let stream = discoverLandmarksAt(
             center: loc.coordinate,
-            radiusMeters: Self.searchRadiusMeters,
+            radiusMeters: currentRadiusMeters,
             limit: Self.fetchLimit
         )
         var finalResults: [LandmarkResult] = []
         var sparqlFailed = false
+        var streamHasMore = false
         for await yield in stream {
             if Task.isCancelled { return }
             switch yield {
-            case .batch(let results):
+            case .batch(let results, let more):
                 // Cold-start path: render each non-empty yield as
                 // soon as it's ready so the user sees pins fast.
                 // Manual-refresh path: skip intermediate yields and
@@ -678,6 +993,7 @@ struct NearMeView: View {
                     state = .loaded(results)
                 }
                 finalResults = results
+                streamHasMore = more
             case .sparqlFailed:
                 sparqlFailed = true
             }
@@ -702,6 +1018,7 @@ struct NearMeView: View {
             // empty within the search radius.
             lastFetchCenter = loc.coordinate
             state = .empty
+            hasMore = false
         } else {
             // Always commit the final set. In the progressive path
             // this is usually a no-op (loop already set the same
@@ -710,14 +1027,24 @@ struct NearMeView: View {
             // fetch.
             lastFetchCenter = loc.coordinate
             state = .loaded(finalResults)
+            // Fresh primary fetch = page 1; arm "load more" if the page
+            // came back full (radius holds more than one page).
+            pagesLoaded = 1
+            hasMore = streamHasMore
         }
 
-        // Tell the map to snap its camera back to the user. If we
-        // don't do this, the refresh button is silent on the map —
+        // Tell the map to snap its camera back to the user (refit to
+        // pins). If we don't, the refresh button is silent on the map —
         // the underlying data resets but the view stays wherever the
         // user had panned to, which is exactly the "doesn't bring me
-        // home" bug.
-        recenterSignal += 1
+        // home" bug. Skipped on a radius change (recenter == false): the
+        // map already zoomed itself to the new radius the instant the
+        // button was tapped, and a refit here would clobber that.
+        if recenter {
+            // Fit the current pins (clear any leftover decrease target).
+            recenterRegion = nil
+            recenterSignal += 1
+        }
 
         // Persist for the next cold-start so the user sees pins
         // instantly next time. Saved as a Coordinate so the cache is
@@ -728,6 +1055,7 @@ struct NearMeView: View {
                 latitude: loc.coordinate.latitude,
                 longitude: loc.coordinate.longitude
             ),
+            radiusMeters: currentRadiusMeters,
             fetchedAt: Date(),
             results: finalResults
         ))
@@ -764,7 +1092,12 @@ struct NearMeView: View {
         // current 5-mile fetch's area, we already have its landmarks.
         let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
             .distance(from: CLLocation(latitude: center.latitude, longitude: center.longitude))
-        guard dist > Self.panRefetchThresholdMeters else { return }
+        guard dist > Double(currentRadiusMeters) / 2 else { return }
+
+        // Surface the map's "Loading…" pill while the pan-search runs —
+        // it's otherwise a silent background merge.
+        panFetchCount += 1
+        defer { panFetchCount -= 1 }
 
         // Pan-search consumes the same streaming API as the cold-start
         // refresh, but only commits the final (full) yield. Pan never
@@ -773,7 +1106,7 @@ struct NearMeView: View {
         // for no benefit.
         let stream = discoverLandmarksAt(
             center: center,
-            radiusMeters: Self.searchRadiusMeters,
+            radiusMeters: currentRadiusMeters,
             limit: Self.fetchLimit
         )
         var fresh: [LandmarkResult] = []
@@ -781,7 +1114,7 @@ struct NearMeView: View {
         for await yield in stream {
             if Task.isCancelled { return }
             switch yield {
-            case .batch(let results):
+            case .batch(let results, _):
                 fresh = results
             case .sparqlFailed:
                 sparqlFailed = true
@@ -822,6 +1155,138 @@ struct NearMeView: View {
             }
         }
         state = .loaded(existing)
+    }
+
+    /// Widen the search around `center` (the panned map center) at the current
+    /// radius and merge the new pins in, then zoom the camera out around
+    /// `center` to reveal the wider area. Used by `changeRadius` for a zoom-out
+    /// (more miles) while the map is panned away from the user, so the wider
+    /// radius pulls in pins around what's on screen instead of snapping home.
+    /// Unlike `fetchAroundMapCenter` there's no pan-distance threshold (the
+    /// radius changed, not the center). The merge mirrors that function's
+    /// (dedup + user-anchored sort) — a small, deliberate duplication kept
+    /// local to avoid touching the tested pan path.
+    private func fetchAroundCenterForRadiusChange(_ center: CLLocationCoordinate2D) {
+        // Zoom out around the panned center to the new radius right away (keep
+        // the current pins visible while the fetch fills in), so the camera
+        // reveals the wider area without snapping to the user's GPS.
+        recenterRegion = MKCoordinateRegion(
+            center: center,
+            latitudinalMeters: Double(currentRadiusMeters) * 2,
+            longitudinalMeters: Double(currentRadiusMeters) * 2
+        )
+        recenterSignal += 1
+
+        let targetIndex = radiusIndex
+        let radiusMeters = currentRadiusMeters
+        refreshTask?.cancel()
+        panTask?.cancel()
+        panTask = Task {
+            // Surface the map's "Loading..." pill while the widen runs.
+            panFetchCount += 1
+            defer { panFetchCount -= 1 }
+            let stream = discoverLandmarksAt(
+                center: center,
+                radiusMeters: radiusMeters,
+                limit: Self.fetchLimit
+            )
+            var fresh: [LandmarkResult] = []
+            var sparqlFailed = false
+            for await yield in stream {
+                if Task.isCancelled { return }
+                switch yield {
+                case .batch(let results, _):
+                    fresh = results
+                case .sparqlFailed:
+                    sparqlFailed = true
+                }
+            }
+            if Task.isCancelled { return }
+            // A newer radius change supersedes this one.
+            guard radiusIndex == targetIndex else { return }
+            recenterRegion = nil
+            if sparqlFailed && fresh.isEmpty { return }
+            lastFetchCenter = center
+            guard !fresh.isEmpty else { return }
+            // Merge + dedup into the existing pins, re-sorted by distance from
+            // the user (mirrors fetchAroundMapCenter so the list stays
+            // user-anchored even for panned results).
+            guard case .loaded(var existing) = state else {
+                state = .loaded(fresh)
+                return
+            }
+            let seen = Set(existing.map(\.pageURL))
+            for result in fresh where !seen.contains(result.pageURL) {
+                existing.append(result)
+            }
+            if let user = userLocation {
+                existing.sort { a, b in
+                    let da = a.coordinates.map {
+                        user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                    } ?? .infinity
+                    let db = b.coordinates.map {
+                        user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                    } ?? .infinity
+                    return da < db
+                }
+            }
+            state = .loaded(existing)
+        }
+    }
+
+    // MARK: - Load more
+
+    /// Fetch the next SPARQL page at the current center + radius and append
+    /// it to the list (dedup by canonical URL, re-sorted by distance from
+    /// the user — same merge as pan-search). Driven by the "Load more" list
+    /// footer, shown only while `hasMore`.
+    private func loadMore() {
+        guard !isLoadingMore, hasMore, let user = userLocation else { return }
+        isLoadingMore = true
+        Task {
+            defer { isLoadingMore = false }
+            let stream = discoverLandmarksAt(
+                center: user.coordinate,
+                radiusMeters: currentRadiusMeters,
+                limit: Self.fetchLimit,
+                offset: pagesLoaded * sparqlResultLimit
+            )
+            var fresh: [LandmarkResult] = []
+            var more = false
+            var failed = false
+            for await yield in stream {
+                if Task.isCancelled { return }
+                switch yield {
+                case .batch(let results, let m):
+                    fresh = results
+                    more = m
+                case .sparqlFailed:
+                    failed = true
+                }
+            }
+            if Task.isCancelled { return }
+            // On failure, leave hasMore/pagesLoaded alone so the footer
+            // stays and the user can retry.
+            guard !failed else { return }
+            // Merge into the current set, dedup by canonical URL.
+            guard case .loaded(var current) = state else { return }
+            let seen = Set(current.map(\.pageURL))
+            for r in fresh where !seen.contains(r.pageURL) {
+                current.append(r)
+            }
+            current.sort { a, b in
+                let da = a.coordinates.map {
+                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                } ?? .infinity
+                let db = b.coordinates.map {
+                    user.distance(from: CLLocation(latitude: $0.latitude, longitude: $0.longitude))
+                } ?? .infinity
+                return da < db
+            }
+            state = .loaded(current)
+            pagesLoaded += 1
+            hasMore = more
+        }
     }
 
     // MARK: - Tap-to-open
@@ -970,6 +1435,24 @@ private struct NearbyMapView: View {
     /// whether the pan was significant enough to warrant a new
     /// geosearch at this location.
     let onMapCenterChanged: (CLLocationCoordinate2D) -> Void
+    /// Radius-control wiring from the parent (same actions as the list header
+    /// stepper), surfaced here as an Apple/Google-style zoom control. The map
+    /// inverts them to zoom convention at the call site below, so its +/- read
+    /// opposite to the list stepper by design. The current radius (miles)
+    /// shows between the buttons as the scale cue, since the map has no
+    /// "Within N miles" header like the list does.
+    let radiusMiles: Int
+    let canIncreaseRadius: Bool
+    let canDecreaseRadius: Bool
+    let onIncreaseRadius: () -> Void
+    let onDecreaseRadius: () -> Void
+    /// True while a fetch is in flight — shows a "Loading…" pill at the
+    /// bottom of the map (the map keeps its current pins meanwhile).
+    let isLoading: Bool
+    /// Optional explicit recenter target. A radius-decrease sets this to the
+    /// new (smaller) radius so the camera zooms IN before the pins are
+    /// trimmed; nil means "fit the current pins" (the normal recenter).
+    let recenterRegion: MKCoordinateRegion?
 
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
@@ -1007,10 +1490,10 @@ private struct NearbyMapView: View {
                 cameraPosition = .region(initialRegion())
             }
             .onChange(of: recenterSignal) { _, _ in
-                // Parent bumped the counter via the toolbar refresh
-                // button — re-fit to user + pins so the user comes
-                // home after panning off to another region.
-                withAnimation { cameraPosition = .region(initialRegion()) }
+                // Recenter: use a parent-supplied region when present (a
+                // radius-decrease zooms to the new radius BEFORE its pins
+                // are trimmed); otherwise fit the current pins.
+                withAnimation { cameraPosition = .region(recenterRegion ?? initialRegion()) }
             }
             .onMapCameraChange(frequency: .onEnd) { context in
                 // Report the new map center to the parent at the end
@@ -1020,6 +1503,43 @@ private struct NearbyMapView: View {
                 // `.onEnd` only fires after the user stops
                 // interacting, so we don't spam refetches mid-gesture.
                 onMapCenterChanged(context.region.center)
+            }
+            // Apple/Google-style zoom control, bottom-trailing (where map
+            // apps usually put it). Follows zoom convention ("+" = zoom in =
+            // fewer miles), the inverse of the list stepper; see the call
+            // site for the wiring. Shows the current radius between the
+            // buttons. Hidden while a pin's card is up so it doesn't sit
+            // underneath it.
+            .overlay(alignment: .bottomTrailing) {
+                if selectedID == nil {
+                    MapZoomControl(
+                        miles: radiusMiles,
+                        // zoom in = fewer miles = parent's "decrease"
+                        // (and vice versa); inverted so the list keeps +=more
+                        canZoomIn: canDecreaseRadius,
+                        canZoomOut: canIncreaseRadius,
+                        onZoomIn: onDecreaseRadius,
+                        onZoomOut: onIncreaseRadius
+                    )
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+                }
+            }
+
+            // "Loading…" pill, bottom-centre, while a fetch is in flight
+            // (e.g. widening the radius). Hidden when a pin's card is up.
+            if isLoading, selectedID == nil {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Loading…")
+                        .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(.regularMaterial))
+                .padding(.bottom, 12)
+                .transition(.opacity)
             }
 
             if let id = selectedID, let selected = resultsByID[id] {
@@ -1034,6 +1554,7 @@ private struct NearbyMapView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: selectedID)
+        .animation(.easeInOut(duration: 0.2), value: isLoading)
         .toolbarBackground(.visible, for: .tabBar)
     }
 
@@ -1069,10 +1590,97 @@ private struct NearbyMapView: View {
             longitude: (lons.min()! + lons.max()!) / 2
         )
         let span = MKCoordinateSpan(
-            latitudeDelta: max(0.02, (lats.max()! - lats.min()!) * 1.4),
-            longitudeDelta: max(0.02, (lons.max()! - lons.min()!) * 1.4)
+            latitudeDelta: max(0.02, (lats.max()! - lats.min()!) * 1.2),
+            longitudeDelta: max(0.02, (lons.max()! - lons.min()!) * 1.2)
         )
         return MKCoordinateRegion(center: center, span: span)
+    }
+}
+
+// MARK: - Radius controls
+
+/// Apple/Google-style map zoom control: a vertical +/- pair on a
+/// material background, overlaid on the Nearby map. Follows true map
+/// zoom convention: "+" (top) zooms IN, tightening the search radius
+/// (fewer miles); "−" zooms OUT, widening it. Both disable at the ends
+/// of the ladder. This is intentionally the inverse of the list header's
+/// RadiusStepper (where "+" reads as "more miles"): on a map, "+" = zoom
+/// in is the expected gesture. The "N mi" between the buttons is the
+/// scale cue, since the map has no "Within N miles" header.
+private struct MapZoomControl: View {
+    let miles: Int
+    let canZoomIn: Bool
+    let canZoomOut: Bool
+    let onZoomIn: () -> Void
+    let onZoomOut: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            button("plus", action: onZoomIn, enabled: canZoomIn)
+            Divider().frame(width: 44)
+            // Current search radius — the scale cue, since the map has no
+            // "Within N miles" header like the list.
+            Text("\(miles) mi")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 28)
+            Divider().frame(width: 44)
+            button("minus", action: onZoomOut, enabled: canZoomOut)
+        }
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func button(_ systemName: String, action: @escaping () -> Void, enabled: Bool) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.35))
+        .disabled(!enabled)
+        .accessibilityLabel(systemName == "plus" ? "Zoom in, tighter radius" : "Zoom out, wider radius")
+    }
+}
+
+/// Compact radius stepper for the Nearby list header: a joined −/+
+/// capsule that steps the search radius (mirrors the map's zoom
+/// control). "−" tightens, "+" widens; both disable at the ladder ends.
+private struct RadiusStepper: View {
+    let canIncrease: Bool
+    let canDecrease: Bool
+    let onIncrease: () -> Void
+    let onDecrease: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            button("minus", action: onDecrease, enabled: canDecrease)
+            Divider().frame(height: 16)
+            button("plus", action: onIncrease, enabled: canIncrease)
+        }
+        .background(Color(.tertiarySystemFill))
+        .clipShape(Capsule())
+    }
+
+    private func button(_ systemName: String, action: @escaping () -> Void, enabled: Bool) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.footnote.weight(.semibold))
+                .frame(width: 32, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(enabled ? Color.accentColor : Color.secondary.opacity(0.4))
+        .disabled(!enabled)
+        .accessibilityLabel(systemName == "plus" ? "Widen search radius" : "Tighten search radius")
     }
 }
 

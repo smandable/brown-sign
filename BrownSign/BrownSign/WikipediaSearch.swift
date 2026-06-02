@@ -14,7 +14,7 @@
 
 import Foundation
 
-struct WikiResult {
+nonisolated struct WikiResult {
     let title: String
     let summary: String
     let pageURL: URL
@@ -93,7 +93,7 @@ func searchWikipediaNearby(
 /// distance-ascending and the consumer preserves that order, so we only
 /// keep the two fields it actually reads — `pageID` (for the details
 /// batch) and `title` (for the client-side title filter).
-private struct NearbyPage {
+nonisolated private struct NearbyPage {
     let pageID: Int
     let title: String
 }
@@ -180,7 +180,7 @@ func searchWikipediaCandidates(query: String) async -> [WikiResult] {
 /// to extract — the REST summary endpoint uses a smarter heuristic
 /// that still finds usable text. Returns nil when REST also has no
 /// extract (true stubs, redirects that dropped content, etc.).
-func wikipediaRESTSummaryExtract(for title: String) async -> String? {
+nonisolated func wikipediaRESTSummaryExtract(for title: String) async -> String? {
     let pathTitle = title.replacingOccurrences(of: " ", with: "_")
     guard let encoded = pathTitle.addingPercentEncoding(
             withAllowedCharacters: .urlPathAllowed
@@ -214,7 +214,7 @@ func wikipediaRESTSummaryExtract(for title: String) async -> String? {
 ///
 /// Returns [] on any error or when the page has no extra media —
 /// caller falls back to single-image rendering.
-func wikipediaArticleImageURLs(
+nonisolated func wikipediaArticleImageURLs(
     for title: String,
     excluding excludedURL: URL? = nil
 ) async -> [URL] {
@@ -269,7 +269,7 @@ func wikipediaArticleImageURLs(
 /// last path component, so a 600 px thumbnail and its full-size
 /// sibling resolve to the same base name. Used to dedup the lead
 /// image against the rest of the media list.
-private func wikipediaImageBaseName(_ url: URL) -> String {
+nonisolated private func wikipediaImageBaseName(_ url: URL) -> String {
     let last = url.lastPathComponent
     if let range = last.range(of: #"^\d+px-"#, options: .regularExpression) {
         return String(last[range.upperBound...])
@@ -280,7 +280,7 @@ private func wikipediaImageBaseName(_ url: URL) -> String {
 /// Wikipedia's REST API returns protocol-relative URLs (`//upload…`).
 /// Prepend `https:` so URL parsing succeeds; pass through fully-formed
 /// URLs unchanged.
-private func parseProtocolRelativeURL(_ src: String) -> URL? {
+nonisolated private func parseProtocolRelativeURL(_ src: String) -> URL? {
     if src.hasPrefix("//") {
         return URL(string: "https:" + src)
     }
@@ -297,7 +297,7 @@ private func parseProtocolRelativeURL(_ src: String) -> URL? {
 /// `wikipediaFetchPageDetailsByTitles` (and pageID variant) so the
 /// Nearby list/map thumbnails agree with what the detail-view's
 /// carousel finds via the same media-list endpoint.
-func wikipediaResolvedThumbnailURL(for title: String) async -> URL? {
+nonisolated func wikipediaResolvedThumbnailURL(for title: String) async -> URL? {
     if let summary = await wikipediaRESTSummaryImageURL(for: title) {
         return summary
     }
@@ -313,7 +313,7 @@ func wikipediaResolvedThumbnailURL(for title: String) async -> URL? {
 /// hasn't indexed yet. Prefers `originalimage` (high-res, resized
 /// client-side) and falls back to the 320-wide `thumbnail`.
 /// Returns nil on any failure; callers treat the image as optional.
-func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
+nonisolated func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
     // REST takes the title in the URL path with underscores for spaces.
     // URL path encoding (not query encoding) — parens, commas, colons
     // are legal, but "/" and "?" in titles must be percent-encoded.
@@ -377,7 +377,7 @@ private func cleanWikipediaQuery(_ raw: String) -> String {
 
 // MARK: - Step 1: list=search
 
-private struct WikiCandidate {
+nonisolated private struct WikiCandidate {
     let pageID: Int
     let title: String
 }
@@ -409,7 +409,7 @@ private func wikipediaSearchCandidates(_ query: String) async -> [WikiCandidate]
 
 // MARK: - Step 2: batch fetch extracts + pageprops + url by pageid
 
-struct WikiPageDetails {
+nonisolated struct WikiPageDetails {
     let title: String
     let extract: String
     let url: URL
@@ -417,12 +417,20 @@ struct WikiPageDetails {
     let isDisambiguation: Bool
 }
 
-/// MediaWiki's anonymous API caps `pageids=` at 50 per request —
-/// passing more returns an error and no usable data. Our Nearby
-/// flow wants to hydrate ~100 candidates, so we batch.
-private let wikipediaPageDetailsBatchSize = 50
+/// Batch size for page-detail fetches. Capped at 20 — below the 50 the
+/// `pageids=`/`titles=` API allows — to match `prop=extracts`' `exlimit`
+/// (20 for anonymous callers). At 50, the API returns extracts for only
+/// the first 20 and sets a `continue` token; since we read just the first
+/// response, the other ~30 rows came back with empty extracts AND, in the
+/// tail, missing `pageimages` thumbnails. `applyDetailFallbacks` then fired
+/// one REST call per affected row to patch them — ~160 concurrent at a
+/// 300-row Nearby fetch, enough for Wikipedia to rate-limit and silently
+/// drop thumbnails (the "place has a Wikipedia image but no thumbnail" bug).
+/// At 20, every batch returns complete in one response: extracts +
+/// thumbnails for all rows, no continuation, no fallback flood.
+nonisolated private let wikipediaPageDetailsBatchSize = 20
 
-private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
+nonisolated private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
     guard !pageIDs.isEmpty else { return [:] }
 
     // Chunk into batches that stay under the 50-ID anon limit, and
@@ -447,6 +455,41 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
     return combined
 }
 
+/// Shared concurrency ceiling for Wikipedia hydration fan-outs.
+nonisolated private let wikipediaMaxInFlight = 6
+
+/// Maps `items` through `transform` with at most `maxConcurrent` tasks in
+/// flight at once, refilling as each finishes. Same result set as a plain
+/// `withTaskGroup` fan-out, but bounded — so a large Nearby fetch (25 miles
+/// → ~15 detail batches plus per-row image fallbacks, more after "load
+/// more") doesn't fire dozens of simultaneous requests at Wikipedia and get
+/// rate-limited into dropping thumbnails. Results arrive in completion order.
+nonisolated func mapBounded<Item: Sendable, Out: Sendable>(
+    _ items: [Item],
+    maxConcurrent: Int,
+    _ transform: @escaping @Sendable (Item) async -> Out
+) async -> [Out] {
+    guard !items.isEmpty else { return [] }
+    var results: [Out] = []
+    results.reserveCapacity(items.count)
+    await withTaskGroup(of: Out.self) { group in
+        var next = 0
+        let initial = min(max(1, maxConcurrent), items.count)
+        while next < initial {
+            let item = items[next]; next += 1
+            group.addTask { await transform(item) }
+        }
+        for await r in group {
+            results.append(r)
+            if next < items.count {
+                let item = items[next]; next += 1
+                group.addTask { await transform(item) }
+            }
+        }
+    }
+    return results
+}
+
 /// Backfills empty extracts and missing thumbnails on a freshly-fetched
 /// page-details map, in place. Generic over the dictionary key so the
 /// pageID-keyed and title-keyed fetches share one implementation.
@@ -465,28 +508,17 @@ private func wikipediaFetchPageDetails(pageIDs: [Int]) async -> [Int: WikiPageDe
 /// absent image there is intentional. The canonical title for the REST
 /// lookups comes from each entry's own `.title`, so title-keyed maps
 /// resolve correctly even when the key is the pre-redirect input title.
-private func applyDetailFallbacks<Key: Hashable & Sendable>(
+nonisolated private func applyDetailFallbacks<Key: Hashable & Sendable>(
     to combined: inout [Key: WikiPageDetails]
 ) async {
     let needsExtract: [(Key, String)] = combined.compactMap { key, d in
         (d.extract.isEmpty && !d.isDisambiguation) ? (key, d.title) : nil
     }
     if !needsExtract.isEmpty {
-        let patches: [(Key, String)] = await withTaskGroup(of: (Key, String)?.self) { group in
-            for (key, title) in needsExtract {
-                group.addTask {
-                    guard let fallback = await wikipediaRESTSummaryExtract(for: title) else {
-                        return nil
-                    }
-                    return (key, fallback)
-                }
-            }
-            var out: [(Key, String)] = []
-            for await entry in group {
-                if let entry { out.append(entry) }
-            }
-            return out
-        }
+        let patches: [(Key, String)] = (await mapBounded(needsExtract, maxConcurrent: wikipediaMaxInFlight) { entry -> (Key, String)? in
+            guard let fallback = await wikipediaRESTSummaryExtract(for: entry.1) else { return nil }
+            return (entry.0, fallback)
+        }).compactMap { $0 }
         for (key, extract) in patches {
             guard let existing = combined[key] else { continue }
             combined[key] = WikiPageDetails(
@@ -503,21 +535,10 @@ private func applyDetailFallbacks<Key: Hashable & Sendable>(
         (d.imageURL == nil && !d.isDisambiguation) ? (key, d.title) : nil
     }
     if !needsImage.isEmpty {
-        let patches: [(Key, URL)] = await withTaskGroup(of: (Key, URL)?.self) { group in
-            for (key, title) in needsImage {
-                group.addTask {
-                    guard let fallback = await wikipediaResolvedThumbnailURL(for: title) else {
-                        return nil
-                    }
-                    return (key, fallback)
-                }
-            }
-            var out: [(Key, URL)] = []
-            for await entry in group {
-                if let entry { out.append(entry) }
-            }
-            return out
-        }
+        let patches: [(Key, URL)] = (await mapBounded(needsImage, maxConcurrent: wikipediaMaxInFlight) { entry -> (Key, URL)? in
+            guard let fallback = await wikipediaResolvedThumbnailURL(for: entry.1) else { return nil }
+            return (entry.0, fallback)
+        }).compactMap { $0 }
         for (key, imageURL) in patches {
             guard let existing = combined[key] else { continue }
             combined[key] = WikiPageDetails(
@@ -538,21 +559,18 @@ private func applyDetailFallbacks<Key: Hashable & Sendable>(
 /// dictionary is keyed by INPUT title — MediaWiki's normalization and
 /// redirect chains are resolved internally so a caller looking up by
 /// the Wikidata-sitelink title gets the right entry.
-func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
+nonisolated func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
     guard !titles.isEmpty else { return [:] }
     let batches = stride(from: 0, to: titles.count, by: wikipediaPageDetailsBatchSize).map {
         Array(titles[$0..<min($0 + wikipediaPageDetailsBatchSize, titles.count)])
     }
 
-    var combined = await withTaskGroup(of: [String: WikiPageDetails].self) { group in
-        for batch in batches {
-            group.addTask { await fetchPageDetailsBatchByTitles(batch) }
-        }
-        var acc: [String: WikiPageDetails] = [:]
-        for await partial in group {
-            acc.merge(partial) { _, new in new }
-        }
-        return acc
+    var combined: [String: WikiPageDetails] = [:]
+    let partials = await mapBounded(batches, maxConcurrent: wikipediaMaxInFlight) {
+        await fetchPageDetailsBatchByTitles($0)
+    }
+    for partial in partials {
+        combined.merge(partial) { _, new in new }
     }
 
     await applyDetailFallbacks(to: &combined)
@@ -565,7 +583,7 @@ func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> [String: Wik
 /// Wikidata-sitelink title finds the entry under that exact key,
 /// even when Wikipedia routes the title through normalization or a
 /// redirect chain.
-private func fetchPageDetailsBatchByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
+nonisolated private func fetchPageDetailsBatchByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
     guard !titles.isEmpty else { return [:] }
     let titleList = titles.joined(separator: "|")
     guard let encoded = titleList.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
@@ -644,7 +662,7 @@ private func fetchPageDetailsBatchByTitles(_ titles: [String]) async -> [String:
 }
 
 /// Fetches one page-details batch. Expects `pageIDs.count <= 50`.
-private func fetchPageDetailsBatch(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
+nonisolated private func fetchPageDetailsBatch(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
     guard !pageIDs.isEmpty else { return [:] }
     let idList = pageIDs.map(String.init).joined(separator: "|")
     guard let encoded = idList.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),

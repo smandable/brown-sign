@@ -36,14 +36,19 @@ nonisolated struct CachedNearbyFetch: Codable {
     /// discarded on load.
     let schemaVersion: Int
     let fetchCenter: Coordinate
+    /// Search radius (meters) the cached pins were fetched at, so a
+    /// cold-start restores the same radius the user last had and the
+    /// "Within N miles" header matches the pins already on screen.
+    let radiusMeters: Int
     let fetchedAt: Date
     let results: [LandmarkResult]
 }
 
 enum NearbyResultsCache {
-    /// Bump this when `LandmarkResult` or `Coordinate` change shape in
-    /// an incompatible way. Old caches are dropped on load.
-    static let currentSchema = 1
+    /// Bump this when `CachedNearbyFetch` / `LandmarkResult` / `Coordinate`
+    /// change shape in an incompatible way. Old caches are dropped on load.
+    /// v2 added `radiusMeters`.
+    static let currentSchema = 2
 
     /// Stale-after duration. 7 days is well past most users' typical
     /// re-open cadence and short enough that minor article-image URL
