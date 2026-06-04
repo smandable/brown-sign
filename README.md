@@ -91,7 +91,7 @@ User location (or panned map center)
 - **Live search filtering** — both Nearby and History have a search field under the List/Map picker. Partial-word, case-insensitive matching against the result title; the list (and map pins) shrink in real time as you type. Keyboard "Done" toolbar + scroll-to-dismiss both clear focus. Nearby's list mode shows an explicit "No results" `ContentUnavailableView` when the search narrows to zero — map mode keeps the empty map so the user can pan-search.
 - **Per-row parchment card pattern** — Scan, Nearby, and History list rows all carry their own `Color("CardBackground")` via `.listRowBackground`, with the first and last rows using an `UnevenRoundedRectangle` so only the outer corners of the card are rounded. Combined with a list-level `clipShape(RoundedRectangle)` on the viewport, the parchment ends exactly at the last row (no extra below on a sparse list) AND stays rounded at the top as the first row scrolls out of view. Section-header label-and-icon HStacks (`signpost.right.fill` / `location.fill` / `clock.fill` + label) all use `.font(.subheadline.weight(.semibold))` and `.foregroundStyle(Color.accentColor)` with matching 16pt-top / 8pt-bottom padding so the three section labels read identically across tabs and the gap to the list below matches Scan's `VStack(spacing: 8)`.
 - **Map view in History and Nearby** — every saved lookup and every nearby discovery drops as a brown signpost pin on a MapKit map. Tap a pin for a callout card with thumbnail, summary, and a "View details" button; tap anywhere on the card body (not the X dismiss) to open the full detail view. List/Map toggle on both tabs; History fits the camera to the bounding box of all your finds, Nearby centers on you. Before the first lookup, History keeps the List/Map switcher + search visible and its Map toggle shows a map centered on your current location (~5-mile radius) instead of a blank empty state — so the switcher stays meaningful from a fresh install.
-- **Live camera** with tap-to-focus, auto flash, and a close button
+- **Live camera** with pinch-to-zoom (optical telephoto where the phone has one, digital otherwise) and a live zoom readout, tap-to-focus, auto flash, and a close button
 - **On-device OCR** via Vision — multi-line output sorted top-to-bottom by bounding box, with structured line-by-line prompting so Apple Intelligence can distinguish "Wadsworth Mansion" from "2 MI"
 - **On-device Apple Intelligence** via FoundationModels:
   - Cleans up noisy OCR text into a searchable landmark name
@@ -126,7 +126,7 @@ User location (or panned map center)
 | UI | SwiftUI + UIKit (UIViewRepresentable for text input, camera, Safari) |
 | Persistence | SwiftData |
 | OCR | Vision (`RecognizeTextRequest`, async) |
-| Camera | AVFoundation (photo preset, tap-to-focus, auto flash) |
+| Camera | AVFoundation (multi-lens virtual device, pinch-to-zoom, full-resolution capture when zoomed, tap-to-focus, auto flash) |
 | On-device LLM | FoundationModels (iOS 26+) |
 | Location | CoreLocation (async wrapper with in-flight guard + timeout) |
 | Maps | MapKit (preview) + URL schemes (Google Maps, Waze, Apple Maps) |
@@ -179,7 +179,7 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `HiddenLandmarksView.swift` | Modal sheet listing hidden landmarks — swipe-to-restore, custom green eye edit affordance, "Restore All" with confirmation |
 | `SearchField.swift` | Shared search-field component used by Nearby and History — magnifying-glass icon, clear button, FocusState-driven keyboard "Done" toolbar |
 | `Components.swift` | Shared UI used by more than one tab: `LandmarkDisplayMode` + `DisplayModeSegmentedPicker` (the List/Map switcher), `LandmarkThumbnail` (the one square article-image/captured-photo/signpost-placeholder thumbnail every row + map card renders), and `formatLandmarkDistance` (locale-aware distance string) |
-| `CameraView.swift` | UIKit camera VC with tap-to-focus, capture button, close button |
+| `CameraView.swift` | UIKit camera VC with pinch-to-zoom (optical + high-res capture), zoom readout, tap-to-focus, capture button, close button |
 | `SafariView.swift` | `SFSafariViewController` wrapper |
 | `LandmarkTextField.swift` | UIViewRepresentable wrapping UITextField (keyboard toolbar built in) |
 | `SelectableText.swift` | UIViewRepresentable wrapping read-only UITextView for text selection |

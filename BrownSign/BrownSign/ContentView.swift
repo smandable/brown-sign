@@ -283,11 +283,16 @@ struct ContentView: View {
             // inputAccessoryView (dismiss ⌨↓ + search 🔍).
             .fullScreenCover(isPresented: $showCamera) {
                 CameraView(
-                    onCapture: { image in
-                        // Downscale immediately so we don't hold a
-                        // full-resolution ~48MP iPhone photo in memory.
-                        // OCR still works great at 800px on the long edge.
-                        let scaled = image.resized(toMaxDimension: 800)
+                    onCapture: { data in
+                        // Downsample straight from the photo data via ImageIO so
+                        // a full-resolution (up to 48MP) frame is never fully
+                        // decoded into memory. 1600px keeps distant-sign text
+                        // legible for OCR while staying light; high-res capture
+                        // means a zoomed crop is still sharp at that size.
+                        guard let scaled = UIImage.downsampled(from: data, maxDimension: 1600) else {
+                            showCamera = false
+                            return
+                        }
                         capturedImage = scaled
                         // Encode the history thumbnail once here instead of
                         // re-deriving it in each lookup path.

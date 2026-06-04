@@ -5,9 +5,12 @@
 //  Thumbnail-scaling helpers shared between the scan flow (history-row
 //  thumbnails, captured-photo downscale) and landmark image hydration
 //  (downsizing remote article images before persisting them in SwiftData).
+//  Includes a Data-based ImageIO downsampler so a full-resolution camera
+//  frame (up to 48MP) is decoded straight to its target size, never in full.
 //
 
 #if canImport(UIKit)
+import ImageIO
 import UIKit
 
 extension UIImage {
@@ -41,6 +44,28 @@ extension UIImage {
             height: size.height * scale
         )
         return resized(to: newSize)
+    }
+
+    /// Decode `data` directly at a downsampled size with ImageIO, so a large
+    /// (e.g. 48MP) photo is never fully decoded into memory just to shrink it.
+    /// The result's longest edge is at most `maxDimension` px, with the source's
+    /// EXIF orientation baked in so it comes out upright. Returns nil only when
+    /// the data isn't a decodable image.
+    static func downsampled(from data: Data, maxDimension: CGFloat) -> UIImage? {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+            return nil
+        }
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(maxDimension)
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 }
 #endif

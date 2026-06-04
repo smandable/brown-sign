@@ -19,7 +19,7 @@ Ever drive past a brown highway sign and wonder what it's pointing to? Snap a ph
 Brown Sign identifies the landmarks behind brown roadside signs, and helps you discover new ones around you.
 
 SNAP OR TYPE
-Point your camera at a brown highway sign, or just type the name. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
+Point your camera at a brown highway sign, or just type the name. Pinch to zoom in on a sign that's far away. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
 
 NEARBY DISCOVERY
 Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
@@ -62,14 +62,16 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.4.12)
+## What's New (Version 1.5.0)
 ```
-Reliability and polish. If camera access is turned off, Brown Sign now shows a clear way to turn it back on instead of a blank screen. Nearby loading is steadier on slow or flaky connections, and a round of layout and accessibility touches keeps the app tidy, including at the largest text sizes.
+New: zoom in to read distant signs. Pinch to zoom the camera as you frame a shot, with a small readout showing your current zoom. On iPhone models with a telephoto lens, zooming in switches to that lens for a closer, clearer view, and zoomed shots now hold more detail so faraway sign text is easier to read.
 ```
 
 ### Previous versions
 
 ```
+Version 1.4.12: Reliability and polish. If camera access is turned off, Brown Sign now shows a clear way to turn it back on instead of a blank screen. Nearby loading is steadier on slow or flaky connections, and a round of layout and accessibility touches keeps the app tidy, including at the largest text sizes.
+
 Version 1.4.11: A search-radius control on the Nearby tab. Tap plus or minus, on the list or right on the map, to widen or tighten your search from 2 up to 25 miles, and the results refresh around you. Widen the search and the list gives a gentle nudge so the landmarks that just came into range are easy to spot. Nearby is also noticeably more responsive: the heavy searching and photo loading now run off the main thread, so the screen stays smooth while results stream in, and more landmarks show their photo on the list and map thanks to a more reliable thumbnail fetch. When an area holds more landmarks than fit in one pass, a Load more button pulls in the rest.
 
 Version 1.4.10: Faster, clearer Nearby on first launch. The first time you open Nearby, Brown Sign starts searching as soon as a recent location is available instead of waiting on a fresh GPS lock, so your landmarks appear sooner. And while it's working, the screen shows what it's doing (finding your location, then searching nearby), with a gentle note if a slow connection makes that first load take a little longer. No more wondering whether it's stuck. The History tab's Map view now works before your first lookup. Switch to Map on an empty History to see a map of where you are.

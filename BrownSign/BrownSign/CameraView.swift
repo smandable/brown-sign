@@ -3,16 +3,20 @@
 //  BrownSign
 //
 //  UIKit camera VC wrapped as a SwiftUI UIViewControllerRepresentable.
-//  Full-screen preview with back wide-angle camera, 70pt white capture
-//  button, tap-to-focus with yellow focus ring, auto flash.
+//  Full-screen preview with the back camera (a multi-lens virtual device when
+//  the phone has one, so pinch-zoom reaches the optical telephoto; plain
+//  wide-angle with digital zoom otherwise), 70pt white capture button,
+//  tap-to-focus with yellow focus ring, pinch-to-zoom with a live readout,
+//  full-resolution capture when zoomed, auto flash.
 //
 
 import SwiftUI
 import AVFoundation
+import CoreMedia
 import UIKit
 
 struct CameraView: UIViewControllerRepresentable {
-    var onCapture: (UIImage) -> Void
+    var onCapture: (Data) -> Void
     var onCancel: () -> Void
 
     func makeUIViewController(context: Context) -> CameraViewController {
@@ -42,8 +46,35 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     /// has already dismissed the camera (which would otherwise leave the
     /// capture session running until the VC deallocates).
     private var isAppeared = false
+    /// The device's `videoZoomFactor` captured at the start of a pinch, so the
+    /// gesture scales relative to where the zoom already was rather than
+    /// snapping back to 1.0 each time a new pinch begins. Reset on `.began`.
+    private var pinchStartZoom: CGFloat = 1.0
+    /// The active back-camera device: a multi-lens virtual device (triple or
+    /// dual) when the phone has a telephoto, so pinch-zoom can cross into the
+    /// optical lens; otherwise the plain wide-angle camera. Held so pinch-zoom
+    /// and tap-to-focus drive the same device.
+    private var videoDevice: AVCaptureDevice?
+    /// Zoom factor of the normal 1x wide view, and the floor for pinch-zoom. On
+    /// a multi-lens device factor 1.0 is the ultra-wide (0.5x), so this holds
+    /// the ultra-wide→wide switch-over factor; on a wide-only device it is 1.0.
+    private var baselineZoom: CGFloat = 1.0
+    /// The small "1×/2×/5×" readout that appears while pinching and fades once
+    /// the gesture ends. Built only in the configured (authorized) state.
+    private var zoomPill: UIView!
+    private var zoomLabel: UILabel!
+    /// Pending fade-out of the zoom pill, cancelled and rescheduled on each
+    /// pinch so the readout stays up while the user is actively zooming.
+    private var zoomPillFadeWork: DispatchWorkItem?
+    /// Full-resolution photo dimensions (the sensor's max, e.g. 48MP) and a
+    /// lighter ~12MP standard size. Zoomed shots capture at the full size so the
+    /// digital-zoom crop comes off the high-res readout and stays sharp;
+    /// un-zoomed shots use the standard size for a snappier shutter. On a 12MP
+    /// phone both collapse to 12MP, so capture is unchanged there.
+    private var maxPhotoDimensions: CMVideoDimensions?
+    private var standardPhotoDimensions: CMVideoDimensions?
 
-    var onCapture: ((UIImage) -> Void)?
+    var onCapture: ((Data) -> Void)?
     var onCancel: (() -> Void)?
 
     // MARK: - Lifecycle
@@ -78,6 +109,8 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         super.viewDidLayoutSubviews()
         // nil in the permission-denied state, where no preview was built.
         previewLayer?.frame = view.bounds
+        // Keep the readout a perfect capsule whatever its content height.
+        zoomPill?.layer.cornerRadius = (zoomPill?.bounds.height ?? 0) / 2
     }
 
     // MARK: - Authorization
@@ -112,7 +145,9 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         configureSession()
         configurePreviewLayer()
         configureCaptureButton()
+        configureZoomLabel()
         configureTapToFocus()
+        configurePinchToZoom()
         captureConfigured = true
         // Keep the close button above the freshly-inserted preview + capture
         // button so it stays tappable.
@@ -138,16 +173,71 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         session.beginConfiguration()
         session.sessionPreset = .photo
 
-        if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+        if let device = bestBackCamera(),
            let input = try? AVCaptureDeviceInput(device: device),
            session.canAddInput(input) {
             session.addInput(input)
+            videoDevice = device
+            baselineZoom = baselineZoomFactor(for: device)
         }
         if session.canAddOutput(photoOutput) {
             session.addOutput(photoOutput)
         }
 
         session.commitConfiguration()
+
+        configureHighResolutionCapture()
+
+        // Open at the normal 1x view. On a multi-lens device zoom factor 1.0 is
+        // the ultra-wide (0.5x), so without this the camera would launch wider
+        // and more distorted than every other camera app.
+        applyZoom(baselineZoom)
+    }
+
+    /// Raise the photo output's ceiling to the sensor's largest size (48MP on
+    /// phones that have it) so `capturePhoto` can opt a zoomed shot into a
+    /// full-resolution frame. A 12MP phone reports only the one size, so this
+    /// leaves capture unchanged there.
+    private func configureHighResolutionCapture() {
+        guard let device = videoDevice else { return }
+        let supported = device.activeFormat.supportedMaxPhotoDimensions
+        guard let maxDims = supported.last else { return }
+        maxPhotoDimensions = maxDims
+        // Largest size at or below ~12MP (4032 wide) for un-zoomed shots.
+        standardPhotoDimensions = supported.last(where: { $0.width <= 4032 }) ?? supported.first
+        photoOutput.maxPhotoDimensions = maxDims
+    }
+
+    /// Pick the back camera, preferring a multi-lens virtual device so pinch-
+    /// zoom can cross into the optical telephoto on phones that have one, and
+    /// falling back to the wide-angle camera (digital zoom only) otherwise.
+    /// Order: triple (UW+W+T) → dual (W+T) → wide-angle. Dual-wide (UW+W) is
+    /// skipped deliberately: it only adds the ultra-wide, which this app never
+    /// zooms out to, so it buys nothing over the plain wide-angle camera.
+    private func bestBackCamera() -> AVCaptureDevice? {
+        let preferred: [AVCaptureDevice.DeviceType] = [
+            .builtInTripleCamera,
+            .builtInDualCamera,
+            .builtInWideAngleCamera
+        ]
+        for type in preferred {
+            if let device = AVCaptureDevice.default(type, for: .video, position: .back) {
+                return device
+            }
+        }
+        return nil
+    }
+
+    /// The zoom factor at which the normal 1x wide view begins. For a virtual
+    /// device whose widest lens is the ultra-wide, factor 1.0 is 0.5x and the
+    /// first switch-over factor is where the wide (1x) takes over; for a wide-
+    /// or tele-based device, 1.0 is already 1x.
+    private func baselineZoomFactor(for device: AVCaptureDevice) -> CGFloat {
+        if device.constituentDevices.first?.deviceType == .builtInUltraWideCamera,
+           let firstSwitchOver = device.virtualDeviceSwitchOverVideoZoomFactors.first {
+            return CGFloat(firstSwitchOver.doubleValue)
+        }
+        return 1.0
     }
 
     private func configurePreviewLayer() {
@@ -208,6 +298,41 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     private func configureTapToFocus() {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTapToFocus(_:)))
         view.addGestureRecognizer(tap)
+    }
+
+    private func configurePinchToZoom() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinchToZoom(_:)))
+        view.addGestureRecognizer(pinch)
+    }
+
+    private func configureZoomLabel() {
+        let pill = UIView()
+        pill.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.alpha = 0 // hidden until the first pinch
+        pill.isUserInteractionEnabled = false
+        view.addSubview(pill)
+        zoomPill = pill
+
+        let label = UILabel()
+        label.font = .systemFont(ofSize: 14, weight: .semibold)
+        label.textColor = .white
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = zoomText(forFactor: videoDevice?.videoZoomFactor ?? baselineZoom)
+        pill.addSubview(label)
+        zoomLabel = label
+
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: pill.topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -4),
+            label.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -10),
+
+            pill.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            pill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            pill.bottomAnchor.constraint(equalTo: captureButton.topAnchor, constant: -12)
+        ])
     }
 
     // MARK: - Permission denied
@@ -320,6 +445,16 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         if photoOutput.supportedFlashModes.contains(.auto) {
             settings.flashMode = .auto
         }
+        // Capture at full sensor resolution once zoomed in, so the crop is taken
+        // from the high-res readout (a crisp 2x is a 12MP center crop of 48MP)
+        // rather than an upscaled bin; an un-zoomed shot keeps the lighter
+        // standard size for a snappier shutter.
+        if let device = videoDevice,
+           let maxDims = maxPhotoDimensions,
+           let stdDims = standardPhotoDimensions {
+            let zoomedIn = device.videoZoomFactor > baselineZoom * 1.1
+            settings.maxPhotoDimensions = zoomedIn ? maxDims : stdDims
+        }
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
 
@@ -328,9 +463,7 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         didFinishProcessingPhoto photo: AVCapturePhoto,
         error: Error?
     ) {
-        guard error == nil,
-              let data = photo.fileDataRepresentation(),
-              let image = UIImage(data: data) else {
+        guard error == nil, let data = photo.fileDataRepresentation() else {
             return
         }
 
@@ -338,8 +471,10 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
             self?.session.stopRunning()
         }
 
+        // Hand up the raw photo data so the consumer can downsample straight
+        // from it; a 48MP frame is never fully decoded into a UIImage here.
         DispatchQueue.main.async { [weak self] in
-            self?.onCapture?(image)
+            self?.onCapture?(data)
         }
     }
 
@@ -358,17 +493,16 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         let devicePoint = previewLayer.captureDevicePointConverted(fromLayerPoint: point)
 
         // Attempt to set focus on the underlying device.
-        if let input = session.inputs.first as? AVCaptureDeviceInput {
-            let device = input.device
-            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
-                do {
-                    try device.lockForConfiguration()
-                    device.focusPointOfInterest = devicePoint
-                    device.focusMode = .autoFocus
-                    device.unlockForConfiguration()
-                } catch {
-                    // Non-fatal — just skip focus adjustment.
-                }
+        if let device = videoDevice,
+           device.isFocusPointOfInterestSupported,
+           device.isFocusModeSupported(.autoFocus) {
+            do {
+                try device.lockForConfiguration()
+                device.focusPointOfInterest = devicePoint
+                device.focusMode = .autoFocus
+                device.unlockForConfiguration()
+            } catch {
+                // Non-fatal — just skip focus adjustment.
             }
         }
 
@@ -390,5 +524,84 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
             animations: { ring.alpha = 0 },
             completion: { _ in ring.removeFromSuperview() }
         )
+    }
+
+    // MARK: - Pinch-to-zoom
+
+    /// Continuous pinch-to-zoom. Scales from the zoom factor captured at
+    /// `.began`; on a multi-lens phone the system crosses into the optical
+    /// telephoto partway up the range. `applyZoom` does the clamping.
+    @objc private func handlePinchToZoom(_ recognizer: UIPinchGestureRecognizer) {
+        // The recognizer is only installed in `setUpCaptureUI`, so the device
+        // is non-nil here — but guard so a future change can't reach a device
+        // in the denied state, where no session was built.
+        guard captureConfigured, let device = videoDevice else { return }
+        switch recognizer.state {
+        case .began:
+            pinchStartZoom = device.videoZoomFactor
+            showZoomPill()
+        case .changed:
+            applyZoom(pinchStartZoom * recognizer.scale)
+        case .ended, .cancelled, .failed:
+            scheduleZoomPillFade()
+        default:
+            break
+        }
+    }
+
+    /// Set the device zoom factor, clamped to the allowed range and wrapped in
+    /// the required configuration lock. No-ops if locking fails (non-fatal).
+    private func applyZoom(_ factor: CGFloat) {
+        guard let device = videoDevice else { return }
+        let clamped = max(minZoom(for: device), min(factor, maxZoom(for: device)))
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = clamped
+            device.unlockForConfiguration()
+        } catch {
+            // Non-fatal — leave the zoom where it is.
+        }
+        zoomLabel?.text = zoomText(forFactor: device.videoZoomFactor)
+    }
+
+    /// Floor: never pinch out below the normal 1x view. The ultra-wide's wider,
+    /// more distorted frame isn't useful for reading a sign.
+    private func minZoom(for device: AVCaptureDevice) -> CGFloat {
+        max(device.minAvailableVideoZoomFactor, baselineZoom)
+    }
+
+    /// Ceiling: up to 10x the 1x view. On a tele phone the optical lens engages
+    /// partway up (sharp), with a little digital headroom past it for a distant
+    /// sign; clamped to what the device actually supports.
+    private func maxZoom(for device: AVCaptureDevice) -> CGFloat {
+        min(device.maxAvailableVideoZoomFactor, baselineZoom * 10.0)
+    }
+
+    /// The user-facing zoom multiple ("1×", "2.4×", "5×") for a raw device zoom
+    /// factor, taken relative to the 1x baseline so a multi-lens device reads in
+    /// familiar terms (factor 2.0 on a Pro shows "1×", not "2×").
+    private func zoomText(forFactor factor: CGFloat) -> String {
+        let multiple = max(1.0, factor / baselineZoom)
+        let oneDecimal = String(format: "%.1f", Double(multiple))
+        let trimmed = oneDecimal.hasSuffix(".0") ? String(oneDecimal.dropLast(2)) : oneDecimal
+        return trimmed + "×"
+    }
+
+    /// Bring the readout up immediately and hold it there for the pinch.
+    private func showZoomPill() {
+        zoomPillFadeWork?.cancel()
+        zoomPillFadeWork = nil
+        UIView.animate(withDuration: 0.15) { self.zoomPill?.alpha = 1 }
+    }
+
+    /// Fade the readout out a beat after the pinch ends, so it doesn't linger
+    /// over the shot. Re-scheduling cancels any in-flight fade.
+    private func scheduleZoomPillFade() {
+        zoomPillFadeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            UIView.animate(withDuration: 0.3) { self?.zoomPill?.alpha = 0 }
+        }
+        zoomPillFadeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 }
