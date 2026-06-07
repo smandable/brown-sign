@@ -388,7 +388,8 @@ nonisolated private func computeGateDrops(
 /// result (type, inception year).
 func enrichDiscoveredLandmark(
     _ candidate: LandmarkResult,
-    query: String
+    query: String,
+    onWikidata: (@MainActor (LandmarkResult) -> Void)? = nil
 ) async -> LandmarkResult {
     async let wikidata  = fetchWikidataEnrichment(for: candidate.title)
     async let polished  = polishSummary(candidate.rawSummary)
@@ -399,7 +400,32 @@ func enrichDiscoveredLandmark(
     )
     async let imageTask = downloadArticleImageWithFallback(candidate: candidate)
 
-    let wd      = await wikidata
+    // Resolve the FAST Wikidata task first and surface its fields (type /
+    // inception year / coords) right away via `onWikidata`, before awaiting the
+    // SLOW on-device LLM (polish + match score) and the image download below.
+    // The Nearby placeholder has coords but nil type/year, so the detail view's
+    // type/year chips otherwise wouldn't appear until the ~2s AI/image work
+    // finished. Committing them here makes them show in a few hundred ms.
+    // Wikidata is still fetched exactly once (reused for the final result).
+    let wd = await wikidata
+    if let onWikidata {
+        onWikidata(LandmarkResult(
+            title: candidate.title,
+            // Keep the same (unpolished) summary the placeholder already shows;
+            // the final result below upgrades it to the polished version.
+            summary: candidate.summary,
+            rawSummary: candidate.rawSummary,
+            pageURL: candidate.pageURL,
+            source: candidate.source,
+            articleImageURL: candidate.articleImageURL,
+            articleImageData: candidate.articleImageData,
+            coordinates: wd?.coordinate ?? candidate.coordinates,
+            inceptionYear: wd?.inceptionYear,
+            wikidataType: wd?.typeLabel,
+            onDeviceMatchScore: nil
+        ))
+    }
+
     let polish  = await polished
     let match   = await matchScore
     let imagePair = await imageTask

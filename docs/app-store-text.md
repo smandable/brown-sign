@@ -66,7 +66,7 @@ roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,tra
 ```
 New: when Brown Sign isn't sure a result is the right landmark, it now tells you so you can check the other matches.
 
-Nearby is steadier, too. It no longer skips landmarks at the edge of a page of results, the area you pan or widen to is remembered when you reopen the app, and the map behaves correctly even near the international date line.
+Nearby is steadier, too. It no longer skips landmarks at the edge of a page of results, the area you pan or widen to is remembered when you reopen the app, a landmark's type and founding year now fill in right away when you tap a result, and the map behaves correctly even near the international date line.
 
 Also in this release: a cleaner, more consistent look for the empty and directions screens, clearer wording on the camera and location permission prompts, better dark mode legibility, more VoiceOver and Dynamic Type support, and smoother, lighter photo loading as you scroll.
 ```

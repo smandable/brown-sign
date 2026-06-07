@@ -1461,7 +1461,18 @@ struct NearMeView: View {
         // clears type/year on a re-tap.
         pushedLookup = LandmarkLookup.upsert(result: result, in: modelContext)
         Task {
-            let enriched = await enrichDiscoveredLandmark(result, query: result.title)
+            let enriched = await enrichDiscoveredLandmark(
+                result,
+                query: result.title,
+                onWikidata: { partial in
+                    // Commit the fast Wikidata fields (type / inception year /
+                    // coords) as soon as they return so the detail-view chips
+                    // appear promptly instead of waiting on the on-device LLM and
+                    // image download. preserve-on-nil keeps this intermediate
+                    // write from clearing anything the placeholder already had.
+                    LandmarkLookup.upsert(result: partial, in: modelContext)
+                }
+            )
             LandmarkLookup.upsert(result: enriched, in: modelContext)
         }
     }
