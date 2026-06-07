@@ -284,25 +284,14 @@ struct HistoryView: View {
     /// user is) so the List/Map switcher stays meaningful even before
     /// the first lookup is saved.
     private var emptyHistoryView: some View {
-        VStack {
-            Spacer()
-            HStack(spacing: 16) {
-                Image(systemName: "signpost.right.and.left")
-                    .font(.system(size: 40, weight: .semibold))
-                    .foregroundStyle(Color("BrandBrown"))
-                    .frame(width: 54)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("No lookups yet")
-                        .font(.title.weight(.bold))
-                    Text("Snap a landmark sign to get started.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Shared house-style empty state (see BrandEmptyState) — the same
+        // layout Nearby's empty/offline states now use, so the two tabs read
+        // identically.
+        BrandEmptyState(
+            systemImage: "signpost.right.and.left",
+            title: "No lookups yet",
+            message: "Snap a landmark sign to get started."
+        )
     }
 
     /// Swipe-delete handler for the displayed (filtered) list. Index

@@ -304,11 +304,9 @@ struct NearMeView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Show the list/map picker whenever we've got a
-                // location, not just when results are loaded. In the
-                // .empty state we explicitly tell the user to switch
-                // to the map and pan — they need the switcher visible
-                // to actually do that.
+                // Persistent chrome: the picker + search field show in every
+                // state (see displayModePickerVisible), including the
+                // cold-start spinner, so the Nearby header never collapses.
                 if displayModePickerVisible {
                     DisplayModeSegmentedPicker(selection: $displayMode)
                         .padding(.horizontal)
@@ -329,13 +327,19 @@ struct NearMeView: View {
                 Group {
                     switch state {
                     case .idle, .loading:
-                        loadingView
+                        // Keep the radius header above the cold-start spinner
+                        // so the chrome is present from the first frame
+                        // instead of popping in once the first results land.
+                        VStack(spacing: 0) {
+                            radiusHeader
+                            loadingView
+                        }
                     case .locationDenied:
-                        ContentUnavailableView {
-                            Label("Location permission needed", systemImage: "location.slash")
-                        } description: {
-                            Text("Brown Sign uses your location to find landmarks near you. Turn on location access in Settings.")
-                        } actions: {
+                        BrandEmptyState(
+                            systemImage: "location.slash",
+                            title: "Location permission needed",
+                            message: "Brown Sign uses your location to find landmarks near you. Turn on location access in Settings."
+                        ) {
                             Button {
                                 LocationManager.openAppSettings()
                             } label: {
@@ -343,37 +347,55 @@ struct NearMeView: View {
                                     .fontWeight(.semibold)
                             }
                             .buttonStyle(.borderedProminent)
+                            // Match the Try again recovery button's larger,
+                            // better-padded size (see .serviceUnavailable).
+                            .controlSize(.large)
                             .tint(Color("BrandBrown"))
                             .buttonBorderShape(.roundedRectangle(radius: 12))
                         }
                     case .locationUnavailable:
-                        ContentUnavailableView(
-                            "Can't find your location",
+                        BrandEmptyState(
                             systemImage: "location.slash",
-                            description: Text("Try again once you have GPS signal.")
+                            title: "Can't find your location",
+                            message: "Try again once you have GPS signal."
                         )
                     case .serviceUnavailable:
                         // SPARQL fetch (Wikidata) failed transiently —
-                        // timed out, retries exhausted, or task
-                        // cancelled. Distinct from `.empty`: we can't
-                        // know whether the area has landmarks until
-                        // the service responds. Surface as retryable
-                        // so the user isn't told an area is empty
-                        // when it isn't.
-                        ContentUnavailableView {
-                            Label("Couldn't load landmarks", systemImage: "wifi.exclamationmark")
-                        } description: {
-                            Text("There was a problem reaching the landmark service. This is usually temporary.")
-                        } actions: {
-                            Button {
-                                startRefresh(force: true)
-                            } label: {
-                                Label("Try again", systemImage: "arrow.clockwise")
-                                    .fontWeight(.semibold)
+                        // timed out, retries exhausted, or (offline, the
+                        // common case) no network at all. Distinct from
+                        // `.empty`: we can't know whether the area has
+                        // landmarks until the service responds, so surface
+                        // it as retryable rather than calling the area empty.
+                        //
+                        // This state is only reached after a GPS fix, so we
+                        // have a location — keep the radius header + stepper
+                        // above the error so the nav chrome survives a
+                        // dropout. The +/- doubles as a retry at a new radius
+                        // alongside the explicit Try again button.
+                        VStack(spacing: 0) {
+                            radiusHeader
+                            BrandEmptyState(
+                                systemImage: "wifi.exclamationmark",
+                                title: "Couldn't load landmarks",
+                                message: "There was a problem reaching the landmark service. This is usually temporary."
+                            ) {
+                                Button {
+                                    startRefresh(force: true)
+                                } label: {
+                                    Label("Try again", systemImage: "arrow.clockwise")
+                                        .fontWeight(.semibold)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                // .large gives the recovery button real
+                                // height/padding; at the default size the label
+                                // was hugged so tightly the 12pt corners read as
+                                // an over-rounded pill. 12pt is the app's
+                                // standard radius — the size was the problem,
+                                // not the corners.
+                                .controlSize(.large)
+                                .tint(Color("BrandBrown"))
+                                .buttonBorderShape(.roundedRectangle(radius: 12))
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(Color("BrandBrown"))
-                            .buttonBorderShape(.roundedRectangle(radius: 12))
                         }
                     case .empty:
                         // In list mode, explain the emptiness and
@@ -383,11 +405,19 @@ struct NearMeView: View {
                         // populate as the user explores.
                         switch displayMode {
                         case .list:
-                            ContentUnavailableView(
-                                "No landmarks nearby",
-                                systemImage: "signpost.right.and.left",
-                                description: Text("No geo-tagged Wikipedia landmarks within \(currentRadiusMiles) miles of your location. Switch to the map to widen the search, or pan to a different area to keep exploring.")
-                            )
+                            // Keep the radius header (and its +/- stepper)
+                            // above the empty state so the search can be
+                            // widened right here instead of bouncing to the
+                            // map. The header pins to the top; the branded
+                            // empty state centres in the space below it.
+                            VStack(spacing: 0) {
+                                radiusHeader
+                                BrandEmptyState(
+                                    systemImage: "signpost.right.and.left",
+                                    title: "No landmarks nearby",
+                                    message: emptyListDescription
+                                )
+                            }
                         case .map:
                             nearbyMap([])
                         }
@@ -402,10 +432,10 @@ struct NearMeView: View {
                             // mode keeps the empty map so the user
                             // can pan-search to find more.
                             if visible.isEmpty && !trimmedSearch.isEmpty {
-                                ContentUnavailableView(
-                                    "No results",
+                                BrandEmptyState(
                                     systemImage: "magnifyingglass",
-                                    description: Text("No nearby landmarks match \"\(trimmedSearch)\".")
+                                    title: "No results",
+                                    message: "No nearby landmarks match \"\(trimmedSearch)\"."
                                 )
                             } else {
                                 list(visible)
@@ -610,19 +640,107 @@ struct NearMeView: View {
         }
     }
 
-    /// Show the list/map picker any time the user has a location —
-    /// even in the .empty state, because the empty-state copy tells
-    /// the user to switch to map and pan, and we need the picker
-    /// visible for them to do that.
-    private var displayModePickerVisible: Bool {
+    /// True when the empty-state list (with its radius header) is on screen.
+    /// Mirrors `isShowingMap`: a background refetch — e.g. tapping + to widen
+    /// an empty search — then keeps the header + stepper visible behind the
+    /// toolbar spinner instead of flashing the full-screen spinner and hiding
+    /// the control the user just tapped.
+    private var isShowingEmptyList: Bool {
+        if case .empty = state, displayMode == .list { return true }
+        return false
+    }
+
+    /// True when the service-unavailable view (with its radius header) is on
+    /// screen. Like `isShowingEmptyList`, this keeps a retry — Try again, or
+    /// tapping +/- to refetch — from flashing the full-screen spinner and
+    /// stripping the chrome; the error and its controls stay put behind the
+    /// toolbar spinner instead.
+    private var isShowingServiceUnavailable: Bool {
+        if case .serviceUnavailable = state { return true }
+        return false
+    }
+
+    /// The list/map picker + search field are persistent chrome, shown in
+    /// every state — including the cold-start spinner — so the Nearby header
+    /// never collapses or pops in.
+    private var displayModePickerVisible: Bool { true }
+
+    /// Whether the radius header (Within N miles + stepper) should appear. It
+    /// rides above the list, the empty/offline states, AND the cold-start
+    /// spinner — any state where we have a location or are actively getting
+    /// one — so the chrome is stable from the first frame. Deliberately NOT
+    /// gated on `userLocation != nil`: during the cold-start fix the location
+    /// isn't known yet, but we still want the header present. Only the
+    /// no-location terminal states (denied/unavailable) omit it.
+    private var radiusHeaderVisible: Bool {
         switch state {
-        case .loaded, .empty: return true
-        default: return false
+        case .locationDenied, .locationUnavailable: return false
+        default: return true
         }
     }
 
     private var loadingView: some View {
         NearbyLoadingView(message: loadingPhase.message)
+    }
+
+    /// Section header for the Nearby list: a "Within N miles of your
+    /// location" label plus the +/- radius stepper. Rendered above the list
+    /// rows, the empty/offline states, AND the cold-start spinner, so the
+    /// radius can be widened/tightened from anywhere and the chrome is stable
+    /// from the first frame. Visibility comes from `radiusHeaderVisible`, not
+    /// `userLocation` — during the cold-start fix the location isn't known
+    /// yet, but we still want the header present.
+    @ViewBuilder
+    private var radiusHeader: some View {
+        if radiusHeaderVisible {
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "location.fill")
+                    Text("Within \(currentRadiusMiles) miles of your location")
+                }
+                Spacer(minLength: 8)
+                // Trailing radius stepper so the list can widen/tighten
+                // the search without switching to the map. Same step
+                // logic as the map's zoom control.
+                RadiusStepper(
+                    canIncrease: canIncreaseRadius,
+                    canDecrease: canDecreaseRadius,
+                    onIncrease: { changeRadius(by: 1) },
+                    onDecrease: { changeRadius(by: -1) }
+                )
+            }
+            // Match the "Recent finds" section header on Scan
+            // (subheadline + semibold) so the three list-section
+            // labels read consistently across tabs. Lat/long
+            // values used to live in this string but wrapped to
+            // a second line at the larger size — dropped them
+            // since the user already knows where they are.
+            // Bottom padding matches Scan's 8pt VStack spacing
+            // between header and list; top stays at 16 for
+            // breathing room between the search field above and
+            // the section header.
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.accentColor)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+        }
+    }
+
+    /// Explainer copy for the empty Nearby list. While the radius can still
+    /// widen, point at the + stepper sitting right above this view (no need
+    /// to leave for the map); at the widest radius the + is disabled, so
+    /// suggest the map + pan instead.
+    private var emptyListDescription: String {
+        // The title ("No landmarks nearby") and the radius header above
+        // ("Within N miles of your location") already convey the emptiness,
+        // so this stays a short next-step line, matching History's brevity.
+        if canIncreaseRadius {
+            return "Tap + to widen the search, or switch to the map to explore a different area."
+        } else {
+            return "Switch to the map and pan to a different area to keep exploring."
+        }
     }
 
     @ViewBuilder
@@ -638,40 +756,7 @@ struct NearMeView: View {
         // top-rounded corners there — making the first visible row
         // look chopped.
         VStack(spacing: 0) {
-            if userLocation != nil {
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "location.fill")
-                        Text("Within \(currentRadiusMiles) miles of your location")
-                    }
-                    Spacer(minLength: 8)
-                    // Trailing radius stepper so the list can widen/tighten
-                    // the search without switching to the map. Same step
-                    // logic as the map's zoom control.
-                    RadiusStepper(
-                        canIncrease: canIncreaseRadius,
-                        canDecrease: canDecreaseRadius,
-                        onIncrease: { changeRadius(by: 1) },
-                        onDecrease: { changeRadius(by: -1) }
-                    )
-                }
-                // Match the "Recent finds" section header on Scan
-                // (subheadline + semibold) so the three list-section
-                // labels read consistently across tabs. Lat/long
-                // values used to live in this string but wrapped to
-                // a second line at the larger size — dropped them
-                // since the user already knows where they are.
-                // Bottom padding matches Scan's 8pt VStack spacing
-                // between header and list; top stays at 16 for
-                // breathing room between the search field above and
-                // the section header.
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 8)
-            }
+            radiusHeader
 
             List {
                 // Identify rows by canonical page URL — a stable
@@ -902,10 +987,12 @@ struct NearMeView: View {
         // populates.
         // Only flip to the full-screen spinner when there's genuinely
         // nothing on screen. If a map is already showing (loaded pins or
-        // the empty-area map), keep it visible during the refetch — when
-        // the radius control widens an empty search, the user should watch
-        // the map fill in, not lose it to a spinner.
-        if !hasResults && !isShowingMap {
+        // the empty-area map), or the empty list / service-unavailable view
+        // with its radius header is up, keep it visible during the refetch —
+        // when the radius control widens an empty search (or retries an
+        // offline one), the user should watch the view fill in and keep the
+        // +/- they just tapped, rather than lose it to a spinner.
+        if !hasResults && !isShowingMap && !isShowingEmptyList && !isShowingServiceUnavailable {
             loadingPhase = .locating
             state = .loading
         }

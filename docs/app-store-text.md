@@ -62,14 +62,16 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.5.0)
+## What's New (Version 1.5.1)
 ```
-New: zoom in to read distant signs. Pinch to zoom the camera as you frame a shot, with a small readout showing your current zoom. On iPhone models with a telephoto lens, zooming in switches to that lens for a closer, clearer view, and zoomed shots now hold more detail so faraway sign text is easier to read.
+A steadier Nearby tab. The List and Map switch, the search box, and the radius control now stay on screen in every state, including while landmarks are loading and when an area comes up empty or offline, so you can widen your search or switch views right away instead of waiting. The empty, offline, and permission screens also got a cleaner, more consistent look.
 ```
 
 ### Previous versions
 
 ```
+Version 1.5.0: Zoom in to read distant signs. Pinch to zoom the camera as you frame a shot, with a small readout showing your current zoom. On iPhone models with a telephoto lens, zooming in switches to that lens for a closer, clearer view, and zoomed shots now hold more detail so faraway sign text is easier to read.
+
 Version 1.4.12: Reliability and polish. If camera access is turned off, Brown Sign now shows a clear way to turn it back on instead of a blank screen. Nearby loading is steadier on slow or flaky connections, and a round of layout and accessibility touches keeps the app tidy, including at the largest text sizes.
 
 Version 1.4.11: A search-radius control on the Nearby tab. Tap plus or minus, on the list or right on the map, to widen or tighten your search from 2 up to 25 miles, and the results refresh around you. Widen the search and the list gives a gentle nudge so the landmarks that just came into range are easy to spot. Nearby is also noticeably more responsive: the heavy searching and photo loading now run off the main thread, so the screen stays smooth while results stream in, and more landmarks show their photo on the list and map thanks to a more reliable thumbnail fetch. When an area holds more landmarks than fit in one pass, a Load more button pulls in the rest.

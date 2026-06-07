@@ -164,3 +164,61 @@ func formatLandmarkDistance(_ meters: CLLocationDistance) -> String {
         return "\(Int(miles)) mi"
     }
 }
+
+/// Branded empty / error state: a brand-brown SF Symbol to the LEFT of a
+/// bold title, with a secondary detail line beneath the title and an
+/// optional action button under the row. This horizontal icon-left layout
+/// is the app's house style for these states — History's "No lookups yet"
+/// and the Scan how-it-works steps both use it — so Nearby's empty and
+/// offline states read consistently with the rest of the app instead of the
+/// centred `ContentUnavailableView` stack.
+///
+/// Vertically centred in whatever space it's given (Spacers top and bottom),
+/// so it drops straight into a tab's content area or below a header.
+struct BrandEmptyState<Actions: View>: View {
+    let systemImage: String
+    let title: String
+    let message: String
+    private let actions: Actions
+
+    init(
+        systemImage: String,
+        title: String,
+        message: String,
+        @ViewBuilder actions: () -> Actions = { EmptyView() }
+    ) {
+        self.systemImage = systemImage
+        self.title = title
+        self.message = message
+        self.actions = actions()
+    }
+
+    var body: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 20) {
+                HStack(spacing: 16) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 40, weight: .semibold))
+                        .foregroundStyle(Color("BrandBrown"))
+                        .frame(width: 54)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .font(.title.weight(.bold))
+                        Text(message)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                // A default-EmptyView action contributes no layout and no
+                // stack spacing, so the no-button case renders identically to
+                // a plain icon + title + detail row (e.g. History's empty
+                // state).
+                actions
+            }
+            .padding(.horizontal)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
