@@ -28,10 +28,10 @@ struct HiddenLandmarksView: View {
         NavigationStack {
             Group {
                 if hidden.isEmpty {
-                    ContentUnavailableView(
-                        "No hidden landmarks",
+                    BrandEmptyState(
                         systemImage: "eye",
-                        description: Text("Landmarks you hide from Nearby will appear here.")
+                        title: "No hidden landmarks",
+                        message: "Landmarks you hide from Nearby will appear here."
                     )
                 } else {
                     List {

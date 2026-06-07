@@ -92,10 +92,10 @@ struct HistoryView: View {
                                 // would centre the "No matches" copy
                                 // right on top of the "Recently viewed
                                 // landmarks" header row.
-                                ContentUnavailableView(
-                                    "No matches",
+                                BrandEmptyState(
                                     systemImage: "magnifyingglass",
-                                    description: Text("No saved lookups match \"\(searchText)\".")
+                                    title: "No matches",
+                                    message: "No saved lookups match \"\(searchText)\"."
                                 )
                             } else {
                                 // Header lives OUTSIDE the List so it
@@ -231,7 +231,6 @@ struct HistoryView: View {
                         Button("Delete All", role: .destructive) {
                             showDeleteAllConfirmation = true
                         }
-                        .foregroundStyle(.red)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -323,10 +322,7 @@ struct HistoryView: View {
 /// a continental-US default if location is denied or unavailable.
 private struct EmptyHistoryMapView: View {
     @State private var cameraPosition: MapCameraPosition = .userLocation(
-        fallback: .region(MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
-            span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
-        ))
+        fallback: .region(continentalUSRegion)
     )
     private let locationManager = LocationManager.shared
 
@@ -377,10 +373,10 @@ struct HistoryMapView: View {
 
     var body: some View {
         if mapped.isEmpty {
-            ContentUnavailableView(
-                "No mapped landmarks",
+            BrandEmptyState(
                 systemImage: "mappin.slash",
-                description: Text("Lookups with coordinates will appear here on a map.")
+                title: "No mapped landmarks",
+                message: "Lookups with coordinates will appear here on a map."
             )
         } else {
             ZStack(alignment: .bottom) {
@@ -435,31 +431,7 @@ struct HistoryMapView: View {
             guard let lat = $0.latitude, let lon = $0.longitude else { return nil }
             return CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }
-        guard !coords.isEmpty else {
-            return MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
-                span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
-            )
-        }
-        if coords.count == 1 {
-            return MKCoordinateRegion(
-                center: coords[0],
-                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-            )
-        }
-        let lats = coords.map(\.latitude)
-        let lons = coords.map(\.longitude)
-        let minLat = lats.min()!, maxLat = lats.max()!
-        let minLon = lons.min()!, maxLon = lons.max()!
-        let center = CLLocationCoordinate2D(
-            latitude: (minLat + maxLat) / 2,
-            longitude: (minLon + maxLon) / 2
-        )
-        let span = MKCoordinateSpan(
-            latitudeDelta: max(0.02, (maxLat - minLat) * 1.4),
-            longitudeDelta: max(0.02, (maxLon - minLon) * 1.4)
-        )
-        return MKCoordinateRegion(center: center, span: span)
+        return fittingRegion(for: coords, singlePointSpan: 0.05, padding: 1.4)
     }
 }
 
@@ -471,49 +443,14 @@ private struct SelectedLookupCard: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            NavigationLink(value: lookup) {
-                cardContent
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens the full landmark details")
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
-        )
-    }
-
-    /// Card content that's the tappable navigation target. "View
-    /// details" is a real NavigationLink (nested inside the outer
-    /// NavigationLink) so it keeps its press-state feedback as a
-    /// distinct button. Both push the same `lookup` value; SwiftUI
-    /// routes taps inside the inner link to it and taps elsewhere in
-    /// the card to the outer link.
-    private var cardContent: some View {
-        HStack(alignment: .top, spacing: 12) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 4) {
-                Text(lookup.resolvedTitle)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-                Text(lookup.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+        MapCalloutCard(
+            title: lookup.resolvedTitle,
+            summary: lookup.summary,
+            articleImageData: lookup.articleImageData,
+            articleImageURL: lookup.articleImageURL,
+            capturedImageData: lookup.imageData,
+            onDismiss: onDismiss,
+            detail: {
                 NavigationLink(value: lookup) {
                     Label("View details", systemImage: "text.alignleft")
                         .font(.caption.weight(.semibold))
@@ -521,19 +458,11 @@ private struct SelectedLookupCard: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color("BrandBrown"))
                 .controlSize(.small)
-                .padding(.top, 2)
+                .buttonBorderShape(.roundedRectangle(radius: 8))
+            },
+            wrap: { content in
+                NavigationLink(value: lookup) { content }
             }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    private var thumbnail: some View {
-        LandmarkThumbnail(
-            articleImageData: lookup.articleImageData,
-            articleImageURL: lookup.articleImageURL,
-            capturedImageData: lookup.imageData
         )
     }
 }
@@ -854,10 +783,14 @@ struct LandmarkDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if (lookup.onDeviceMatchScore ?? 1) < LowConfidenceMatchNote.threshold {
+                LowConfidenceMatchNote()
+            }
             if let lat = lookup.latitude, let lon = lookup.longitude {
                 Label(String(format: "%.4f, %.4f", lat, lon),
                       systemImage: "mappin.and.ellipse")
                     .font(.caption)
+                    .accessibilityLabel("Map coordinates")
                 Button {
                     showMapsDialog = true
                 } label: {

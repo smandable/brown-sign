@@ -62,14 +62,20 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.5.1)
+## What's New (Version 1.6.0)
 ```
-A steadier Nearby tab. The List and Map switch, the search box, and the radius control now stay on screen in every state, including while landmarks are loading and when an area comes up empty or offline, so you can widen your search or switch views right away instead of waiting. The empty, offline, and permission screens also got a cleaner, more consistent look.
+New: when Brown Sign isn't sure a result is the right landmark, it now tells you so you can check the other matches.
+
+Nearby is steadier, too. It no longer skips landmarks at the edge of a page of results, the area you pan or widen to is remembered when you reopen the app, and the map behaves correctly even near the international date line.
+
+Also in this release: a cleaner, more consistent look for the empty and directions screens, clearer wording on the camera and location permission prompts, better dark mode legibility, more VoiceOver and Dynamic Type support, and smoother, lighter photo loading as you scroll.
 ```
 
 ### Previous versions
 
 ```
+Version 1.5.1: A steadier Nearby tab. The List and Map switch, the search box, and the radius control now stay on screen in every state, including while landmarks are loading and when an area comes up empty or offline, so you can widen your search or switch views right away instead of waiting. The empty, offline, and permission screens also got a cleaner, more consistent look.
+
 Version 1.5.0: Zoom in to read distant signs. Pinch to zoom the camera as you frame a shot, with a small readout showing your current zoom. On iPhone models with a telephoto lens, zooming in switches to that lens for a closer, clearer view, and zoomed shots now hold more detail so faraway sign text is easier to read.
 
 Version 1.4.12: Reliability and polish. If camera access is turned off, Brown Sign now shows a clear way to turn it back on instead of a blank screen. Nearby loading is steadier on slow or flaky connections, and a round of layout and accessibility touches keeps the app tidy, including at the largest text sizes.
@@ -98,10 +104,10 @@ Version 1.0 — Initial release.
 ```
 
 ## Support URL
-https://github.com/seanmandable/brown-sign
+https://github.com/smandable/brown-sign
 
 ## Marketing URL (optional)
-https://github.com/seanmandable/brown-sign
+https://github.com/smandable/brown-sign
 
 ## Copyright
 © 2026 Sean Mandable

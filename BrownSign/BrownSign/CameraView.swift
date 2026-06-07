@@ -256,6 +256,7 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         captureButton.layer.borderColor = UIColor.white.withAlphaComponent(0.6).cgColor
         captureButton.layer.borderWidth = 3
         captureButton.translatesAutoresizingMaskIntoConstraints = false
+        captureButton.accessibilityLabel = "Take photo"
         captureButton.addTarget(self, action: #selector(capturePhoto), for: .touchUpInside)
         view.addSubview(captureButton)
 
@@ -278,6 +279,7 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         closeButton.backgroundColor = UIColor.black.withAlphaComponent(0.45)
         closeButton.layer.cornerRadius = 22
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.accessibilityLabel = "Close camera"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         view.addSubview(closeButton)
 
@@ -543,6 +545,12 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         case .changed:
             applyZoom(pinchStartZoom * recognizer.scale)
         case .ended, .cancelled, .failed:
+            if let device = videoDevice {
+                UIAccessibility.post(
+                    notification: .announcement,
+                    argument: "Zoom \(zoomText(forFactor: device.videoZoomFactor))"
+                )
+            }
             scheduleZoomPillFade()
         default:
             break

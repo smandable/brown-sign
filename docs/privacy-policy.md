@@ -1,6 +1,6 @@
 # Brown Sign — Privacy Policy
 
-**Effective date:** April 12, 2026
+**Effective date:** June 7, 2026
 
 Brown Sign is developed by Sean Mandable. This privacy policy explains what data the app accesses, how it's used, and what leaves your device.
 
@@ -10,13 +10,14 @@ Brown Sign is developed by Sean Mandable. This privacy policy explains what data
 | --- | --- | --- |
 | **Camera** | To photograph brown roadside signs for OCR text recognition | No. Photos are processed on-device and never uploaded. A small thumbnail is saved locally for your history log. |
 | **Location** | To rank landmark search results by distance from you | Only as coordinates in API queries to Wikipedia and Wikidata (e.g., "find articles near 41.5, -72.6"). Never sent to any analytics or tracking service. |
-| **Text you type** | To search for landmarks by name | Sent to Wikipedia, the National Park Service API, Wikidata, and Google Knowledge Graph as search queries. No personal identifiers are attached. |
+| **Text you type** | To search for landmarks by name | Sent to Wikipedia, the National Park Service API, and Wikidata as search queries. No personal identifiers are attached. |
 
 ## On-device processing
 
 - **OCR** (reading sign text from photos) runs entirely on-device using Apple's Vision framework.
 - **Apple Intelligence** features (text cleanup, summary polishing, match scoring) run on-device using Apple's FoundationModels framework. No text is sent to Apple or any cloud LLM.
 - **Search history** is stored locally on your device using SwiftData. It is never synced, uploaded, or backed up to any server.
+- **Nearby results** from your most recent search are cached on-device (in the app's Caches folder) so the Nearby tab opens instantly. The cache holds only public landmark data, never personal information, and is cleared when you delete the app.
 
 ## Third-party services
 
@@ -27,7 +28,6 @@ The app makes network requests to these services to look up landmark information
 | **Wikipedia / Wikimedia** | Search queries, coordinates | [wikimediafoundation.org/wiki/Privacy_policy](https://foundation.wikimedia.org/wiki/Privacy_policy) |
 | **Wikidata** | Landmark titles | Same as Wikipedia |
 | **National Park Service API** | Search queries | [nps.gov/aboutus/privacy.htm](https://www.nps.gov/aboutus/privacy.htm) |
-| **Google Knowledge Graph** | Landmark titles | [policies.google.com/privacy](https://policies.google.com/privacy) |
 
 No personal information (name, email, device ID, IP address) is intentionally sent to any of these services. Standard HTTPS requests may expose your IP address to the server, as with any internet connection.
 

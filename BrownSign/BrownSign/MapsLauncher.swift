@@ -43,10 +43,10 @@ struct DirectionsSheet: View {
                 span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008)
             ))) {
                 Marker(name, coordinate: coordinate)
-                    .tint(.brown)
+                    .tint(Color("BrandBrown"))
             }
             .frame(height: 200)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .allowsHitTesting(false)
 
             VStack(spacing: 4) {

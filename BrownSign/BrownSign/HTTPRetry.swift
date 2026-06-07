@@ -21,7 +21,7 @@ import Foundation
 /// require it, but identifying ourselves there is good manners too.
 nonisolated let brownSignUserAgent: String = {
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    return "BrownSign-iOS/\(version) (https://github.com/seanmandable/brown-sign)"
+    return "BrownSign-iOS/\(version) (https://github.com/smandable/brown-sign)"
 }()
 
 /// Builds a `URLRequest` carrying the shared `brownSignUserAgent` and a

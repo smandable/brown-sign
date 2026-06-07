@@ -79,6 +79,14 @@ struct NearMeView: View {
     /// session reaches it.
     private static let maxNearbyResults = 1000
 
+    /// Fallback row height (points) for the radius scroll-nudge before the
+    /// first row has been measured; a real measured value replaces it as soon
+    /// as a row appears.
+    private static let estimatedRowHeight: CGFloat = 84
+    /// Vertical chrome added to a measured row's content height: the 6pt top +
+    /// 6pt bottom `listRowInsets` applied to every Nearby row (6 + 6 = 12).
+    private static let rowVerticalInset: CGFloat = 12
+
     @State private var state: LoadState = .idle
     @State private var loadingPhase: LoadingPhase = .locating
     /// Index into `radiusOptionsMiles` for the current search radius.
@@ -216,6 +224,12 @@ struct NearMeView: View {
             }
             if filtered.count < current.count {
                 hasMore = false
+                // The filtered subset is no longer "page N of a fetch", so reset
+                // the page counter too. hasMore=false hides the footer now, and a
+                // later widen runs refresh() which sets pagesLoaded=1 — this just
+                // keeps the invariant "pagesLoaded describes the current fetch"
+                // true in the narrow branch instead of leaving it stale.
+                pagesLoaded = 0
                 if displayMode == .map {
                     // Map: zoom IN first (to the new radius) keeping the
                     // current pins, THEN trim the out-of-range ones once the
@@ -284,7 +298,7 @@ struct NearMeView: View {
                     // Read the live offset (List keeps it put when rows append
                     // below) and advance half a row, clamped so it never
                     // overscrolls past the content's end.
-                    let halfRow = (measuredRowHeight > 0 ? measuredRowHeight : 84) / 2
+                    let halfRow = (measuredRowHeight > 0 ? measuredRowHeight : Self.estimatedRowHeight) / 2
                     let maxOffsetY = max(
                         scrollView.contentSize.height
                             + scrollView.adjustedContentInset.bottom
@@ -814,9 +828,9 @@ struct NearMeView: View {
                         if isFirst {
                             GeometryReader { proxy in
                                 Color.clear
-                                    .onAppear { measuredRowHeight = proxy.size.height + 12 }
+                                    .onAppear { measuredRowHeight = proxy.size.height + Self.rowVerticalInset }
                                     .onChange(of: proxy.size.height) { _, h in
-                                        measuredRowHeight = h + 12
+                                        measuredRowHeight = h + Self.rowVerticalInset
                                     }
                             }
                         }
@@ -1252,9 +1266,11 @@ struct NearMeView: View {
         // actually is, capped). See `mergeResults`.
         guard case .loaded(let existing) = state else {
             state = .loaded(fresh)
+            await saveCurrentResultsToCache()
             return
         }
         state = .loaded(mergeResults(fresh, into: existing, user: userLocation, cap: Self.maxNearbyResults).merged)
+        await saveCurrentResultsToCache()
     }
 
     /// Widen the search around `center` (the panned map center) at the current
@@ -1312,9 +1328,11 @@ struct NearMeView: View {
             // capped), mirroring fetchAroundMapCenter. See `mergeResults`.
             guard case .loaded(let existing) = state else {
                 state = .loaded(fresh)
+                await saveCurrentResultsToCache()
                 return
             }
             state = .loaded(mergeResults(fresh, into: existing, user: userLocation, cap: Self.maxNearbyResults).merged)
+            await saveCurrentResultsToCache()
         }
     }
 
@@ -1361,6 +1379,31 @@ struct NearMeView: View {
     /// it to the list (dedup by canonical URL, re-sorted by distance from
     /// the user — same merge as pan-search). Driven by the "Load more" list
     /// footer, shown only while `hasMore`.
+    /// Persist the currently-loaded results for the next cold-start, anchored
+    /// to the user's GPS (so spatial invalidation still works) at the current
+    /// radius. Called after pan / radius-widen / load-more merges so re-opening
+    /// the app restores the area the user actually explored, not just the last
+    /// GPS-centered refresh. Note: stale-while-revalidate still runs a fresh
+    /// GPS-centered fetch on the next cold-start, which atomically replaces
+    /// these pins once it lands; this just makes the instant first paint show
+    /// the richer explored set. Best-effort and off-main; no-op without a
+    /// location or loaded results.
+    private func saveCurrentResultsToCache() async {
+        guard let user = userLocation,
+              case .loaded(let results) = state,
+              !results.isEmpty else { return }
+        await NearbyResultsCache.save(CachedNearbyFetch(
+            schemaVersion: NearbyResultsCache.currentSchema,
+            fetchCenter: Coordinate(
+                latitude: user.coordinate.latitude,
+                longitude: user.coordinate.longitude
+            ),
+            radiusMeters: currentRadiusMeters,
+            fetchedAt: Date(),
+            results: results
+        ))
+    }
+
     private func loadMore() {
         guard !isLoadingMore, hasMore, let user = userLocation else { return }
         isLoadingMore = true
@@ -1401,6 +1444,7 @@ struct NearMeView: View {
             // nothing, or once we've hit the result cap, so the user can't tap
             // "Load more" on a list that won't grow.
             hasMore = more && added > 0 && merged.count < Self.maxNearbyResults
+            await saveCurrentResultsToCache()
         }
     }
 
@@ -1420,454 +1464,5 @@ struct NearMeView: View {
             let enriched = await enrichDiscoveredLandmark(result, query: result.title)
             LandmarkLookup.upsert(result: enriched, in: modelContext)
         }
-    }
-}
-
-// MARK: - Loading
-
-/// Cold-start loading view for Nearby. Shows the current phase
-/// ("Getting your location…" → "Finding landmarks near you…") and,
-/// after a grace period, a reassurance line. A fresh install has no
-/// cached pins to mask the cold-start chain (a cold GPS first-fix plus
-/// a slow Wikidata pass can stack toward ~30 s before any cache
-/// exists), and a static spinner that long reads as "broken" — which
-/// is exactly what a first-run user reported. The grace timer lives
-/// here so it resets each time the loading view appears, and survives
-/// the locating→searching change (that only updates `message`, not
-/// view identity, so `.task` isn't restarted).
-private struct NearbyLoadingView: View {
-    let message: String
-    @State private var showSlowHint = false
-
-    var body: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            if showSlowHint {
-                Text("Still working — this can take a moment.")
-                    .font(.footnote)
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-                    .transition(.opacity)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 32)
-        .animation(.easeInOut(duration: 0.25), value: message)
-        .animation(.easeInOut(duration: 0.25), value: showSlowHint)
-        .task {
-            // ~12 s: long enough that the common (now interim-fix-seeded)
-            // path never shows it, short enough to reassure before the
-            // user concludes it's frozen and leaves the tab.
-            try? await Task.sleep(for: .seconds(12))
-            showSlowHint = true
-        }
-    }
-}
-
-// MARK: - Row
-
-private struct NearbyRow: View {
-    let result: LandmarkResult
-    let userLocation: CLLocation?
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 4) {
-                Text(result.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(result.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                HStack(spacing: 8) {
-                    if let coord = result.coordinates {
-                        let d = distanceMeters(from: userLocation, to: coord)
-                        // Manual HStack instead of Label so the
-                        // location-arrow / number gap is tighter than
-                        // the default Label spacing.
-                        HStack(spacing: 3) {
-                            Image(systemName: "location")
-                            Text(formatLandmarkDistance(d))
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    if let type = result.wikidataType {
-                        Text(type)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-    }
-
-    private var thumbnail: some View {
-        // Nearby list results carry only a remote URL (bytes aren't
-        // downloaded until tap-time enrichment), so this resolves through
-        // AsyncImage; passing the (usually nil) data keeps it correct if
-        // that ever changes. See `LandmarkThumbnail`.
-        LandmarkThumbnail(
-            articleImageData: result.articleImageData,
-            articleImageURL: result.articleImageURL
-        )
-    }
-
-    private func distanceMeters(from user: CLLocation?, to coord: Coordinate) -> CLLocationDistance {
-        guard let user else { return 0 }
-        let other = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-        return user.distance(from: other)
-    }
-}
-
-// MARK: - Map mode
-
-/// Map alternative for the Nearby tab. Drops a brown signpost pin per
-/// nearby result, plus the user-location dot, with selection-driven
-/// callout card mirroring the History map.
-private struct NearbyMapView: View {
-    let results: [LandmarkResult]
-    let userLocation: CLLocation?
-    /// Parent-driven "snap back to user" counter. When this changes,
-    /// the map re-fits its camera on the user's location. Used by
-    /// the toolbar refresh button to bring the user home after they
-    /// panned away.
-    let recenterSignal: Int
-    let onSelect: (LandmarkResult) -> Void
-    /// Called at the end of every camera gesture with the new map
-    /// center. Parent decides (via `panRefetchThresholdMeters`)
-    /// whether the pan was significant enough to warrant a new
-    /// geosearch at this location.
-    let onMapCenterChanged: (CLLocationCoordinate2D) -> Void
-    /// Radius-control wiring from the parent (same actions as the list header
-    /// stepper), surfaced here as an Apple/Google-style zoom control. The map
-    /// inverts them to zoom convention at the call site below, so its +/- read
-    /// opposite to the list stepper by design. The current radius (miles)
-    /// shows between the buttons as the scale cue, since the map has no
-    /// "Within N miles" header like the list does.
-    let radiusMiles: Int
-    let canIncreaseRadius: Bool
-    let canDecreaseRadius: Bool
-    let onIncreaseRadius: () -> Void
-    let onDecreaseRadius: () -> Void
-    /// True while a fetch is in flight — shows a "Loading…" pill at the
-    /// bottom of the map (the map keeps its current pins meanwhile).
-    let isLoading: Bool
-    /// Optional explicit recenter target. A radius-decrease sets this to the
-    /// new (smaller) radius so the camera zooms IN before the pins are
-    /// trimmed; nil means "fit the current pins" (the normal recenter).
-    let recenterRegion: MKCoordinateRegion?
-
-    @State private var cameraPosition: MapCameraPosition = .automatic
-    @State private var selectedID: String?
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Map(position: $cameraPosition, selection: $selectedID) {
-                UserAnnotation()
-                ForEach(results, id: \.pageURL) { result in
-                    if let coord = result.coordinates {
-                        Marker(
-                            result.title,
-                            systemImage: "signpost.right.fill",
-                            coordinate: CLLocationCoordinate2D(
-                                latitude: coord.latitude,
-                                longitude: coord.longitude
-                            )
-                        )
-                        .tint(Color("BrandBrown"))
-                        .tag(result.pageURL.absoluteString)
-                    }
-                }
-            }
-            .mapControls {
-                MapUserLocationButton()
-                MapCompass()
-            }
-            .onAppear {
-                cameraPosition = .region(initialRegion())
-            }
-            .onChange(of: recenterSignal) { _, _ in
-                // Recenter: use a parent-supplied region when present (a
-                // radius-decrease zooms to the new radius BEFORE its pins
-                // are trimmed); otherwise fit the current pins.
-                withAnimation { cameraPosition = .region(recenterRegion ?? initialRegion()) }
-            }
-            .onMapCameraChange(frequency: .onEnd) { context in
-                // Report the new map center to the parent at the end
-                // of every gesture. The parent compares against its
-                // last-fetched center and decides whether the pan was
-                // significant enough to warrant another geosearch.
-                // `.onEnd` only fires after the user stops
-                // interacting, so we don't spam refetches mid-gesture.
-                onMapCenterChanged(context.region.center)
-            }
-            // Apple/Google-style zoom control, bottom-trailing (where map
-            // apps usually put it). Follows zoom convention ("+" = zoom in =
-            // fewer miles), the inverse of the list stepper; see the call
-            // site for the wiring. Shows the current radius between the
-            // buttons. Hidden while a pin's card is up so it doesn't sit
-            // underneath it.
-            .overlay(alignment: .bottomTrailing) {
-                if selectedID == nil {
-                    MapZoomControl(
-                        miles: radiusMiles,
-                        // zoom in = fewer miles = parent's "decrease"
-                        // (and vice versa); inverted so the list keeps +=more
-                        canZoomIn: canDecreaseRadius,
-                        canZoomOut: canIncreaseRadius,
-                        onZoomIn: onDecreaseRadius,
-                        onZoomOut: onIncreaseRadius
-                    )
-                    .padding(.trailing, 10)
-                    .padding(.bottom, 10)
-                    .transition(.opacity)
-                }
-            }
-
-            // "Loading…" pill, bottom-centre, while a fetch is in flight
-            // (e.g. widening the radius). Hidden when a pin's card is up.
-            if isLoading, selectedID == nil {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading…")
-                        .font(.caption.weight(.semibold))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(.regularMaterial))
-                .padding(.bottom, 12)
-                .transition(.opacity)
-            }
-
-            if let id = selectedID,
-               let selected = results.first(where: { $0.pageURL.absoluteString == id }) {
-                SelectedNearbyCard(
-                    result: selected,
-                    onView: { onSelect(selected) },
-                    onDismiss: { selectedID = nil }
-                )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: selectedID)
-        .animation(.easeInOut(duration: 0.2), value: isLoading)
-        .toolbarBackground(.visible, for: .tabBar)
-    }
-
-    /// Fit the bounding box of the user-location dot plus every pin with
-    /// 40% padding. Tighter than a fixed-span center-on-user in dense
-    /// areas (pins cluster); opens up naturally when results are spread
-    /// out to the 5-mile search radius.
-    private func initialRegion() -> MKCoordinateRegion {
-        var points: [CLLocationCoordinate2D] = []
-        if let user = userLocation {
-            points.append(user.coordinate)
-        }
-        for r in results {
-            if let c = r.coordinates {
-                points.append(CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude))
-            }
-        }
-        guard !points.isEmpty else {
-            return MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
-                span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
-            )
-        }
-        if points.count == 1 {
-            return MKCoordinateRegion(
-                center: points[0],
-                span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03)
-            )
-        }
-        let lats = points.map(\.latitude), lons = points.map(\.longitude)
-        let center = CLLocationCoordinate2D(
-            latitude: (lats.min()! + lats.max()!) / 2,
-            longitude: (lons.min()! + lons.max()!) / 2
-        )
-        let span = MKCoordinateSpan(
-            latitudeDelta: max(0.02, (lats.max()! - lats.min()!) * 1.2),
-            longitudeDelta: max(0.02, (lons.max()! - lons.min()!) * 1.2)
-        )
-        return MKCoordinateRegion(center: center, span: span)
-    }
-}
-
-// MARK: - Radius controls
-
-/// Apple/Google-style map zoom control: a vertical +/- pair on a
-/// material background, overlaid on the Nearby map. Follows true map
-/// zoom convention: "+" (top) zooms IN, tightening the search radius
-/// (fewer miles); "−" zooms OUT, widening it. Both disable at the ends
-/// of the ladder. This is intentionally the inverse of the list header's
-/// RadiusStepper (where "+" reads as "more miles"): on a map, "+" = zoom
-/// in is the expected gesture. The "N mi" between the buttons is the
-/// scale cue, since the map has no "Within N miles" header.
-private struct MapZoomControl: View {
-    let miles: Int
-    let canZoomIn: Bool
-    let canZoomOut: Bool
-    let onZoomIn: () -> Void
-    let onZoomOut: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            button("plus", action: onZoomIn, enabled: canZoomIn)
-            Divider().frame(width: 44)
-            // Current search radius — the scale cue, since the map has no
-            // "Within N miles" header like the list.
-            Text("\(miles) mi")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 44, height: 28)
-            Divider().frame(width: 44)
-            button("minus", action: onZoomOut, enabled: canZoomOut)
-        }
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
-        .accessibilityElement(children: .contain)
-    }
-
-    private func button(_ systemName: String, action: @escaping () -> Void, enabled: Bool) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.35))
-        .disabled(!enabled)
-        .accessibilityLabel(systemName == "plus" ? "Zoom in, tighter radius" : "Zoom out, wider radius")
-    }
-}
-
-/// Compact radius stepper for the Nearby list header: a joined −/+
-/// capsule that steps the search radius (mirrors the map's zoom
-/// control). "−" tightens, "+" widens; both disable at the ladder ends.
-private struct RadiusStepper: View {
-    let canIncrease: Bool
-    let canDecrease: Bool
-    let onIncrease: () -> Void
-    let onDecrease: () -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            button("minus", action: onDecrease, enabled: canDecrease)
-            Divider().frame(height: 16)
-            button("plus", action: onIncrease, enabled: canIncrease)
-        }
-        .background(Color(.tertiarySystemFill))
-        .clipShape(Capsule())
-    }
-
-    private func button(_ systemName: String, action: @escaping () -> Void, enabled: Bool) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.footnote.weight(.semibold))
-                .frame(width: 32, height: 26)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.accentColor : Color.secondary.opacity(0.4))
-        .disabled(!enabled)
-        .accessibilityLabel(systemName == "plus" ? "Widen search radius" : "Tighten search radius")
-    }
-}
-
-/// Compact summary card shown over the Nearby map when a pin is
-/// selected. The whole card body is a single tap target that calls
-/// `onView` (the enrich + push flow shared with the list rows). The X
-/// is a sibling button so dismissing the card doesn't also trigger
-/// navigation.
-private struct SelectedNearbyCard: View {
-    let result: LandmarkResult
-    let onView: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Button(action: onView) {
-                cardContent
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens the full landmark details")
-
-            Button {
-                onDismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
-        )
-    }
-
-    /// Card content that's the tappable area. "View details" is a
-    /// real Button (nested inside the outer Button) so it gets press
-    /// feedback as its own tap target. SwiftUI routes taps inside the
-    /// inner button to it; taps elsewhere in the card fire the outer
-    /// button — both call `onView`, so the destination is the same
-    /// either way.
-    private var cardContent: some View {
-        HStack(alignment: .top, spacing: 12) {
-            thumbnail
-            VStack(alignment: .leading, spacing: 4) {
-                Text(result.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-                Text(result.summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                Button(action: onView) {
-                    Label("View details", systemImage: "text.alignleft")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("BrandBrown"))
-                .controlSize(.small)
-                .buttonBorderShape(.roundedRectangle(radius: 8))
-                .padding(.top, 2)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-
-    private var thumbnail: some View {
-        LandmarkThumbnail(
-            articleImageData: result.articleImageData,
-            articleImageURL: result.articleImageURL
-        )
     }
 }

@@ -114,10 +114,21 @@ nonisolated private func fetchWikidataClaimsByWikipediaTitle(_ title: String) as
 
 // MARK: - Claim parsers
 
-/// Digs `claims.P625[0].mainsnak.datavalue.value` for `latitude`/`longitude`.
+/// Picks the most authoritative statement from a Wikidata claim array: a
+/// `preferred`-rank statement if any exists, otherwise the first
+/// non-`deprecated` one. Wikidata does not order statements by rank in the
+/// JSON, so taking `list.first` blindly can land on a deprecated or
+/// superseded value (e.g. an old coordinate, or a generic `building` P31
+/// listed ahead of the specific `lighthouse`).
+nonisolated private func bestClaim(from list: [[String: Any]]) -> [String: Any]? {
+    let usable = list.filter { ($0["rank"] as? String) != "deprecated" }
+    return usable.first(where: { ($0["rank"] as? String) == "preferred" }) ?? usable.first
+}
+
+/// Digs `claims.P625` (best-rank statement) for `latitude`/`longitude`.
 private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
     guard let list = claims["P625"] as? [[String: Any]],
-          let first = list.first,
+          let first = bestClaim(from: list),
           let mainsnak = first["mainsnak"] as? [String: Any],
           let datavalue = mainsnak["datavalue"] as? [String: Any],
           let value = datavalue["value"] as? [String: Any],
@@ -134,7 +145,7 @@ private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
 /// dissolved (P576) parsers since both claims have the same shape.
 nonisolated private func parseClaimYear(from claims: [String: Any], property: String) -> Int? {
     guard let list = claims[property] as? [[String: Any]],
-          let first = list.first,
+          let first = bestClaim(from: list),
           let mainsnak = first["mainsnak"] as? [String: Any],
           let datavalue = mainsnak["datavalue"] as? [String: Any],
           let value = datavalue["value"] as? [String: Any],
@@ -155,7 +166,7 @@ nonisolated private func parseInceptionYear(from claims: [String: Any]) -> Int? 
 /// Digs `claims.P31[0].mainsnak.datavalue.value.id` (e.g. "Q33506").
 private func parseInstanceOfQID(from claims: [String: Any]) -> String? {
     guard let list = claims["P31"] as? [[String: Any]],
-          let first = list.first,
+          let first = bestClaim(from: list),
           let mainsnak = first["mainsnak"] as? [String: Any],
           let datavalue = mainsnak["datavalue"] as? [String: Any],
           let value = datavalue["value"] as? [String: Any],

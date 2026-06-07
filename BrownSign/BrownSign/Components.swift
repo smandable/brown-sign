@@ -11,6 +11,7 @@
 
 import SwiftUI
 import CoreLocation
+import MapKit
 import UIKit
 
 // MARK: - List / Map display mode
@@ -101,19 +102,59 @@ struct LandmarkThumbnail: View {
     var size: CGFloat = 56
     var cornerRadius: CGFloat = 8
 
+    /// Decoded once off the main actor and cached, so a List never
+    /// re-decodes the persisted ~800px JPEG bytes inside `body` on every
+    /// row render / scroll frame (it only needs a `size`-pt slot).
+    /// Repopulated via `.task(id:)` whenever the input bytes change.
+    @State private var decoded: UIImage?
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         content
             .frame(width: size, height: size)
             .clipped()
             .contentShape(Rectangle())
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            // Decorative: the row/card title already names the landmark, so
+            // the thumbnail is a redundant VoiceOver stop.
+            .accessibilityHidden(true)
+            .task(id: cacheKey) {
+                guard let bytes = inlineBytes else {
+                    decoded = nil
+                    return
+                }
+                // Decode at ~3x the display size for retina crispness, off
+                // the main actor via ImageIO so a full bitmap is never
+                // materialised just to fill a small slot.
+                let target = size * 3
+                decoded = await Task.detached(priority: .utility) {
+                    UIImage.downsampled(from: bytes, maxDimension: target)
+                }.value
+            }
+    }
+
+    /// The bytes (if any) decoded inline. Prefers the persisted article
+    /// image; the remote-URL case is handled by `AsyncImage` instead (so it
+    /// contributes no inline bytes); the captured photo is the last resort
+    /// before the placeholder.
+    private var inlineBytes: Data? {
+        if let articleImageData { return articleImageData }
+        if articleImageURL != nil { return nil }
+        return capturedImageData
+    }
+
+    /// Cheap, stable identity for `.task(id:)` so SwiftUI doesn't compare
+    /// whole Data blobs each update; byte counts change whenever the
+    /// underlying image does in practice.
+    private var cacheKey: String {
+        "\(articleImageData?.count ?? -1)|\(capturedImageData?.count ?? -1)|\(articleImageURL?.absoluteString ?? "")|\(size)"
     }
 
     @ViewBuilder
     private var content: some View {
-        if let articleImageData, let image = UIImage(data: articleImageData) {
-            Image(uiImage: image).resizable().scaledToFill()
-        } else if let articleImageURL {
+        if let decoded {
+            Image(uiImage: decoded).resizable().scaledToFill()
+        } else if articleImageData == nil, let articleImageURL {
             AsyncImage(url: articleImageURL) { phase in
                 switch phase {
                 case .success(let image):
@@ -124,6 +165,10 @@ struct LandmarkThumbnail: View {
                     capturedOrPlaceholder
                 }
             }
+        } else if inlineBytes != nil {
+            // Bytes present but the off-main decode hasn't landed yet
+            // (first frame): a neutral tile, not a flash of the placeholder.
+            Color.secondary.opacity(0.1)
         } else {
             capturedOrPlaceholder
         }
@@ -134,11 +179,18 @@ struct LandmarkThumbnail: View {
         if let capturedImageData, let image = UIImage(data: capturedImageData) {
             Image(uiImage: image).resizable().scaledToFill()
         } else {
-            Color("BrandBrown").opacity(0.18)
+            // Keep the warm brand-brown tile in light mode; in dark mode a
+            // dark-brown glyph on a dark tile reads as a near-empty square, so
+            // bump the tile and use a light glyph for legible contrast.
+            Color("BrandBrown").opacity(colorScheme == .dark ? 0.28 : 0.18)
                 .overlay {
                     Image(systemName: "signpost.right.fill")
                         .font(.title2)
-                        .foregroundStyle(Color("BrandBrown").opacity(0.55))
+                        .foregroundStyle(
+                            colorScheme == .dark
+                                ? Color.white.opacity(0.55)
+                                : Color("BrandBrown").opacity(0.55)
+                        )
                 }
         }
     }
@@ -162,6 +214,85 @@ func formatLandmarkDistance(_ meters: CLLocationDistance) -> String {
         }
         if miles < 10 { return String(format: "%.1f mi", miles) }
         return "\(Int(miles)) mi"
+    }
+}
+
+// MARK: - Map region fitting
+
+/// Default map region when there are no points to fit: the continental US.
+let continentalUSRegion = MKCoordinateRegion(
+    center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.35),
+    span: MKCoordinateSpan(latitudeDelta: 40, longitudeDelta: 50)
+)
+
+/// Builds a map region that fits `coords`:
+/// - empty → the continental-US default
+/// - one point → a fixed `singlePointSpan`° box around it
+/// - otherwise → the bounding box scaled by `padding`, floored at a 0.02° span
+///
+/// Guards the antimeridian: a raw longitude span over 180° (pins straddling
+/// ±180°) would otherwise put the midpoint on the wrong side of the planet and
+/// zoom out to the whole globe, so it falls back to a local 0.5° box on the
+/// first point. Shared by the Nearby and History maps, which pass their own
+/// `singlePointSpan` / `padding` to keep each tab's feel.
+func fittingRegion(
+    for coords: [CLLocationCoordinate2D],
+    singlePointSpan: CLLocationDegrees,
+    padding: Double
+) -> MKCoordinateRegion {
+    guard !coords.isEmpty else { return continentalUSRegion }
+    if coords.count == 1 {
+        return MKCoordinateRegion(
+            center: coords[0],
+            span: MKCoordinateSpan(latitudeDelta: singlePointSpan, longitudeDelta: singlePointSpan)
+        )
+    }
+    let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
+    let minLat = lats.min()!, maxLat = lats.max()!
+    let minLon = lons.min()!, maxLon = lons.max()!
+    if maxLon - minLon > 180 {
+        return MKCoordinateRegion(
+            center: coords[0],
+            span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
+        )
+    }
+    let center = CLLocationCoordinate2D(
+        latitude: (minLat + maxLat) / 2,
+        longitude: (minLon + maxLon) / 2
+    )
+    let span = MKCoordinateSpan(
+        latitudeDelta: max(0.02, (maxLat - minLat) * padding),
+        longitudeDelta: max(0.02, (maxLon - minLon) * padding)
+    )
+    return MKCoordinateRegion(center: center, span: span)
+}
+
+// MARK: - Low-confidence match note
+
+/// A plain-language note shown ONLY when the on-device Apple Intelligence
+/// match score is low, i.e. the model wasn't confident the resolved landmark
+/// is actually the place the user searched for. Above the threshold no note
+/// is shown at all (no noise on good results, and no exposing a fuzzy,
+/// precise-looking percentage). The copy explains itself because a raw score
+/// means nothing to a user; it reads as a gentle "this might be wrong, check
+/// the other matches" nudge rather than an alarm.
+struct LowConfidenceMatchNote: View {
+    /// Show the note only when the on-device match score is below this. The
+    /// score is a soft self-estimate from a small on-device model, so the
+    /// cutoff is deliberately forgiving to avoid second-guessing decent
+    /// matches.
+    static let threshold: Double = 0.6
+
+    var body: some View {
+        Label(
+            "Brown Sign isn't fully sure this is the right landmark",
+            systemImage: "questionmark.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(
+            "Uncertain match. Brown Sign isn't fully sure this is the right landmark."
+        )
     }
 }
 
@@ -220,5 +351,80 @@ struct BrandEmptyState<Actions: View>: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Map callout card
+
+/// The compact card shown over a map when a pin is selected: a tappable
+/// thumbnail + title + 2-line summary + "View details" affordance, with an X
+/// dismiss button beside it on a 12pt card with the standard callout shadow.
+/// The Nearby and History maps share this chrome and layout; each injects its
+/// own tap primitive (a Button vs a NavigationLink) for both the whole card
+/// (`wrap`) and the inner "View details" control (`detail`), so the navigation
+/// wiring stays per-tab while the look lives here once.
+struct MapCalloutCard<Wrapped: View, Detail: View>: View {
+    let title: String
+    let summary: String
+    var articleImageData: Data? = nil
+    var articleImageURL: URL? = nil
+    var capturedImageData: Data? = nil
+    let onDismiss: () -> Void
+    /// The inner "View details" control, fully styled by the caller.
+    @ViewBuilder let detail: () -> Detail
+    /// Wraps the whole card content as the primary tap target.
+    @ViewBuilder let wrap: (AnyView) -> Wrapped
+
+    private var cardContent: some View {
+        HStack(alignment: .top, spacing: 12) {
+            LandmarkThumbnail(
+                articleImageData: articleImageData,
+                articleImageURL: articleImageURL,
+                capturedImageData: capturedImageData
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                // "View details" is a real control nested inside the outer tap
+                // wrapper so it keeps its own press feedback; SwiftUI routes
+                // taps inside it to it and taps elsewhere to the outer wrapper.
+                // Both go to the same destination.
+                detail()
+                    .padding(.top, 2)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            wrap(AnyView(cardContent))
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the full landmark details")
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+        )
     }
 }

@@ -2,9 +2,9 @@
 
 Point your iPhone at one of those brown roadside landmark signs and instantly find out what it is — or skip the scan entirely and discover geo-tagged Wikipedia landmarks around you via the Nearby tab, including a pan-to-search map that lets you explore any stretch of road.
 
-A fully on-device OCR + Apple Intelligence pipeline with a four-source landmark resolver (Wikipedia, NPS, Wikidata, Google Knowledge Graph), location-aware ranking, an interactive map view of every find, and a directions launcher for Google Maps, Waze, and Apple Maps.
+A fully on-device OCR + Apple Intelligence pipeline with a three-source landmark resolver (Wikipedia, NPS, Wikidata), location-aware ranking, an interactive map view of every find, and a directions launcher for Google Maps, Waze, and Apple Maps.
 
-[![Download on the App Store](https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg)](https://apps.apple.com/app/brown-sign/id000000000)
+[![Download on the App Store](https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg)](https://apps.apple.com/us/app/brown-sign/id6762070205)
 
 ## How it works
 
@@ -46,7 +46,6 @@ Camera / typed text
   Phase-2 enrichment (top candidate only):
   → Apple Intelligence summary polish
   → Apple Intelligence match score
-  → Google Knowledge Graph confidence
   → Article image download + resize
         │
         ▼
@@ -78,13 +77,13 @@ User location (or panned map center)
    └────┬─────────────────────┘
         ▼
   Render list / map. Tap a row or pin →
-  enrich (full Wikidata + AI polish + Google KG +
+  enrich (full Wikidata + AI polish +
   match score + image) and push the detail view.
 ```
 
 ## Features
 
-- **Nearby discovery tab** — surfaces brown-sign-worthy landmarks around you, no scan required. The fetch primary is a Wikidata SPARQL query that returns only items with a heritage designation (P1435 — NRHP, state register, etc.) or a curated landmark P31 type (museum, park, monument, lighthouse, trail, theatre building, university campus building, …) via `wdt:P31/wdt:P279*` so subclasses like "state park" or "art museum" come along automatically. List shows the closest hits within an adjustable radius (2/5/10/25 miles, default 2), up to 300 per fetch. Map supports **pan-to-search**: as you move the map center more than half the current radius away from the last fetch, a new SPARQL query fires at the new location and pins accumulate. Pan across a state and you build up a dotted trail of landmarks as you go. Wikipedia summaries and thumbnails hydrate in parallel via the REST endpoints; tap a row (or pin) to enrich (full Wikidata + AI polish + Google KG + match score + image) in the background and push the standard detail view, just like a scan result. Cold-start auto-retry: if the GPS first-fix didn't land in time, the view waits 1 second and tries once more before showing the empty state. **Transient SPARQL failure** (Wikidata timeout, retry exhaustion, task cancellation) routes to a distinct `Couldn't load landmarks` state with a brand-brown "Try again" button — the empty-area copy is reserved for cases where Wikidata actually answered with zero hits.
+- **Nearby discovery tab** — surfaces brown-sign-worthy landmarks around you, no scan required. The fetch primary is a Wikidata SPARQL query that returns only items with a heritage designation (P1435 — NRHP, state register, etc.) or a curated landmark P31 type (museum, park, monument, lighthouse, trail, theatre building, university campus building, …) via `wdt:P31/wdt:P279*` so subclasses like "state park" or "art museum" come along automatically. List shows the closest hits within an adjustable radius (2/5/10/25 miles, default 2), up to 300 per fetch. Map supports **pan-to-search**: as you move the map center more than half the current radius away from the last fetch, a new SPARQL query fires at the new location and pins accumulate. Pan across a state and you build up a dotted trail of landmarks as you go. Wikipedia summaries and thumbnails hydrate in parallel via the REST endpoints; tap a row (or pin) to enrich (full Wikidata + AI polish + match score + image) in the background and push the standard detail view, just like a scan result. Cold-start auto-retry: if the GPS first-fix didn't land in time, the view waits 1 second and tries once more before showing the empty state. **Transient SPARQL failure** (Wikidata timeout, retry exhaustion, task cancellation) routes to a distinct `Couldn't load landmarks` state with a brand-brown "Try again" button — the empty-area copy is reserved for cases where Wikidata actually answered with zero hits.
 - **Persistent Nearby chrome + shared empty-state house style** — the List/Map switcher, search field, and "Within N miles of your location" radius stepper stay on screen in *every* Nearby state, including the cold-start spinner and the empty / offline / permission screens, so the search radius and view are always adjustable. Radius-header visibility keys off a state rule (`radiusHeaderVisible`) rather than `userLocation`, so it shows during the first-fix spinner too; widening an empty or offline search refetches in place (toolbar spinner) instead of flashing the full-screen loader. All five Nearby states (no landmarks, couldn't-load, permission-needed, can't-find-location, no-results) and History's empty state render through one shared `BrandEmptyState` component — a brand-brown SF Symbol on the left, bold title, secondary detail, and an optional `.controlSize(.large)` action button — matching the Scan how-it-works steps and History's "No lookups yet".
 - **Stale-while-revalidate cold-start** — the most recent Nearby fetch is cached to disk (`Caches/nearby_results_cache.json`) and rendered instantly on the next cold-start while a fresh SPARQL + hydration runs in the background. Pins from your last session show immediately; the fresh results swap in atomically when the stream finishes. Spatial invalidation drops the cached pins if your new GPS fix is more than one search radius from the cached center (you've moved cities). Combined with **progressive rendering** that hydrates and gates the closest 30 hits as a first batch before the remaining 70, and **pre-warming the GPS** at app launch via `LocationManager.warmUpIfAuthorized()` (no permission prompt — only fires when already authorized), the perceived cold-start time approaches zero on subsequent opens. On the **very first open** (fresh install — no cache and no warm fix yet, the one path that can't be masked), two things keep it from looking broken: `currentLocation(withTimeout:)` **seeds from iOS's last-known system fix** when it's inside the same 5-minute freshness window the location cache already trusts, so the SPARQL fetch can fire immediately instead of blocking on a cold first-fix (skipped on a forced refresh, which still demands a guaranteed-fresh `requestLocation()`); and the loading view is **phase-aware** — it narrates locating → searching and adds a "Still working" reassurance line after a 12-second grace period, so a genuinely slow first load reads as working rather than frozen.
 - **Chained thumbnail resolver** — articles where MediaWiki's `prop=pageimages` doesn't have an indexed lead thumbnail get patched in two more steps: REST `/page/summary/{title}` (smarter "lead image" heuristic), then if that's also empty, the first gallery-worthy image from `/page/media-list/{title}`. The media-list step catches articles like the Middletown–Portland Railroad Bridge whose only photo lives inline in the body. The bulk hydration in `wikipediaFetchPageDetailsByTitles` runs the chain in parallel for any nil-thumbnail rows so the Nearby list/map agree with what the detail-view's carousel finds.
@@ -97,7 +96,7 @@ User location (or panned map center)
 - **On-device Apple Intelligence** via FoundationModels:
   - Cleans up noisy OCR text into a searchable landmark name
   - Polishes long Wikipedia extracts into 2–3 sentence card summaries
-  - Scores whether a candidate actually matches the query (0–1 confidence)
+  - Scores how well a candidate matches the query (0 to 1); when that confidence is low, the result and detail cards show a short "Brown Sign isn't fully sure this is the right landmark" note so you know to check the other matches
 - **Location-aware search** — Wikipedia geosearch within 10 km finds articles near you, merged with global text search. Exact title matches sort first, then by distance. "Wadsworth" near Middletown, CT returns the mansion down the road, not a city in Ohio.
 - **Smart filtering** — three-pass type filter (Wikidata P31 blocklist → place-indicator whitelist → default reject) drops bands, films, food, hoaxes, people, and other non-landmarks. Title-token overlap rejects Wikipedia body-text matches ("East Haven" won't appear for "Fort Nathan Hale"). NPS fallback is also gated on title relevance.
 - **Operating-institution gate (Nearby second pass)** — even after the SPARQL filter, NRHP-listed buildings can still house active institutions: Seymour High School in Connecticut has a heritage-designated building AND is a working high school, so SPARQL surfaces it via P1435. The gate strips these. **Strict tier** (schools, hospitals, fire stations, post offices, train stations) requires Wikidata P576 (closure date) — heritage designation alone is not enough. **Lenient tier** (churches) accepts P576 *or* P1435, since a recognized landmark church is typically both active and historic ("unless they are historic or a landmark"). Titles that already advertise themselves as historic ("Old Greenwich High School", "Former Hartford Hospital") skip the fetch entirely.
@@ -115,7 +114,7 @@ User location (or panned map center)
 - **Source badge links** — tap "Wikipedia" or "NPS" in the detail view to open the full article in Safari
 - **UIKit text input** — the search field is a UIViewRepresentable wrapping UITextField for reliable focus, cursor placement, and text selection inside a ScrollView
 - **Keyboard toolbar** — dismiss button (⌨↓) and search button (🔍) built into the text field's input accessory view
-- **Graceful fallbacks** — every external call (Wikipedia, NPS, Wikidata, Google KG, Apple Intelligence, CoreLocation) fails silently to nil. The app works end-to-end even with no API keys, no location permission, and no Apple Intelligence.
+- **Graceful fallbacks** — every external call (Wikipedia, NPS, Wikidata, Apple Intelligence, CoreLocation) fails silently to nil. The app works end-to-end even with no API key, no location permission, and no Apple Intelligence.
 - **Adaptive color palette** — four asset-catalog colors with separate light/dark values: `AccentColor` for caption text and toolbar tinting (forest green light, muted sage dark — tuned for readable contrast on each surface), `AccentButton` for filled controls (slightly more saturated so white-on-green clears WCAG AA in dark mode), `CardBackground` for list rows, the Scan recents card, and the detail-view metadata block (warm parchment light, warm dark dark), and `BrandBrown` for the signpost hero, secondary brown action buttons (View full details / Read full article / Share / View details), the Nearby map pins, the gradient wash at the top of the Scan tab, and placeholder thumbnails — replaces a scatter of inline `Color(red:green:blue:)` literals and lighter `Color.brown` references with one canonical token. Lists hide iOS's default `systemGroupedBackground` and paint `CardBackground` instead, with `.scrollContentBackground(.hidden)` so swipe-action areas inherit the same surface (no seam between sliding row and page bg). Switched lists from `.insetGrouped` to `.plain` style with explicit `listRowInsets` so row content lines up with the picker / search field above instead of double-padding.
 - **Unified 12pt corner-radius language** — every card-class element across all three tabs renders at 12pt: Scan textfield + signpost hero + result card outer + alternatives panel + metadata chips + recent-finds list, Nearby + History textfields + lists + map clipShape + map-pin callout cards, primary action buttons (Snap / Look it up) and secondary action buttons (View full details / Read full article / Share). Thumbnails scale proportionally — 8pt for 56×56, 6pt for 44×44 — at the iOS-HIG sweet spot of ~14% radius:dimension. Custom `DisplayModeSegmentedPicker` replaces SwiftUI's `.pickerStyle(.segmented)` (whose inner `UISegmentedControl` ignores `.frame(height:)`) so the List/Map switcher on Nearby + History matches the textfield height below it and uses the same 12pt outer radius, with a per-trait adaptive selected-pill fill so dark mode lifts the selection instead of sinking it.
 - **Focus-driven textfield strokes** — all three search fields (Scan, Nearby, History) carry a `RoundedRectangle` overlay stroke that's `Color.accentColor` lineWidth 2 when focused and `Color.secondary.opacity(0.35)` lineWidth 1 when not, with a leading magnifying-glass icon. Driven from each field's `@FocusState` so the visual state always matches keyboard ownership.
@@ -134,7 +133,6 @@ User location (or panned map center)
 | Search | Wikipedia MediaWiki API (text search, geosearch, pageimages, extracts) |
 | Enrichment | Wikidata API (sitelinks entity lookup, P625/P571/P31 claims) |
 | Fallback | NPS developer API (`/parks` + `/places`) |
-| Confidence | Google Knowledge Graph Search API |
 | Article reading | SafariServices (`SFSafariViewController`) |
 
 No third-party Swift packages. Stock Apple frameworks only.
@@ -154,14 +152,12 @@ No third-party Swift packages. Stock Apple frameworks only.
    import Foundation
 
    let npsAPIKey = "YOUR_NPS_KEY"
-   let googleKnowledgeGraphAPIKey = "YOUR_GOOGLE_KG_KEY"
    ```
    - **NPS:** free — [developer.nps.gov](https://www.nps.gov/subjects/developer/get-started.htm)
-   - **Google KG:** [Google Cloud Console](https://console.cloud.google.com/) → enable Knowledge Graph Search API → create API key
-   - Missing keys are handled gracefully (NPS and Google KG paths return nil)
+   - Missing key is handled gracefully (the NPS path returns nil)
 3. Verify these Info.plist / build settings are set:
-   - `NSCameraUsageDescription` — "To read brown signs and identify landmarks"
-   - `NSLocationWhenInUseUsageDescription` — "To bias landmark searches toward places near you"
+   - `NSCameraUsageDescription` — "Brown Sign uses the camera to read brown roadside signs and identify the landmark."
+   - `NSLocationWhenInUseUsageDescription` — "Brown Sign uses your location to show landmarks near you and rank results by distance."
    - `LSApplicationQueriesSchemes` — `comgooglemaps`, `waze`
    - `ITSAppUsesNonExemptEncryption` — `NO`
 4. Select your development team under Signing & Capabilities
@@ -195,7 +191,6 @@ No third-party Swift packages. Stock Apple frameworks only.
 | `WikidataLandmarkSearch.swift` | SPARQL geo-spatial query against `query.wikidata.org` — primary fetch for the Nearby tab. Returns only items with a heritage designation (P1435) or a curated landmark P31 type (recursive via P279*). Returns `nil` on transport failure (HTTP retries exhausted) and `[]` only on a successful empty response, so the caller can route transient WDQS hiccups to a retryable `serviceUnavailable` UI rather than silently rendering "No landmarks nearby" |
 | `HTTPRetry.swift` | Shared retry helper (`httpDataWithRetry`) — default 3 attempts with 500 ms + 1.5 s backoff, retries on 502/503/504/429 + URL errors, honors task cancellation. Used by the SPARQL fetch and all the Wikipedia/Wikidata API calls (search, geosearch, page-detail batches, REST summary/media-list, entity claims/labels) plus the Wikimedia article-image download |
 | `NPSSearch.swift` | `/parks` + `/places` fallback with article images |
-| `GoogleKnowledgeGraphSearch.swift` | External confidence scoring |
 | `LandmarkResult.swift` | The unified result model (`Coordinate` + `LandmarkResult`). Pure data — orchestration lives in `LandmarkSearch.swift`. |
 | `LandmarkSearch.swift` | Two-phase scan orchestrator + Nearby orchestrator (SPARQL + Wikipedia hydration + operating-institution gate), type filter, title-match filter, place indicators |
 | `LandmarkLookup.swift` | SwiftData `@Model` — history entries with all enrichment fields. `LandmarkLookup.upsert(result:in:rawSignText:capturedThumb:)` is the shared insert-or-update (keyed on canonical page URL; preserve-on-nil for enrichment fields) used by both Scan and Nearby |
@@ -204,7 +199,7 @@ No third-party Swift packages. Stock Apple frameworks only.
 
 ## Privacy
 
-Brown Sign collects no personal data. Camera images are processed on-device. Location is used only to rank nearby results. Search queries go to Wikipedia, Wikidata, NPS, and Google KG with no personal identifiers attached. No accounts, no analytics, no ads, no tracking.
+Brown Sign collects no personal data. Camera images are processed on-device. Location is used only to rank nearby results. Search queries go to Wikipedia, Wikidata, and NPS with no personal identifiers attached. No accounts, no analytics, no ads, no tracking.
 
 Full privacy policy: [docs/privacy-policy.md](docs/privacy-policy.md)
 

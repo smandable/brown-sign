@@ -34,9 +34,8 @@ final class LandmarkLookup {
     var inceptionYear: Int?
     var wikidataType: String?
 
-    // Confidence scores
-    var externalConfidence: Double?   // Google Knowledge Graph
-    var onDeviceMatchScore: Double?   // FoundationModels
+    // Confidence score
+    var onDeviceMatchScore: Double?   // FoundationModels match judgment
 
     init(
         rawSignText: String,
@@ -52,7 +51,6 @@ final class LandmarkLookup {
         longitude: Double? = nil,
         inceptionYear: Int? = nil,
         wikidataType: String? = nil,
-        externalConfidence: Double? = nil,
         onDeviceMatchScore: Double? = nil
     ) {
         self.id = UUID()
@@ -70,7 +68,6 @@ final class LandmarkLookup {
         self.longitude = longitude
         self.inceptionYear = inceptionYear
         self.wikidataType = wikidataType
-        self.externalConfidence = externalConfidence
         self.onDeviceMatchScore = onDeviceMatchScore
     }
 
@@ -89,7 +86,7 @@ extension LandmarkLookup {
     ///
     /// Title/summary/source/image-URL/coordinates always refresh to the
     /// latest result. The enrichment fields (inception year, type,
-    /// confidence scores) refresh ONLY when the new result actually
+    /// match score) refresh ONLY when the new result actually
     /// carries them — a later pass that came back without enrichment
     /// must not wipe a value an earlier pass found. (This is the
     /// previously-divergent behaviour: the Scan copy used to overwrite
@@ -127,7 +124,6 @@ extension LandmarkLookup {
             existing.longitude = res.coordinates?.longitude
             if let year = res.inceptionYear { existing.inceptionYear = year }
             if let type = res.wikidataType { existing.wikidataType = type }
-            if let kg = res.externalConfidence { existing.externalConfidence = kg }
             if let m = res.onDeviceMatchScore { existing.onDeviceMatchScore = m }
             if let capturedThumb { existing.imageData = capturedThumb }
             existing.date = Date()
@@ -148,7 +144,6 @@ extension LandmarkLookup {
             longitude: res.coordinates?.longitude,
             inceptionYear: res.inceptionYear,
             wikidataType: res.wikidataType,
-            externalConfidence: res.externalConfidence,
             onDeviceMatchScore: res.onDeviceMatchScore
         )
         context.insert(lookup)

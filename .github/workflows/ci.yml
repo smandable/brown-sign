@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  coordinate-parser-tests:
+    name: CoordinateParser unit tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        # The package's source is a relative symlink into the app target
+        # (Sources/CoordinateParser/CoordinateParser.swift ->
+        # ../../../BrownSign/CoordinateParser.swift); checkout preserves it.
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run the coordinate-parser test suite
+        run: swift test --package-path BrownSign/CoordinateParserTests

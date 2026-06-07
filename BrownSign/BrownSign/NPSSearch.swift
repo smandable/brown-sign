@@ -103,14 +103,21 @@ private func fetchNPSPlace(query: String) async -> NPSResult? {
     guard let decoded = try? JSONDecoder().decode(PlacesResponse.self, from: data),
           let first = decoded.data.first,
           let name = first.title, !name.isEmpty,
-          let desc = first.listingDescription, !desc.isEmpty,
           let urlString = first.url,
           let pageURL = URL(string: urlString) else {
         return nil
     }
+    // Many entries in the /places dataset have an empty or absent
+    // listingDescription but are still valid historic places with a title,
+    // url, and image. Fall back to a generic blurb so a title-only match
+    // still resolves to a card instead of dropping the result entirely.
+    let listing = first.listingDescription ?? ""
+    let summary = listing.isEmpty
+        ? "A historic place documented by the National Park Service."
+        : listing
     return NPSResult(
         title: name,
-        summary: desc,
+        summary: summary,
         pageURL: pageURL,
         imageURL: firstValidImageURL(first.images)
     )

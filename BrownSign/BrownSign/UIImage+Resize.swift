@@ -51,7 +51,7 @@ extension UIImage {
     /// The result's longest edge is at most `maxDimension` px, with the source's
     /// EXIF orientation baked in so it comes out upright. Returns nil only when
     /// the data isn't a decodable image.
-    static func downsampled(from data: Data, maxDimension: CGFloat) -> UIImage? {
+    nonisolated static func downsampled(from data: Data, maxDimension: CGFloat) -> UIImage? {
         let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
             return nil

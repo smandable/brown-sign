@@ -4,8 +4,7 @@
 //
 //  The unified landmark result model used across the scan and Nearby
 //  tabs. Constructed by the orchestrators in `LandmarkSearch.swift`,
-//  which fan out to Wikipedia, NPS, Wikidata, Google Knowledge Graph,
-//  and Apple Intelligence.
+//  which fan out to Wikipedia, NPS, Wikidata, and Apple Intelligence.
 //
 
 import Foundation
@@ -39,8 +38,6 @@ nonisolated struct LandmarkResult: Codable {
     let coordinates: Coordinate?
     let inceptionYear: Int?
     let wikidataType: String?
-    /// Google Knowledge Graph resultScore (relative, not bounded 0–1).
-    let externalConfidence: Double?
     /// Apple Intelligence on-device match judgment (0.0–1.0).
     let onDeviceMatchScore: Double?
 }

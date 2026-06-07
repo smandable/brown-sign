@@ -3,9 +3,8 @@
 //  BrownSign
 //
 //  Top-level orchestrators that fan out to Wikipedia, NPS, Wikidata,
-//  Google Knowledge Graph, and Apple Intelligence to produce
-//  `LandmarkResult` values for the scan and Nearby tabs. The model
-//  itself lives in `LandmarkResult.swift`.
+//  and Apple Intelligence to produce `LandmarkResult` values for the
+//  scan and Nearby tabs. The model itself lives in `LandmarkResult.swift`.
 //
 
 import Foundation
@@ -16,10 +15,10 @@ import UIKit
 
 /// Phase-1 candidate search. Returns all plausible landmarks as
 /// lightweight `LandmarkResult` values (basic info + Wikidata enrichment,
-/// but no polish/Google KG/match score). Sorted nearby-first when a user
+/// but no polish/match score). Sorted nearby-first when a user
 /// location is available, otherwise text-rank order.
 ///
-/// The slower phase-2 work (summary polish, Google KG, on-device match
+/// The slower phase-2 work (summary polish, on-device match
 /// judgment) runs per-candidate only when the user actually selects one,
 /// via `enrichLandmark(_:query:)`.
 func searchLandmarkCandidates(
@@ -110,7 +109,6 @@ func searchLandmarkCandidates(
             coordinates: pair.wd?.coordinate,
             inceptionYear: pair.wd?.inceptionYear,
             wikidataType: pair.wd?.typeLabel,
-            externalConfidence: nil,
             onDeviceMatchScore: nil
         )
         var distance: CLLocationDistance?
@@ -155,7 +153,6 @@ func searchLandmarkCandidates(
             coordinates: wd?.coordinate,
             inceptionYear: wd?.inceptionYear,
             wikidataType: wd?.typeLabel,
-            externalConfidence: nil,
             onDeviceMatchScore: nil
         )
         results.append(npsResult)
@@ -349,7 +346,6 @@ nonisolated private func hydrateAndGateBatch(
             coordinates: hit.coordinate,
             inceptionYear: nil,
             wikidataType: nil,
-            externalConfidence: nil,
             onDeviceMatchScore: nil
         ))
     }
@@ -395,7 +391,6 @@ func enrichDiscoveredLandmark(
     query: String
 ) async -> LandmarkResult {
     async let wikidata  = fetchWikidataEnrichment(for: candidate.title)
-    async let kgScore   = fetchGoogleKGConfidence(for: candidate.title)
     async let polished  = polishSummary(candidate.rawSummary)
     async let matchScore = judgeMatch(
         query: query,
@@ -405,7 +400,6 @@ func enrichDiscoveredLandmark(
     async let imageTask = downloadArticleImageWithFallback(candidate: candidate)
 
     let wd      = await wikidata
-    let kg      = await kgScore
     let polish  = await polished
     let match   = await matchScore
     let imagePair = await imageTask
@@ -425,14 +419,13 @@ func enrichDiscoveredLandmark(
         coordinates: coord,
         inceptionYear: wd?.inceptionYear,
         wikidataType: wd?.typeLabel,
-        externalConfidence: kg,
         onDeviceMatchScore: match
     )
 }
 
 /// Phase-2 enrichment. Takes a basic candidate and runs the slower
 /// per-candidate work in parallel: Apple Intelligence summary polish,
-/// Google Knowledge Graph confidence, on-device match judgment, AND
+/// on-device match judgment, AND
 /// downloading + resizing the article image bytes so we never have to
 /// rely on AsyncImage's unreliable network fetch at display time.
 /// Always succeeds (all underlying calls fall back gracefully).
@@ -440,7 +433,6 @@ func enrichLandmark(
     _ candidate: LandmarkResult,
     query: String
 ) async -> LandmarkResult {
-    async let kgScore    = fetchGoogleKGConfidence(for: candidate.title)
     async let polished   = polishSummary(candidate.rawSummary)
     async let matchScore = judgeMatch(
         query: query,
@@ -453,7 +445,6 @@ func enrichLandmark(
     // results don't pay an extra roundtrip.
     async let coordsTask = backfillCoordinatesIfNeeded(for: candidate)
 
-    let kg      = await kgScore
     let polish  = await polished
     let match   = await matchScore
     let imagePair = await imageTask
@@ -470,7 +461,6 @@ func enrichLandmark(
         coordinates: coords,
         inceptionYear: candidate.inceptionYear,
         wikidataType: candidate.wikidataType,
-        externalConfidence: kg,
         onDeviceMatchScore: match
     )
 }
@@ -518,10 +508,17 @@ private func downloadArticleImageWithFallback(
 /// SwiftData store small.
 private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Data? {
     #if canImport(UIKit)
-    guard let image = UIImage(data: data) else { return data }
-    let longest = max(image.size.width, image.size.height)
-    if longest <= maxDimension { return data }
-    return image.resized(toMaxDimension: maxDimension).jpegData(compressionQuality: 0.8)
+    // Downsample straight from the compressed bytes with ImageIO so a
+    // multi-megapixel Wikimedia original (the REST summary prefers the
+    // full-resolution `originalimage`) is never fully decoded into a bitmap
+    // just to shrink it to ~800px. `downsampled` never upscales, so a
+    // smaller source comes back at its own size. Returns nil when the bytes
+    // aren't a decodable image (e.g. an HTML error page handed back on a
+    // 200), so we never persist junk as a thumbnail.
+    guard let downsized = UIImage.downsampled(from: data, maxDimension: maxDimension) else {
+        return nil
+    }
+    return downsized.jpegData(compressionQuality: 0.8)
     #else
     return data
     #endif

@@ -130,7 +130,17 @@ struct ContentView: View {
                             LandmarkTextField(
                                 text: $signText,
                                 isFocused: $isSignTextFocused,
-                                onSearch: { Task { await lookUp() } }
+                                onSearch: {
+                                    // Mirror the "Look it up" button's guard so
+                                    // the keyboard Search key can't launch an
+                                    // overlapping lookUp() (which would double
+                                    // the review-prompt counter and race the
+                                    // result/savedLookup writes) or run a no-op
+                                    // pipeline on empty text.
+                                    let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    guard !trimmed.isEmpty, !isProcessing, !isSearching else { return }
+                                    Task { await lookUp() }
+                                }
                             )
                             .frame(minHeight: 28)
                             .onChange(of: signText) { _, _ in
@@ -719,16 +729,22 @@ struct ContentView: View {
 
     @ViewBuilder
     private func metadataChips(for result: LandmarkResult) -> some View {
+        let lowConfidence = (result.onDeviceMatchScore ?? 1) < LowConfidenceMatchNote.threshold
         let hasAny = result.coordinates != nil
             || result.inceptionYear != nil
             || result.wikidataType != nil
+            || lowConfidence
 
         if hasAny {
             VStack(alignment: .leading, spacing: 4) {
+                if lowConfidence {
+                    LowConfidenceMatchNote()
+                }
                 if let coord = result.coordinates {
                     Label(String(format: "%.4f, %.4f", coord.latitude, coord.longitude),
                           systemImage: "mappin.and.ellipse")
                         .font(.caption)
+                        .accessibilityLabel("Map coordinates")
                     Button {
                         showMapsDialog = true
                     } label: {

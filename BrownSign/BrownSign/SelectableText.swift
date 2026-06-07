@@ -38,6 +38,8 @@ struct SelectableText: UIViewRepresentable {
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Live-scale with Dynamic Type instead of only on view rebuild.
+        tv.adjustsFontForContentSizeCategory = true
         configure(tv)
         return tv
     }

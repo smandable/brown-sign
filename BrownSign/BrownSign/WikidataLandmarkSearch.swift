@@ -103,6 +103,9 @@ nonisolated func discoverLandmarksViaSPARQL(
     radiusKm: Double,
     offset: Int = 0
 ) async -> [WikidataLandmarkHit]? {
+    // Reject non-finite inputs so a NaN/inf coordinate can't be interpolated
+    // into the SPARQL Point() literal and produce a malformed query.
+    guard centerLat.isFinite, centerLon.isFinite, radiusKm.isFinite else { return nil }
     let valuesBlock = landmarkP31QIDs.map { "wd:\($0)" }.joined(separator: " ")
     // `wikibase:distance ?dist` binds each hit's distance from center (km),
     // so `ORDER BY ?dist` returns the CLOSEST results first. Without it the
@@ -111,6 +114,10 @@ nonisolated func discoverLandmarksViaSPARQL(
     // client-side "closest 100" was 100-closest-of-an-arbitrary-subset, not
     // the true closest. Ordering server-side guarantees the limit drops only
     // the FARTHEST items — correct at any radius the radius control allows.
+    // `?item` is a deterministic secondary key (the unique QID URI) so the
+    // OFFSET window is stable between the page-1 and page-2 queries: without
+    // it, rows sharing an identical ?dist could be reordered across the two
+    // independent requests and a landmark at the page seam skipped entirely.
     let query = """
     SELECT DISTINCT ?item ?article ?coord ?dist WHERE {
       SERVICE wikibase:around {
@@ -128,7 +135,7 @@ nonisolated func discoverLandmarksViaSPARQL(
       ?article schema:about ?item ;
                schema:isPartOf <https://en.wikipedia.org/> .
     }
-    ORDER BY ?dist
+    ORDER BY ?dist ?item
     LIMIT \(sparqlResultLimit)
     OFFSET \(offset)
     """
