@@ -84,11 +84,11 @@ extension LandmarkLookup {
     /// result's canonical page URL. Updating bumps `date` so the row
     /// moves back to the top of History.
     ///
-    /// Title/summary/source/image-URL/coordinates always refresh to the
-    /// latest result. The enrichment fields (inception year, type,
-    /// match score) refresh ONLY when the new result actually
-    /// carries them — a later pass that came back without enrichment
-    /// must not wipe a value an earlier pass found. (This is the
+    /// Title/summary/source/image-URL always refresh to the latest result.
+    /// The enrichment fields (coordinates, inception year, type, match score)
+    /// refresh ONLY when the new result actually carries them — a later pass
+    /// that came back without enrichment must not wipe a value an earlier
+    /// pass found. (This is the
     /// previously-divergent behaviour: the Scan copy used to overwrite
     /// these unconditionally, so a re-save with nil enrichment cleared
     /// them; the Nearby copy preserved them. Preserving is correct — the
@@ -120,8 +120,8 @@ extension LandmarkLookup {
             // search actually fetched new ones — preserve the prior copy
             // if this enrichment pass happened to fail.
             if let newData = res.articleImageData { existing.articleImageData = newData }
-            existing.latitude = res.coordinates?.latitude
-            existing.longitude = res.coordinates?.longitude
+            if let lat = res.coordinates?.latitude { existing.latitude = lat }
+            if let lon = res.coordinates?.longitude { existing.longitude = lon }
             if let year = res.inceptionYear { existing.inceptionYear = year }
             if let type = res.wikidataType { existing.wikidataType = type }
             if let m = res.onDeviceMatchScore { existing.onDeviceMatchScore = m }

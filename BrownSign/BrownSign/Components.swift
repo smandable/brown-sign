@@ -102,12 +102,27 @@ struct LandmarkThumbnail: View {
     var size: CGFloat = 56
     var cornerRadius: CGFloat = 8
 
-    /// Decoded once off the main actor and cached, so a List never
-    /// re-decodes the persisted ~800px JPEG bytes inside `body` on every
-    /// row render / scroll frame (it only needs a `size`-pt slot).
-    /// Repopulated via `.task(id:)` whenever the input bytes change.
-    @State private var decoded: UIImage?
+    /// This instance's freshly-decoded image, tagged with the key it was
+    /// decoded for so a recycled row never renders a stale image. Backed by a
+    /// process-wide `cache` so a row that scrolls back re-shows instantly
+    /// without re-decoding off the main actor.
+    @State private var decoded: Decoded?
+    /// Set when inline bytes are present but fail to decode, so `content`
+    /// degrades to the URL / captured photo / placeholder instead of parking
+    /// on a permanent neutral tile.
+    @State private var decodeFailed = false
     @Environment(\.colorScheme) private var colorScheme
+
+    private struct Decoded { let key: String; let image: UIImage }
+
+    /// Process-wide decoded-thumbnail cache, keyed by `cacheKey`, so a given
+    /// (bytes, size) is only ImageIO-decoded once and recycled List rows
+    /// re-show instantly with no flash.
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 250
+        return c
+    }()
 
     var body: some View {
         content
@@ -118,19 +133,41 @@ struct LandmarkThumbnail: View {
             // Decorative: the row/card title already names the landmark, so
             // the thumbnail is a redundant VoiceOver stop.
             .accessibilityHidden(true)
-            .task(id: cacheKey) {
-                guard let bytes = inlineBytes else {
-                    decoded = nil
-                    return
-                }
-                // Decode at ~3x the display size for retina crispness, off
-                // the main actor via ImageIO so a full bitmap is never
-                // materialised just to fill a small slot.
-                let target = size * 3
-                decoded = await Task.detached(priority: .utility) {
-                    UIImage.downsampled(from: bytes, maxDimension: target)
-                }.value
-            }
+            .task(id: cacheKey) { await loadThumbnail() }
+    }
+
+    /// Decode the inline bytes off the main actor (ImageIO, at ~3x the display
+    /// size) and cache the result, so a populated List never re-decodes the
+    /// persisted ~800px JPEG on the main thread. Reuses a cache hit, ignores a
+    /// decode a row recycle has already superseded, and flags an undecodable
+    /// blob so `content` can fall through gracefully.
+    private func loadThumbnail() async {
+        let key = cacheKey
+        decodeFailed = false
+        guard let bytes = inlineBytes else { decoded = nil; return }
+        // Cache hit: `content` already shows it synchronously via `currentImage`.
+        if Self.cache.object(forKey: key as NSString) != nil { return }
+        let target = size * 3
+        let image = await Task.detached(priority: .utility) {
+            UIImage.downsampled(from: bytes, maxDimension: target)
+        }.value
+        // A row recycle (or in-place byte change) superseded this decode.
+        guard key == cacheKey else { return }
+        if let image {
+            Self.cache.setObject(image, forKey: key as NSString)
+            decoded = Decoded(key: key, image: image)
+        } else {
+            decodeFailed = true
+        }
+    }
+
+    /// The image to show for the CURRENT key: this instance's freshly-decoded
+    /// image if it still matches, else a process-wide cache hit. Read in `body`
+    /// so a recycled row that scrolls back re-shows instantly (no re-decode, no
+    /// neutral-tile flash) and never shows a previous row's image.
+    private var currentImage: UIImage? {
+        if let decoded, decoded.key == cacheKey { return decoded.image }
+        return Self.cache.object(forKey: cacheKey as NSString)
     }
 
     /// The bytes (if any) decoded inline. Prefers the persisted article
@@ -143,8 +180,8 @@ struct LandmarkThumbnail: View {
         return capturedImageData
     }
 
-    /// Cheap, stable identity for `.task(id:)` so SwiftUI doesn't compare
-    /// whole Data blobs each update; byte counts change whenever the
+    /// Cheap, stable identity for `.task(id:)` and the cache so SwiftUI doesn't
+    /// compare whole Data blobs each update; byte counts change whenever the
     /// underlying image does in practice.
     private var cacheKey: String {
         "\(articleImageData?.count ?? -1)|\(capturedImageData?.count ?? -1)|\(articleImageURL?.absoluteString ?? "")|\(size)"
@@ -152,9 +189,11 @@ struct LandmarkThumbnail: View {
 
     @ViewBuilder
     private var content: some View {
-        if let decoded {
-            Image(uiImage: decoded).resizable().scaledToFill()
-        } else if articleImageData == nil, let articleImageURL {
+        if let image = currentImage {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else if (articleImageData == nil || decodeFailed), let articleImageURL {
+            // No inline bytes, or they failed to decode: try the remote URL
+            // before degrading to the captured photo / placeholder.
             AsyncImage(url: articleImageURL) { phase in
                 switch phase {
                 case .success(let image):
@@ -165,9 +204,9 @@ struct LandmarkThumbnail: View {
                     capturedOrPlaceholder
                 }
             }
-        } else if inlineBytes != nil {
-            // Bytes present but the off-main decode hasn't landed yet
-            // (first frame): a neutral tile, not a flash of the placeholder.
+        } else if inlineBytes != nil, !decodeFailed {
+            // Bytes present, decode in flight: a neutral tile (not a flash of
+            // the placeholder) for the brief first-frame window.
             Color.secondary.opacity(0.1)
         } else {
             capturedOrPlaceholder
@@ -333,6 +372,7 @@ struct BrandEmptyState<Actions: View>: View {
                         .font(.system(size: 40, weight: .semibold))
                         .foregroundStyle(Color("BrandBrown"))
                         .frame(width: 54)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
                             .font(.title.weight(.bold))
@@ -397,6 +437,11 @@ struct MapCalloutCard<Wrapped: View, Detail: View>: View {
                 // Both go to the same destination.
                 detail()
                     .padding(.top, 2)
+                    // The whole card is already the tap target (with an "Opens
+                    // the full landmark details" hint), so hide this duplicate
+                    // control from VoiceOver to avoid two actionable elements
+                    // per pin pointing at the same destination.
+                    .accessibilityHidden(true)
             }
             Spacer(minLength: 0)
         }

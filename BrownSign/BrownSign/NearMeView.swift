@@ -230,6 +230,10 @@ struct NearMeView: View {
                 // keeps the invariant "pagesLoaded describes the current fetch"
                 // true in the narrow branch instead of leaving it stale.
                 pagesLoaded = 0
+                // Cancel any in-flight load-more: it was fetched at the OLD
+                // (wider) radius/offset and would otherwise merge out-of-range
+                // pins back in and revive the footer after this narrow commits.
+                loadMoreTask?.cancel()
                 if displayMode == .map {
                     // Map: zoom IN first (to the new radius) keeping the
                     // current pins, THEN trim the out-of-range ones once the
@@ -285,19 +289,46 @@ struct NearMeView: View {
             // (Map mode recenters instead; a narrowing refetch adds no rows.)
             if displayMode == .list, !decreasing, case .loaded(let before) = state {
                 let beforeCount = before.count
+                // Pre-widen content height, captured now, so we can tell when the
+                // new rows have actually laid out (vs racing a fixed delay). nil
+                // when the scroll view hasn't been introspected yet (a radius tap
+                // in the first runloop after the list appeared).
+                let baselineHeight = listScrollView?.contentSize.height
                 Task {
                     await task.value
-                    // Let the widened set commit and lay out so the new rows
-                    // exist below the fold (and contentSize has grown) before we
-                    // scroll toward them.
-                    try? await Task.sleep(for: .milliseconds(150))
+                    // Only nudge when the widen actually added rows — a sparse
+                    // area or the result cap adds none, and there's then nothing
+                    // to hint at.
                     guard displayMode == .list,
                           case .loaded(let after) = state,
-                          after.count > beforeCount,
-                          let scrollView = listScrollView else { return }
-                    // Read the live offset (List keeps it put when rows append
-                    // below) and advance half a row, clamped so it never
-                    // overscrolls past the content's end.
+                          after.count > beforeCount else { return }
+
+                    // Poll (up to ~1s) until the backing scroll view is resolved
+                    // AND the new rows have laid out (contentSize grew past the
+                    // pre-widen height), instead of a fixed 150ms guess that raced
+                    // layout. The nudge now fires as soon as the list has actually
+                    // grown, and rides out the one-runloop scroll-view
+                    // introspection warmup on the first interaction.
+                    var resolved: UIScrollView?
+                    for tick in 0..<60 {
+                        try? await Task.sleep(for: .milliseconds(16))
+                        guard displayMode == .list, case .loaded = state else { return }
+                        guard let sv = listScrollView else { continue }
+                        if let baselineHeight {
+                            // Settled once the content is taller than before.
+                            if sv.contentSize.height > baselineHeight + 1 { resolved = sv; break }
+                        } else if tick >= 2 {
+                            // No baseline (scroll view resolved after the tap):
+                            // the awaited fetch means layout is long since done,
+                            // so a couple of ticks is enough.
+                            resolved = sv; break
+                        }
+                    }
+                    guard let scrollView = resolved else { return }
+
+                    // Advance half a row as a "more appeared below" cue, clamped
+                    // so it never overscrolls past the content's end. A list that
+                    // still fits on screen has nowhere to go and naturally no-ops.
                     let halfRow = (measuredRowHeight > 0 ? measuredRowHeight : Self.estimatedRowHeight) / 2
                     let maxOffsetY = max(
                         scrollView.contentSize.height

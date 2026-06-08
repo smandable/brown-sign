@@ -548,7 +548,8 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
             if let device = videoDevice {
                 UIAccessibility.post(
                     notification: .announcement,
-                    argument: "Zoom \(zoomText(forFactor: device.videoZoomFactor))"
+                    // Use "x" not the "×" glyph, which VoiceOver reads oddly.
+                    argument: "Zoom \(zoomText(forFactor: device.videoZoomFactor).replacingOccurrences(of: "×", with: "x"))"
                 )
             }
             scheduleZoomPillFade()

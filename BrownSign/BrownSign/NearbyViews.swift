@@ -163,6 +163,15 @@ struct NearbyMapView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
 
+    /// True only when the selected pin still exists in the current results, so
+    /// a stale selection (the pin left the set via search/hide or a re-sorted/
+    /// capped merge) doesn't strand the zoom control and loading pill hidden
+    /// behind a card that no longer renders.
+    private var selectionVisible: Bool {
+        guard let id = selectedID else { return false }
+        return results.contains { $0.pageURL.absoluteString == id }
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             Map(position: $cameraPosition, selection: $selectedID) {
@@ -211,7 +220,7 @@ struct NearbyMapView: View {
             // buttons. Hidden while a pin's card is up so it doesn't sit
             // underneath it.
             .overlay(alignment: .bottomTrailing) {
-                if selectedID == nil {
+                if !selectionVisible {
                     MapZoomControl(
                         miles: radiusMiles,
                         // zoom in = fewer miles = parent's "decrease"
@@ -229,7 +238,7 @@ struct NearbyMapView: View {
 
             // "Loading…" pill, bottom-centre, while a fetch is in flight
             // (e.g. widening the radius). Hidden when a pin's card is up.
-            if isLoading, selectedID == nil {
+            if isLoading, !selectionVisible {
                 HStack(spacing: 8) {
                     ProgressView()
                     Text("Loading…")

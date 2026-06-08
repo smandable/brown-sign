@@ -212,7 +212,7 @@ nonisolated enum NearbyStreamYield {
 nonisolated func discoverLandmarksAt(
     center: CLLocationCoordinate2D,
     radiusMeters: Int = 8_047,
-    limit: Int = 100,
+    limit: Int = sparqlResultLimit,
     fastFirstBatch: Int = 30,
     offset: Int = 0
 ) -> AsyncStream<NearbyStreamYield> {

@@ -182,7 +182,8 @@ private func parseInstanceOfQID(from claims: [String: Any]) -> String? {
 /// officially historic, which is exactly the Nearby filter's bar.
 nonisolated private func parseHasHeritageDesignation(from claims: [String: Any]) -> Bool {
     guard let list = claims["P1435"] as? [[String: Any]] else { return false }
-    return !list.isEmpty
+    // Ignore deprecated-rank designations, consistent with `bestClaim`.
+    return list.contains { ($0["rank"] as? String) != "deprecated" }
 }
 
 /// P576 ("dissolved, abolished or demolished date") — same shape as
