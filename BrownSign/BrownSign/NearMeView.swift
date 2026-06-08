@@ -178,16 +178,32 @@ struct NearMeView: View {
     private var canIncreaseRadius: Bool { radiusIndex < Self.radiusOptionsMiles.count - 1 }
     private var canDecreaseRadius: Bool { radiusIndex > 0 }
 
-    /// When the user has panned the map away from their GPS by more than the
-    /// pan-search threshold (half the current radius), the live map center;
-    /// otherwise nil. When non-nil a radius change anchors here (filter/fetch
-    /// + zoom around what's on screen) instead of snapping back to the user.
-    /// Only meaningful on the map; the list is always user-anchored.
-    private var pannedMapCenter: CLLocationCoordinate2D? {
-        guard displayMode == .map, let center = mapCenter, let user = userLocation else { return nil }
+    /// The map center when the user has panned it more than the pan-search
+    /// threshold (half the current radius) from their GPS, otherwise nil. A
+    /// pure spatial test with no displayMode gate, shared by `changeRadius`
+    /// (anchoring a radius change to what's on screen) and the list's
+    /// area-anchored sort/scope (`listAnchor`). nil when within the threshold
+    /// (still in the user's neighbourhood) or before the map first reports a
+    /// center / a GPS fix lands.
+    private var pannedAwayCenter: CLLocationCoordinate2D? {
+        guard let center = mapCenter, let user = userLocation else { return nil }
         let centerLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
         guard centerLoc.distance(from: user) > Double(currentRadiusMeters) / 2 else { return nil }
         return center
+    }
+
+    /// The point the Nearby LIST is anchored to: the map center the user last
+    /// panned to once they've explored more than half a radius from their GPS
+    /// (so the list "follows" the area shown on the map), otherwise their GPS
+    /// location. `isArea` is true in the panned case — it drives the header
+    /// copy ("…of this area" vs "…of your location"), the per-row distance
+    /// reference, and the radius-scoping in `listResults`. nil only when there
+    /// is no location at all; in `.loaded` (the only state that renders the
+    /// list) a GPS fix always exists, so it's non-nil there.
+    private var listAnchor: (center: CLLocationCoordinate2D, isArea: Bool)? {
+        if let panned = pannedAwayCenter { return (panned, true) }
+        if let user = userLocation { return (user.coordinate, false) }
+        return nil
     }
 
     /// Step the search radius by `delta` (+1 wider, −1 tighter), clamped to
@@ -203,7 +219,10 @@ struct NearMeView: View {
         // away" test uses the radius currently on screen). Non-nil = the user
         // panned the map away from their GPS, so anchor the change to the map
         // center instead of snapping home; nil = default GPS-anchored path.
-        let anchor = pannedMapCenter
+        // Uses `pannedAwayCenter` (not a map-gated variant) so a radius change
+        // made from the LIST while it's following a panned area stays anchored
+        // to that area instead of snapping the list back to the user.
+        let anchor = pannedAwayCenter
         radiusIndex = newIndex
 
         // Narrowing the radius: the smaller radius is a subset of what's
@@ -346,6 +365,29 @@ struct NearMeView: View {
         }
     }
 
+    /// Re-anchor the Nearby list (and the map) back to the user's GPS after
+    /// they've been following a panned area. Instant and non-destructive: the
+    /// user's local pins are already in the loaded set, so this just drops the
+    /// panned anchor and recenters the map — no refetch, and the accumulated
+    /// pins stay on the map. (The toolbar refresh button remains the heavier
+    /// "discard panned pins + refetch from GPS" action.)
+    private func returnToUserLocation() {
+        guard let user = userLocation else { return }
+        // Cancel any in-flight pan/area fetch so a late merge can't re-anchor
+        // us to the area we're leaving.
+        panTask?.cancel()
+        // Drop the panned anchor: `listAnchor` falls back to GPS, the list
+        // re-scopes to the user's radius, and the header returns to "your
+        // location". Also reset the pan reference so the next pan measures
+        // distance from home, not the area just left.
+        mapCenter = user.coordinate
+        lastFetchCenter = user.coordinate
+        // Recenter the map camera on the user too, so switching to the map
+        // shows home rather than the area just left.
+        recenterRegion = nil
+        recenterSignal += 1
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -376,7 +418,7 @@ struct NearMeView: View {
                         // so the chrome is present from the first frame
                         // instead of popping in once the first results land.
                         VStack(spacing: 0) {
-                            radiusHeader
+                            radiusHeader()
                             loadingView
                         }
                     case .locationDenied:
@@ -418,7 +460,7 @@ struct NearMeView: View {
                         // dropout. The +/- doubles as a retry at a new radius
                         // alongside the explicit Try again button.
                         VStack(spacing: 0) {
-                            radiusHeader
+                            radiusHeader()
                             BrandEmptyState(
                                 systemImage: "wifi.exclamationmark",
                                 title: "Couldn't load landmarks",
@@ -456,11 +498,11 @@ struct NearMeView: View {
                             // map. The header pins to the top; the branded
                             // empty state centres in the space below it.
                             VStack(spacing: 0) {
-                                radiusHeader
+                                radiusHeader()
                                 BrandEmptyState(
                                     systemImage: "signpost.right.and.left",
                                     title: "No landmarks nearby",
-                                    message: emptyListDescription
+                                    message: emptyListDescription()
                                 )
                             }
                         case .map:
@@ -471,19 +513,47 @@ struct NearMeView: View {
                         let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
                         switch displayMode {
                         case .list:
-                            // List mode + active search filter that
-                            // narrows to zero hits → explicit "No
-                            // results" instead of a blank list. Map
-                            // mode keeps the empty map so the user
-                            // can pan-search to find more.
-                            if visible.isEmpty && !trimmedSearch.isEmpty {
+                            // The list scopes to the area shown on the map: the
+                            // panned center once the user has explored away,
+                            // else their GPS. The map keeps the full accumulated
+                            // pin set; only the list narrows, so its "Within N
+                            // miles of …" header stays honest.
+                            let anchoredToArea = listAnchor?.isArea ?? false
+                            let scoped = listResults(from: visible)
+                            if scoped.isEmpty && !trimmedSearch.isEmpty {
+                                // Active search narrowed to zero hits → explicit
+                                // "No results" instead of a blank list. Map mode
+                                // keeps the empty map so the user can pan-search.
                                 BrandEmptyState(
                                     systemImage: "magnifyingglass",
                                     title: "No results",
                                     message: "No nearby landmarks match \"\(trimmedSearch)\"."
                                 )
+                            } else if scoped.isEmpty && anchoredToArea && (isReloading || panFetchCount > 0) {
+                                // Following a panned area whose fetch is still in
+                                // flight (panned + switched to the list before the
+                                // pins landed): show the spinner rather than
+                                // briefly claiming the area is empty.
+                                VStack(spacing: 0) {
+                                    radiusHeader(anchoredToArea: true)
+                                    NearbyLoadingView(message: "Finding landmarks in this area…")
+                                }
+                            } else if scoped.isEmpty {
+                                // No landmarks within the radius of where the
+                                // list is anchored (e.g. panned to an empty
+                                // area). Keep the radius header so the user can
+                                // widen, or pan back / explore elsewhere, right
+                                // here instead of a blank list.
+                                VStack(spacing: 0) {
+                                    radiusHeader(anchoredToArea: anchoredToArea)
+                                    BrandEmptyState(
+                                        systemImage: "signpost.right.and.left",
+                                        title: anchoredToArea ? "No landmarks in this area" : "No landmarks nearby",
+                                        message: emptyListDescription(anchoredToArea: anchoredToArea)
+                                    )
+                                }
                             } else {
-                                list(visible)
+                                list(scoped, anchoredToArea: anchoredToArea)
                             }
                         case .map:
                             nearbyMap(visible)
@@ -639,6 +709,27 @@ struct NearMeView: View {
         }
     }
 
+    /// The LIST's rows, derived from the (hide + search) filtered `visible`
+    /// set: scoped to within the current radius of `listAnchor` and sorted
+    /// nearest-first from it, so the list reflects the area shown on the map
+    /// (the panned center once explored away, else the user's location). The
+    /// map keeps the full accumulated `visible` set — only the list is scoped —
+    /// which is what keeps the "Within N miles of …" header honest. Results
+    /// without coordinates are kept (they can't be placed, so they shouldn't
+    /// silently vanish) and sort last.
+    private func listResults(from visible: [LandmarkResult]) -> [LandmarkResult] {
+        guard let anchor = listAnchor?.center else { return visible }
+        let anchorLoc = CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
+        let maxMeters = Double(currentRadiusMeters)
+        func meters(_ r: LandmarkResult) -> CLLocationDistance {
+            guard let c = r.coordinates else { return .infinity }
+            return anchorLoc.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude))
+        }
+        return visible
+            .filter { $0.coordinates == nil || meters($0) <= maxMeters }
+            .sorted { meters($0) < meters($1) }
+    }
+
     private var hasResults: Bool {
         if case .loaded = state { return true }
         return false
@@ -736,23 +827,51 @@ struct NearMeView: View {
     /// `userLocation` — during the cold-start fix the location isn't known
     /// yet, but we still want the header present.
     @ViewBuilder
-    private var radiusHeader: some View {
+    private func radiusHeader(anchoredToArea: Bool = false) -> some View {
         if radiusHeaderVisible {
-            HStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "location.fill")
-                    Text("Within \(currentRadiusMiles) miles of your location")
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        // "this area" when the list is following a panned map
+                        // center; "your location" on the default GPS-anchored
+                        // list (and in the loading / empty / offline states).
+                        Image(systemName: anchoredToArea ? "mappin.and.ellipse" : "location.fill")
+                        Text(anchoredToArea
+                             ? "Within \(currentRadiusMiles) miles of this area"
+                             : "Within \(currentRadiusMiles) miles of your location")
+                    }
+                    Spacer(minLength: 8)
+                    // Trailing radius stepper so the list can widen/tighten
+                    // the search without switching to the map. Same step
+                    // logic as the map's zoom control.
+                    RadiusStepper(
+                        canIncrease: canIncreaseRadius,
+                        canDecrease: canDecreaseRadius,
+                        onIncrease: { changeRadius(by: 1) },
+                        onDecrease: { changeRadius(by: -1) }
+                    )
                 }
-                Spacer(minLength: 8)
-                // Trailing radius stepper so the list can widen/tighten
-                // the search without switching to the map. Same step
-                // logic as the map's zoom control.
-                RadiusStepper(
-                    canIncrease: canIncreaseRadius,
-                    canDecrease: canDecreaseRadius,
-                    onIncrease: { changeRadius(by: 1) },
-                    onDecrease: { changeRadius(by: -1) }
-                )
+                // When the list is following a panned area, give an explicit
+                // way back to the user's location — the header otherwise just
+                // reads "this area" with no affordance to return, and the
+                // toolbar refresh (the only other way home) also discards the
+                // panned pins. This re-anchor is instant and keeps them.
+                if anchoredToArea {
+                    Button {
+                        returnToUserLocation()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "location.fill")
+                            Text("Back to your location")
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color(.tertiarySystemFill)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back to your location")
+                }
             }
             // Match the "Recent finds" section header on Scan
             // (subheadline + semibold) so the three list-section
@@ -776,11 +895,17 @@ struct NearMeView: View {
     /// Explainer copy for the empty Nearby list. While the radius can still
     /// widen, point at the + stepper sitting right above this view (no need
     /// to leave for the map); at the widest radius the + is disabled, so
-    /// suggest the map + pan instead.
-    private var emptyListDescription: String {
-        // The title ("No landmarks nearby") and the radius header above
-        // ("Within N miles of your location") already convey the emptiness,
+    /// suggest the map + pan instead. `anchoredToArea` swaps the copy for the
+    /// "panned to an empty area" case, where the user is already on the map's
+    /// area and should pan rather than "switch to the map".
+    private func emptyListDescription(anchoredToArea: Bool = false) -> String {
+        // The title and the radius header above already convey the emptiness,
         // so this stays a short next-step line, matching History's brevity.
+        if anchoredToArea {
+            return canIncreaseRadius
+                ? "Tap + to widen the search, or pan the map to explore a different area."
+                : "Pan the map to a different area to keep exploring."
+        }
         if canIncreaseRadius {
             return "Tap + to widen the search, or switch to the map to explore a different area."
         } else {
@@ -789,11 +914,21 @@ struct NearMeView: View {
     }
 
     @ViewBuilder
-    private func list(_ results: [LandmarkResult]) -> some View {
+    private func list(_ results: [LandmarkResult], anchoredToArea: Bool) -> some View {
         // "Load more" footer shows only when the radius holds more than
-        // the current page AND we're not filtering (paging a filtered
-        // list would be confusing).
-        let showLoadMore = hasMore && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // the current page, we're not filtering (paging a filtered list would
+        // be confusing), AND the list isn't following a panned area — the
+        // pager fetches the next page around the USER, which would then be
+        // scoped out of an area-anchored list, so it'd appear to do nothing.
+        let showLoadMore = hasMore
+            && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !anchoredToArea
+        // Per-row distances are measured from whatever the list is anchored to
+        // (the panned area center when following the map, else the user), so
+        // they agree with the "Within N miles of …" header above.
+        let rowReference: CLLocation? = listAnchor.map {
+            CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude)
+        } ?? userLocation
         // Lat/long context row sits OUTSIDE the List so it doesn't
         // steal the inset-grouped section's rounded top corners from
         // the first landmark row. Inside the List with a clear
@@ -801,7 +936,7 @@ struct NearMeView: View {
         // top-rounded corners there — making the first visible row
         // look chopped.
         VStack(spacing: 0) {
-            radiusHeader
+            radiusHeader(anchoredToArea: anchoredToArea)
 
             List {
                 // Identify rows by canonical page URL — a stable
@@ -818,7 +953,7 @@ struct NearMeView: View {
                     Button {
                         open(result)
                     } label: {
-                        NearbyRow(result: result, userLocation: userLocation)
+                        NearbyRow(result: result, referenceLocation: rowReference)
                     }
                     .buttonStyle(.plain)
                     // Parchment per-row, with rounded outer corners

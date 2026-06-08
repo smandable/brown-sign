@@ -62,14 +62,16 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.6.1)
+## What's New (Version 1.6.2)
 ```
-Reliability and polish. Saved landmark photos now load faster and more reliably as you scroll through your history, the Nearby radius controls and map behave more consistently, and there's a round of small accessibility fixes throughout.
+On the Nearby tab, the list now follows the map. Pan the map to a new area, switch to the list, and you'll see the landmarks around that spot instead of the ones back where you started, with the heading updating to match. A new "Back to your location" button brings you home with one tap whenever you want to return.
 ```
 
 ### Previous versions
 
 ```
+Version 1.6.1: Reliability and polish. Saved landmark photos now load faster and more reliably as you scroll through your history, the Nearby radius controls and map behave more consistently, and there's a round of small accessibility fixes throughout.
+
 Version 1.6.0: When Brown Sign isn't sure a result is the right landmark, it now tells you so you can check the other matches. Nearby is steadier, too: it no longer skips landmarks at the edge of a page of results, the area you pan or widen to is remembered when you reopen the app, a landmark's type and founding year now fill in right away when you tap a result, and the map behaves correctly even near the international date line. Plus a cleaner, more consistent look for the empty and directions screens, clearer permission wording, better dark mode legibility, and more VoiceOver and Dynamic Type support.
 
 Version 1.5.1: A steadier Nearby tab. The List and Map switch, the search box, and the radius control now stay on screen in every state, including while landmarks are loading and when an area comes up empty or offline, so you can widen your search or switch views right away instead of waiting. The empty, offline, and permission screens also got a cleaner, more consistent look.

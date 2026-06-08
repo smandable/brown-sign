@@ -62,7 +62,10 @@ struct NearbyLoadingView: View {
 
 struct NearbyRow: View {
     let result: LandmarkResult
-    let userLocation: CLLocation?
+    /// Point the row's distance is measured from: the user's GPS on the
+    /// default list, or the panned map center when the list is following an
+    /// explored area (so the distance agrees with the "…of this area" header).
+    let referenceLocation: CLLocation?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -77,7 +80,7 @@ struct NearbyRow: View {
                     .lineLimit(2)
                 HStack(spacing: 8) {
                     if let coord = result.coordinates {
-                        let d = distanceMeters(from: userLocation, to: coord)
+                        let d = distanceMeters(from: referenceLocation, to: coord)
                         // Manual HStack instead of Label so the
                         // location-arrow / number gap is tighter than
                         // the default Label spacing.
