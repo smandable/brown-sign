@@ -138,23 +138,41 @@ struct LandmarkThumbnail: View {
 
     /// Decode the inline bytes off the main actor (ImageIO, at ~3x the display
     /// size) and cache the result, so a populated List never re-decodes the
-    /// persisted ~800px JPEG on the main thread. Reuses a cache hit, ignores a
-    /// decode a row recycle has already superseded, and flags an undecodable
-    /// blob so `content` can fall through gracefully.
+    /// persisted ~800px JPEG on the main thread. Reuses a cache hit, hands a
+    /// superseded decode back to the live key, and flags an undecodable blob so
+    /// `content` can fall through gracefully.
     private func loadThumbnail() async {
         let key = cacheKey
         decodeFailed = false
         guard let bytes = inlineBytes else { decoded = nil; return }
-        // Cache hit: `content` already shows it synchronously via `currentImage`.
-        if Self.cache.object(forKey: key as NSString) != nil { return }
+        // Cache hit: mirror it into the observed `decoded` for THIS key. The
+        // bare cache read in `currentImage` isn't a SwiftUI dependency, so a
+        // sibling row that populated the cache after our first render leaves us
+        // parked on the neutral tile until an observed write lands — this is it.
+        if let cached = Self.cache.object(forKey: key as NSString) {
+            decoded = Decoded(key: key, image: cached)
+            return
+        }
         let target = size * 3
         let image = await Task.detached(priority: .utility) {
             UIImage.downsampled(from: bytes, maxDimension: target)
         }.value
-        // A row recycle (or in-place byte change) superseded this decode.
-        guard key == cacheKey else { return }
+        // The cache is keyed by content, not by this view's identity, so always
+        // bank a good decode even if a recycle moved us on — the row that now
+        // owns this key gets an instant hit.
+        if let image { Self.cache.setObject(image, forKey: key as NSString) }
+        // A row recycle (or in-place byte change) superseded this decode while
+        // it was off-actor: don't stamp a stale image onto the live key. Instead
+        // re-seed `decoded` from whatever the CURRENT key now holds (commonly a
+        // sibling's cached decode), so the settled key always reaches an
+        // observed write rather than silently bailing onto a permanent tile.
+        guard key == cacheKey else {
+            if let live = Self.cache.object(forKey: cacheKey as NSString) {
+                decoded = Decoded(key: cacheKey, image: live)
+            }
+            return
+        }
         if let image {
-            Self.cache.setObject(image, forKey: key as NSString)
             decoded = Decoded(key: key, image: image)
         } else {
             decodeFailed = true

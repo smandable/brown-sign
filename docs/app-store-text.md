@@ -65,6 +65,8 @@ roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,tra
 ## What's New (Version 1.7.0)
 ```
 On the Nearby tab, the list now follows the map. Pan the map to a new area, switch to the list, and you'll see the landmarks around that spot instead of the ones back where you started, with the heading updating to match. A new "Back to your location" button brings you home with one tap whenever you want to return.
+
+This update also fixes a recent issue where saved landmark thumbnails could sometimes go missing from the Recent finds and History lists.
 ```
 
 ### Previous versions
