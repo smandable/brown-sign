@@ -51,13 +51,15 @@ struct HiddenLandmarksView: View {
                                         // Restore glyph (same icon as the
                                         // swipe action), not a second eye —
                                         // two identical eyes per row read
-                                        // as a mistake. Glyph sized to match
-                                        // the swipe actions' ~22pt "hide"
-                                        // icon, per Sean.
+                                        // as a mistake. Sized to mirror the
+                                        // swipe action's iOS 26 rendering (a
+                                        // ~56pt circular button with a ~24pt
+                                        // glyph), per Sean's screenshots —
+                                        // the same control, just leading.
                                         Image(systemName: "arrow.uturn.backward")
-                                            .font(.system(size: 20, weight: .bold))
+                                            .font(.system(size: 24, weight: .bold))
                                             .foregroundStyle(.white)
-                                            .frame(width: 36, height: 36)
+                                            .frame(width: 56, height: 56)
                                             // Filled brand-green —
                                             // uses AccentButton (more
                                             // saturated) instead of
