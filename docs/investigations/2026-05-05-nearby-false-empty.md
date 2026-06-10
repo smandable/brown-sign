@@ -6,6 +6,11 @@
 **Fix commit:** `be7e58a` ("Fix Nearby false-empty: distinguish SPARQL transport failure from empty area")
 **Investigation branch:** `diagnostics/nearby-empty` (kept for reference, not merged)
 
+> **Status (2026-05-11): fixed and shipped in 1.4.4; the "Open mystery"
+> section below was fully RETRACTED.** There is no multi-fire bug and no
+> Swift Concurrency violation — see "Update 2026-05-11" near the end
+> before citing anything from that section.
+
 ## Symptom
 
 The Nearby tab intermittently rendered "No landmarks nearby" in areas that

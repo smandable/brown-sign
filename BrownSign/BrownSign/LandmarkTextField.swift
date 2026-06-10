@@ -47,6 +47,9 @@ struct LandmarkTextField: UIViewRepresentable {
             target: context.coordinator,
             action: #selector(Coordinator.dismissTapped)
         )
+        // Icon-only bar buttons get explicit VoiceOver labels, like every
+        // other icon-only control in the app.
+        dismiss.accessibilityLabel = "Dismiss keyboard"
         let flex = UIBarButtonItem(
             barButtonSystemItem: .flexibleSpace,
             target: nil,
@@ -58,6 +61,7 @@ struct LandmarkTextField: UIViewRepresentable {
             target: context.coordinator,
             action: #selector(Coordinator.searchTapped)
         )
+        search.accessibilityLabel = "Search"
         bar.items = [dismiss, flex, search]
         tf.inputAccessoryView = bar
 

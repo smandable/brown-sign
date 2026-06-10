@@ -52,4 +52,11 @@ Two practical notes, both learned the hard way:
   errors 90186 / 90062). The next build then needs a fresh
   `MARKETING_VERSION`. The build number (`CURRENT_PROJECT_VERSION`) may
   carry across that bump (1.4.8 → 1.4.9 kept build 24; 1.4.11 → 1.4.12
-  kept build 29).
+  kept build 29) — but **only if the old build was never uploaded to
+  App Store Connect**. Once a build number has been uploaded — even if
+  it was never submitted for review, even under a version that was
+  later abandoned — that number is consumed for the app forever, and
+  re-uploading it is rejected as a duplicate. Learned with the orphaned
+  1.6.2 build 35: it was uploaded before the release was re-versioned
+  to 1.7.0, so 1.7.0 had to ship as build 36. When re-versioning after
+  an upload, always bump the build too.

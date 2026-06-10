@@ -67,7 +67,10 @@ struct HiddenLandmarksView: View {
                                 HiddenLandmarkRow(item: item)
                             }
                             .listRowBackground(Color("CardBackground"))
-                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                            // 6pt vertical insets, matching the Nearby /
+                            // History / Scan-recents rows this sheet's row
+                            // is built to look identical to.
+                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button {
                                     restore(item)
@@ -135,8 +138,12 @@ struct HiddenLandmarksView: View {
                                 withAnimation { editMode = .active }
                             }
                         } label: {
+                            // Text "Done", not a checkmark glyph — the same
+                            // edit-mode toggle History's system EditButton
+                            // renders, so the mirrored interaction reads
+                            // the same in both places.
                             if editMode.isEditing {
-                                Image(systemName: "checkmark")
+                                Text("Done")
                                     .fontWeight(.semibold)
                             } else {
                                 Text("Edit")

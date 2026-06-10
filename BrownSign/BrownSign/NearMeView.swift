@@ -531,11 +531,26 @@ struct NearMeView: View {
                             .buttonBorderShape(.roundedRectangle(radius: 12))
                         }
                     case .locationUnavailable:
+                        // Plain-language copy (no "GPS signal" jargon, no
+                        // missing article) and an actual Try again button —
+                        // the old copy SAID "try again" while offering no
+                        // affordance to do it, unlike its sibling states.
                         BrandEmptyState(
                             systemImage: "location.slash",
                             title: "Can't find your location",
-                            message: "Try again once you have GPS signal."
-                        )
+                            message: "Move somewhere with a clearer view of the sky, then try again."
+                        ) {
+                            Button {
+                                startRefresh(force: true)
+                            } label: {
+                                Label("Try again", systemImage: "arrow.clockwise")
+                                    .fontWeight(.semibold)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .tint(Color("BrandBrown"))
+                            .buttonBorderShape(.roundedRectangle(radius: 12))
+                        }
                     case .serviceUnavailable:
                         // SPARQL fetch (Wikidata) failed transiently —
                         // timed out, retries exhausted, or (offline, the

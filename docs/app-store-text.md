@@ -22,7 +22,7 @@ SNAP OR TYPE
 Point your camera at a brown highway sign, pick a photo from your library, or just type the name. Pinch to zoom in on a sign that's far away. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
 
 NEARBY DISCOVERY
-Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
+Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go, and the list follows along to show what's around the area you're viewing, with one tap to jump back to your own location. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
 
 SMART SEARCH
 Brown Sign searches Wikipedia, the National Park Service, and Wikidata to find the right match. It uses Apple Intelligence to clean up messy camera text and polish summaries into quick, readable cards.

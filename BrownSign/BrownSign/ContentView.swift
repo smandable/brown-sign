@@ -179,16 +179,20 @@ struct ContentView: View {
                                 Button {
                                     clearSearch()
                                 } label: {
+                                    // Body size (no .title2), matching the
+                                    // shared SearchField's clear button so
+                                    // the two fields read identically.
                                     Image(systemName: "xmark.circle.fill")
-                                        .font(.title2)
                                         .foregroundStyle(.secondary)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Clear search")
                             }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        // 10/8 padding to match SearchField's chrome (was
+                        // 12/6 — same visual concept, different metrics).
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(Color(.secondarySystemBackground))
@@ -448,7 +452,9 @@ struct ContentView: View {
                         .font(.footnote.weight(.semibold))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.blue)
+                // App accent, not hardcoded .blue — AccentButton for the
+                // dark-mode saturation, per the repo's filled-button rule.
+                .foregroundStyle(Color("AccentButton"))
                 .padding(.top, 2)
             }
             Spacer(minLength: 0)
@@ -652,12 +658,18 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
+            // 12pt internal horizontal padding for everything except the
+            // full-bleed hero image — the title and summary used to run
+            // flush against the card's rounded edges, unlike every other
+            // card in the app.
             SelectableText(
                 text: result.title,
                 font: .preferredFont(forTextStyle: .title2).bold()
             )
+            .padding(.horizontal, 12)
 
             metadataChips(for: result)
+                .padding(.horizontal, 12)
 
             // Tap anywhere on the polished summary to open full details
             // — same action as the "View full details" button below.
@@ -668,6 +680,7 @@ struct ContentView: View {
                 text: result.summary,
                 lineLimit: 6
             )
+            .padding(.horizontal, 12)
             .contentShape(Rectangle())
             .onTapGesture {
                 if savedLookup != nil {
@@ -675,7 +688,20 @@ struct ContentView: View {
                 }
             }
 
-            VStack(spacing: 8) {
+            buttonStack(for: result)
+                .padding(.horizontal, 12)
+        }
+        .padding(.bottom, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.1))
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+        )
+    }
+
+    @ViewBuilder
+    private func buttonStack(for result: LandmarkResult) -> some View {
+        VStack(spacing: 8) {
                 Button {
                     presentedLookup = savedLookup
                 } label: {
@@ -713,13 +739,6 @@ struct ContentView: View {
                     .buttonBorderShape(.roundedRectangle(radius: 12))
                 }
             }
-        }
-        .padding(.bottom, 2)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.secondary.opacity(0.1))
-                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-        )
     }
 
     /// Alternatives panel — shown below the result card when there's
@@ -771,19 +790,25 @@ struct ContentView: View {
                 Text(alt.title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
+                // Distance first with the location glyph, then type —
+                // the same order and iconography as NearbyRow, so the
+                // identical metadata pair reads identically everywhere.
                 HStack(spacing: 6) {
-                    if let type = alt.wikidataType {
-                        Text(type)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                     if let coord = alt.coordinates,
                        let user = locationManager.lastLocation {
                         let d = user.distance(from: CLLocation(
                             latitude: coord.latitude,
                             longitude: coord.longitude
                         ))
-                        Text(formatLandmarkDistance(d))
+                        HStack(spacing: 3) {
+                            Image(systemName: "location")
+                            Text(formatLandmarkDistance(d))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    if let type = alt.wikidataType {
+                        Text(type)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -823,7 +848,7 @@ struct ContentView: View {
                     } label: {
                         Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                             .font(.caption)
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(Color("AccentButton"))
                     }
                     .buttonStyle(.plain)
                 }
@@ -833,6 +858,11 @@ struct ContentView: View {
                     Label(year < 0 ? "Est. \(String(-year)) BC" : "Est. \(String(year))",
                           systemImage: "calendar")
                         .font(.caption)
+                        // VoiceOver reads the bare "Est." abbreviation
+                        // oddly; spell it out.
+                        .accessibilityLabel(year < 0
+                            ? "Established \(String(-year)) BC"
+                            : "Established \(String(year))")
                 }
                 if let type = result.wikidataType {
                     Label(type, systemImage: "tag.fill")
@@ -894,8 +924,19 @@ struct ContentView: View {
         statusMessage = "Identifying landmark…"
         let normalized = await normalizeLandmarkName(fromLines: lines)
         guard !Task.isCancelled else { return }
-        signText = normalized
-        statusMessage = ""
+        let cleaned = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty {
+            // Nothing readable in the photo (blur, glare, not a sign).
+            // Ending silently left an empty field with no explanation;
+            // say what happened and what to do. Typing clears this via
+            // the field's onChange, like the other statuses.
+            signText = ""
+            statusMessage = "Couldn't read any text in that photo. Try getting closer or holding steady."
+            announceForAccessibility(statusMessage)
+        } else {
+            signText = cleaned
+            statusMessage = ""
+        }
         isProcessing = false
     }
 

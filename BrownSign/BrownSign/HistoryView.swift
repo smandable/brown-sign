@@ -809,7 +809,9 @@ struct LandmarkDetailView: View {
                 } label: {
                     Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                         .font(.caption)
-                        .foregroundStyle(.blue)
+                        // App accent, not hardcoded .blue (matches the Scan
+                        // card's Directions button).
+                        .foregroundStyle(Color("AccentButton"))
                 }
                 .buttonStyle(.plain)
             }
@@ -818,6 +820,10 @@ struct LandmarkDetailView: View {
                 Label(year < 0 ? "Est. \(String(-year)) BC" : "Est. \(String(year))",
                       systemImage: "calendar")
                     .font(.caption)
+                    // VoiceOver reads the bare "Est." abbreviation oddly.
+                    .accessibilityLabel(year < 0
+                        ? "Established \(String(-year)) BC"
+                        : "Established \(String(year))")
             }
             if let type = lookup.wikidataType {
                 Label(type, systemImage: "tag.fill")
