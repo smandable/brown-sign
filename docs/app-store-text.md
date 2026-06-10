@@ -10,7 +10,7 @@ Identify roadside landmarks
 Shown above the description on your App Store page. Can be updated anytime without a new app review.
 
 ```
-Ever drive past a brown highway sign and wonder what it's pointing to? Snap a photo, type the name, or browse Nearby. Free, with no account and no ads.
+Ever drive past a brown highway sign and wonder what it's pointing to? Snap a photo, type the name, or browse Nearby. Completely free, with no account and no ads.
 ```
 
 ## Description
