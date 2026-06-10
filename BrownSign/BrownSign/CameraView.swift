@@ -66,6 +66,20 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
     /// Pending fade-out of the zoom pill, cancelled and rescheduled on each
     /// pinch so the readout stays up while the user is actively zooming.
     private var zoomPillFadeWork: DispatchWorkItem?
+    /// Invisible adjustable element overlaying the preview so VoiceOver and
+    /// Switch Control users can zoom. Pinch is otherwise the ONLY zoom
+    /// affordance — unreachable for Switch Control and awkward through
+    /// VoiceOver's pass-through gesture — even though zoom is what feeds the
+    /// high-res OCR path for distant signs.
+    private var zoomAccessibilityElement: ZoomAccessibilityElement?
+
+    /// UIView that forwards the accessibility "adjustable" increment and
+    /// decrement actions (VoiceOver swipe up/down with the element focused).
+    private final class ZoomAccessibilityElement: UIView {
+        var onAdjust: ((Int) -> Void)?
+        override func accessibilityIncrement() { onAdjust?(1) }
+        override func accessibilityDecrement() { onAdjust?(-1) }
+    }
     /// Full-resolution photo dimensions (the sensor's max, e.g. 48MP) and a
     /// lighter ~12MP standard size. Zoomed shots capture at the full size so the
     /// digital-zoom crop comes off the high-res readout and stays sharp;
@@ -148,6 +162,7 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         configureZoomLabel()
         configureTapToFocus()
         configurePinchToZoom()
+        configureZoomAccessibility()
         captureConfigured = true
         // Keep the close button above the freshly-inserted preview + capture
         // button so it stays tappable.
@@ -307,6 +322,52 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         view.addGestureRecognizer(pinch)
     }
 
+    /// Adjustable zoom element for assistive tech, pinned over the preview
+    /// area (above the capture button). Not user-interactive, so touches —
+    /// tap-to-focus, pinch — pass straight through it; VoiceOver reaches it
+    /// via the accessibility tree, where swipe up/down steps the zoom ±25%
+    /// through the same clamped range as the pinch. The element's value
+    /// auto-announces after each step.
+    private func configureZoomAccessibility() {
+        let element = ZoomAccessibilityElement()
+        element.translatesAutoresizingMaskIntoConstraints = false
+        element.backgroundColor = .clear
+        element.isUserInteractionEnabled = false
+        element.isAccessibilityElement = true
+        element.accessibilityTraits = .adjustable
+        element.accessibilityLabel = "Camera zoom"
+        element.accessibilityValue = accessibilityZoomValue()
+        element.onAdjust = { [weak self] direction in
+            self?.adjustZoomForAccessibility(direction)
+        }
+        view.addSubview(element)
+        zoomAccessibilityElement = element
+
+        NSLayoutConstraint.activate([
+            element.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            element.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            element.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            element.bottomAnchor.constraint(equalTo: captureButton.topAnchor, constant: -12)
+        ])
+    }
+
+    /// Current zoom as a VoiceOver-friendly value ("2x", not the "×" glyph,
+    /// which VoiceOver reads oddly).
+    private func accessibilityZoomValue() -> String {
+        zoomText(forFactor: videoDevice?.videoZoomFactor ?? baselineZoom)
+            .replacingOccurrences(of: "×", with: "x")
+    }
+
+    private func adjustZoomForAccessibility(_ direction: Int) {
+        guard captureConfigured, let device = videoDevice else { return }
+        let factor = direction > 0
+            ? device.videoZoomFactor * 1.25
+            : device.videoZoomFactor / 1.25
+        showZoomPill()
+        applyZoom(factor)
+        scheduleZoomPillFade()
+    }
+
     private func configureZoomLabel() {
         let pill = UIView()
         pill.backgroundColor = UIColor.black.withAlphaComponent(0.45)
@@ -359,7 +420,10 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         title.numberOfLines = 0
 
         let message = UILabel()
-        message.text = "Brown Sign uses the camera to read brown tourist signs. Turn on camera access in Settings to snap a sign."
+        // "Roadside signs", matching the camera permission prompt, the App
+        // Store copy, and every other surface (this overlay was the one
+        // place that said "tourist signs").
+        message.text = "Brown Sign uses the camera to read brown roadside signs. Turn on camera access in Settings to snap a sign."
         message.font = .preferredFont(forTextStyle: .subheadline)
         message.adjustsFontForContentSizeCategory = true
         message.textColor = UIColor.white.withAlphaComponent(0.75)
@@ -571,6 +635,9 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
             // Non-fatal — leave the zoom where it is.
         }
         zoomLabel?.text = zoomText(forFactor: device.videoZoomFactor)
+        // Keep the adjustable element's value in sync however the zoom moved
+        // (pinch or accessibility adjustment).
+        zoomAccessibilityElement?.accessibilityValue = accessibilityZoomValue()
     }
 
     /// Floor: never pinch out below the normal 1x view. The ultra-wide's wider,

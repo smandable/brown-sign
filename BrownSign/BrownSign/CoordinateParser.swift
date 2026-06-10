@@ -33,7 +33,10 @@ import Foundation
 /// Best-effort coordinate extraction from arbitrary article text.
 /// Tries DMS first (more specific, less likely to false-match),
 /// then decimal. Returns `nil` when nothing parses.
-public func parseCoordinatesFromText(_ text: String) -> (latitude: Double, longitude: Double)? {
+/// nonisolated: pure string parsing, called from the nonisolated enrichment
+/// pipeline in the app target (which builds with main-actor default
+/// isolation; redundant but harmless in the SPM test package build).
+nonisolated public func parseCoordinatesFromText(_ text: String) -> (latitude: Double, longitude: Double)? {
     if let dms = parseDMSCoordinates(text) { return dms }
     if let decimal = parseDecimalCoordinates(text) { return decimal }
     return nil

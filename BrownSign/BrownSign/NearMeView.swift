@@ -24,6 +24,7 @@ import SwiftData
 import CoreLocation
 import UIKit
 import MapKit
+import StoreKit
 
 struct NearMeView: View {
     @Environment(\.modelContext) private var modelContext
@@ -109,11 +110,46 @@ struct NearMeView: View {
     /// invalidation check (current GPS vs. cached center) can run as
     /// soon as the fresh GPS fix lands.
     @State private var lastFetchCenter: CLLocationCoordinate2D?
-    /// The map's current visible center, updated on every pan (and on the
-    /// programmatic camera moves the map reports). Lets a radius change
-    /// anchor to what's on screen once the user has panned away from their
-    /// GPS, instead of snapping home. nil until the map first reports a center.
+    /// The map's current visible center, updated on every USER pan the map
+    /// reports (programmatic camera moves — the auto-fit on appear and the
+    /// recenter signal — are filtered out in NearbyMapView, so they can't
+    /// masquerade as a pan). nil until the map first reports a center.
     @State private var mapCenter: CLLocationCoordinate2D?
+    /// The panned map center the LIST is anchored to, or nil when anchored to
+    /// the user's GPS. Explicit @State, NOT derived per-render: it is set or
+    /// cleared ONLY when the user pans the map (`updateAreaAnchor`, threshold
+    /// measured at the radius in effect at pan time), and cleared by
+    /// `returnToUserLocation` and a primary `refresh`. Deriving it from
+    /// `mapCenter` + the CURRENT radius made radius steps flip the anchor as
+    /// a side effect (widen → threshold grows → silently snapped the list
+    /// back to "your location") and let a refresh strand the list on a stale
+    /// area. Radius changes deliberately never move this.
+    @State private var areaAnchor: CLLocationCoordinate2D?
+    /// Center of the most recent USER-GPS-centered primary fetch (never a
+    /// panned center, unlike `lastFetchCenter`). Drives the moved-cities
+    /// spatial cache invalidation in `refresh`: comparing the fresh GPS fix
+    /// against a PANNED `lastFetchCenter` made tab re-entry while panned wipe
+    /// the pins to a spinner and clear the disk cache. Seeded from the disk
+    /// cache on cold-start (the cache's `fetchCenter` is always the user's
+    /// GPS — see `saveCurrentResultsToCache`).
+    @State private var lastUserFetchCenter: CLLocationCoordinate2D?
+    /// `radiusIndex` at the time of the last user-GPS-centered fetch. Lets
+    /// `returnToUserLocation` detect that the radius changed while the list
+    /// was following a panned area (that fetch ran around the AREA, so the
+    /// loaded set doesn't cover the user at the new radius) and fill the gap.
+    @State private var lastUserFetchRadiusIndex: Int?
+    /// Deferred radius-narrow pin trim (the 0.9 s wait for the zoom-in camera
+    /// animation to settle). Tracked so `returnToUserLocation` and a primary
+    /// refresh can cancel it — an anonymous task could land its area-anchored
+    /// `filtered` subset AFTER the user re-anchored to their location and
+    /// empty the list out from under them.
+    @State private var trimTask: Task<Void, Never>?
+    /// Page URLs already run through `enrichDiscoveredLandmark` this session.
+    /// Re-tapping a row re-ran the FULL pipeline every time — Wikidata claims,
+    /// a multi-MB article-image download, and two on-device LLM calls — for
+    /// data the first pass already persisted. Only marked when the pass
+    /// actually gained something, so an offline tap still retries later.
+    @State private var enrichedThisSession: Set<String> = []
     /// The `UIScrollView` backing the Nearby `List`, resolved via a small
     /// introspection finder. A radius increase nudges the content DOWN by half
     /// a row as a "more appeared below" cue — a precise sub-row offset that
@@ -171,6 +207,16 @@ struct NearMeView: View {
 
     private let locationManager = LocationManager.shared
 
+    /// Shared review-prompt counter with Scan (see `shouldRequestReview`).
+    /// Nearby detail opens count as successful lookups too — only Scan
+    /// incremented this before, so a Nearby-first user was never asked.
+    @AppStorage("successfulLookupCount") private var successfulLookupCount = 0
+    /// Set when a threshold is crossed; the actual request fires when the
+    /// detail view is DISMISSED (a natural pause), never over the content
+    /// the user just opened.
+    @State private var reviewPromptPending = false
+    @Environment(\.requestReview) private var requestReview
+
     // MARK: - Radius
 
     private var currentRadiusMiles: Int { Self.radiusOptionsMiles[radiusIndex] }
@@ -178,30 +224,29 @@ struct NearMeView: View {
     private var canIncreaseRadius: Bool { radiusIndex < Self.radiusOptionsMiles.count - 1 }
     private var canDecreaseRadius: Bool { radiusIndex > 0 }
 
-    /// The map center when the user has panned it more than the pan-search
-    /// threshold (half the current radius) from their GPS, otherwise nil. A
-    /// pure spatial test with no displayMode gate, shared by `changeRadius`
-    /// (anchoring a radius change to what's on screen) and the list's
-    /// area-anchored sort/scope (`listAnchor`). nil when within the threshold
-    /// (still in the user's neighbourhood) or before the map first reports a
-    /// center / a GPS fix lands.
-    private var pannedAwayCenter: CLLocationCoordinate2D? {
-        guard let center = mapCenter, let user = userLocation else { return nil }
+    /// Re-derive `areaAnchor` from a USER pan event: anchored to `center`
+    /// once it's more than the pan-search threshold (half the radius in
+    /// effect NOW, i.e. at pan time) from the GPS fix, back to nil when the
+    /// pan returns within the threshold. Called ONLY from the map's pan
+    /// callback — pans are the one thing that moves the anchor, so radius
+    /// steps and re-renders can't flip it as a side effect (the hysteresis
+    /// the old derived `pannedAwayCenter` lacked).
+    private func updateAreaAnchor(for center: CLLocationCoordinate2D) {
+        guard let user = userLocation else { return }
         let centerLoc = CLLocation(latitude: center.latitude, longitude: center.longitude)
-        guard centerLoc.distance(from: user) > Double(currentRadiusMeters) / 2 else { return nil }
-        return center
+        areaAnchor = centerLoc.distance(from: user) > Double(currentRadiusMeters) / 2 ? center : nil
     }
 
-    /// The point the Nearby LIST is anchored to: the map center the user last
-    /// panned to once they've explored more than half a radius from their GPS
-    /// (so the list "follows" the area shown on the map), otherwise their GPS
-    /// location. `isArea` is true in the panned case — it drives the header
-    /// copy ("…of this area" vs "…of your location"), the per-row distance
-    /// reference, and the radius-scoping in `listResults`. nil only when there
-    /// is no location at all; in `.loaded` (the only state that renders the
-    /// list) a GPS fix always exists, so it's non-nil there.
+    /// The point the Nearby LIST is anchored to: the explicit `areaAnchor`
+    /// once the user has panned away (so the list "follows" the area shown on
+    /// the map), otherwise their GPS location. `isArea` is true in the panned
+    /// case — it drives the header copy ("…of this area" vs "…of your
+    /// location"), the per-row distance reference, and the radius-scoping in
+    /// `listResults`. nil only when there is no location at all; in `.loaded`
+    /// (the only state that renders the list) a GPS fix always exists, so
+    /// it's non-nil there.
     private var listAnchor: (center: CLLocationCoordinate2D, isArea: Bool)? {
-        if let panned = pannedAwayCenter { return (panned, true) }
+        if let area = areaAnchor { return (area, true) }
         if let user = userLocation { return (user.coordinate, false) }
         return nil
     }
@@ -215,14 +260,15 @@ struct NearMeView: View {
         let newIndex = max(0, min(Self.radiusOptionsMiles.count - 1, radiusIndex + delta))
         guard newIndex != radiusIndex else { return }
         let decreasing = newIndex < radiusIndex
-        // Capture the pan anchor BEFORE mutating radiusIndex (so the "panned
-        // away" test uses the radius currently on screen). Non-nil = the user
-        // panned the map away from their GPS, so anchor the change to the map
-        // center instead of snapping home; nil = default GPS-anchored path.
-        // Uses `pannedAwayCenter` (not a map-gated variant) so a radius change
-        // made from the LIST while it's following a panned area stays anchored
-        // to that area instead of snapping the list back to the user.
-        let anchor = pannedAwayCenter
+        // Non-nil = the user panned the map away from their GPS, so anchor
+        // the change to that area instead of snapping home; nil = default
+        // GPS-anchored path. `areaAnchor` only moves on pan events, so the
+        // radius mutation below can't flip it — a radius change made from
+        // the LIST while it's following a panned area stays anchored to that
+        // area. `previousIndex` lets a failed area fetch revert the ladder
+        // instead of leaving the UI committed to a radius it never loaded.
+        let previousIndex = radiusIndex
+        let anchor = areaAnchor
         radiusIndex = newIndex
 
         // Narrowing the radius: the smaller radius is a subset of what's
@@ -265,7 +311,8 @@ struct NearMeView: View {
                     )
                     recenterSignal += 1
                     let targetIndex = radiusIndex
-                    Task {
+                    trimTask?.cancel()
+                    trimTask = Task {
                         // Wait for the zoom-in camera animation to visually
                         // settle before removing the now-out-of-range pins, so
                         // they leave after the map has finished zooming rather
@@ -274,6 +321,11 @@ struct NearMeView: View {
                         // margin. Erring long is fine (pins linger a beat);
                         // too short trims mid-zoom.
                         try? await Task.sleep(for: .seconds(0.9))
+                        // `try?` swallows the cancellation throw, so check
+                        // explicitly — a cancelled trim (returnToUserLocation,
+                        // a primary refresh) must not commit its stale,
+                        // possibly area-anchored subset over newer state.
+                        guard !Task.isCancelled else { return }
                         guard radiusIndex == targetIndex, case .loaded = state else { return }
                         state = .loaded(filtered)
                         recenterRegion = nil
@@ -295,7 +347,9 @@ struct NearMeView: View {
         if let anchor = anchor {
             // Panned away on the map: widen around the map center, not the
             // user, and zoom out around it. Never snaps back to the GPS.
-            fetchAroundCenterForRadiusChange(anchor)
+            // On a failed fetch the radius reverts to `previousIndex` so the
+            // header/ladder never claim a radius that never loaded.
+            fetchAroundCenterForRadiusChange(anchor, revertOnFailureTo: previousIndex)
         } else {
             let task = startRefresh(force: false, recenter: true, reuseLocation: true)
             // List + widening: the wider-radius rows append below the fold, so
@@ -373,19 +427,55 @@ struct NearMeView: View {
     /// "discard panned pins + refetch from GPS" action.)
     private func returnToUserLocation() {
         guard let user = userLocation else { return }
-        // Cancel any in-flight pan/area fetch so a late merge can't re-anchor
-        // us to the area we're leaving.
+        // Cancel any in-flight pan/area fetch — and a pending radius-narrow
+        // trim, which holds an area-anchored subset — so neither can land
+        // after this re-anchor and drag the list back to the area (or empty
+        // it out from under the user).
         panTask?.cancel()
+        trimTask?.cancel()
         // Drop the panned anchor: `listAnchor` falls back to GPS, the list
         // re-scopes to the user's radius, and the header returns to "your
         // location". Also reset the pan reference so the next pan measures
         // distance from home, not the area just left.
+        areaAnchor = nil
         mapCenter = user.coordinate
         lastFetchCenter = user.coordinate
-        // Recenter the map camera on the user too, so switching to the map
-        // shows home rather than the area just left.
-        recenterRegion = nil
-        recenterSignal += 1
+        // "No refetch" only holds while the loaded set still covers the
+        // user's surroundings at the CURRENT radius. If the radius changed
+        // while following the area (that fetch ran around the AREA, and a
+        // narrow even trims the home pins out of the set), fill the gap with
+        // a non-destructive merge fetch around the user — accumulated pins
+        // stay, and the camera settles on the user at the current radius.
+        // Load-more paging describes the last user-centered fetch either
+        // way, so it's stale here: retire it until a primary refresh re-arms
+        // it. Otherwise this stays instant: just recenter the camera.
+        if lastUserFetchRadiusIndex != radiusIndex || !loadedSetCovers(user.coordinate) {
+            hasMore = false
+            pagesLoaded = 0
+            fetchAroundCenterForRadiusChange(user.coordinate, markUserFetch: true)
+        } else {
+            // Recenter the map camera on the user too, so switching to the
+            // map shows home rather than the area just left.
+            recenterRegion = nil
+            recenterSignal += 1
+        }
+    }
+
+    /// True when at least one loaded result lies within the current radius of
+    /// `coordinate` — a cheap proxy for "the loaded set covers this point".
+    /// Used by `returnToUserLocation` to catch the trimmed-out-home case
+    /// (an area-anchored narrow filters the user's own pins away even when
+    /// the radius index ends up back where it started). A false positive is
+    /// impossible; a false "uncovered" in a genuinely empty home area just
+    /// costs one fetch that returns nothing.
+    private func loadedSetCovers(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        guard case .loaded(let results) = state else { return false }
+        let loc = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let maxMeters = Double(currentRadiusMeters)
+        return results.contains { r in
+            guard let c = r.coordinates else { return false }
+            return loc.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude)) <= maxMeters
+        }
     }
 
     var body: some View {
@@ -524,11 +614,19 @@ struct NearMeView: View {
                                 // Active search narrowed to zero hits → explicit
                                 // "No results" instead of a blank list. Map mode
                                 // keeps the empty map so the user can pan-search.
-                                BrandEmptyState(
-                                    systemImage: "magnifyingglass",
-                                    title: "No results",
-                                    message: "No nearby landmarks match \"\(trimmedSearch)\"."
-                                )
+                                // The radius header rides above it like every
+                                // sibling state (persistent chrome): without it,
+                                // an unmatched search made the header + stepper
+                                // vanish and snap back per keystroke, and took
+                                // away the + that could widen into a match.
+                                VStack(spacing: 0) {
+                                    radiusHeader(anchoredToArea: anchoredToArea)
+                                    BrandEmptyState(
+                                        systemImage: "magnifyingglass",
+                                        title: "No results",
+                                        message: "No nearby landmarks match \"\(trimmedSearch)\"."
+                                    )
+                                }
                             } else if scoped.isEmpty && anchoredToArea && (isReloading || panFetchCount > 0) {
                                 // Following a panned area whose fetch is still in
                                 // flight (panned + switched to the list before the
@@ -550,7 +648,26 @@ struct NearMeView: View {
                                         systemImage: "signpost.right.and.left",
                                         title: anchoredToArea ? "No landmarks in this area" : "No landmarks nearby",
                                         message: emptyListDescription(anchoredToArea: anchoredToArea)
-                                    )
+                                    ) {
+                                        // When hides are why the list is empty
+                                        // (hide every landmark in a sparse
+                                        // radius and the footer that opens this
+                                        // sheet disappears with the last row),
+                                        // keep the way back to un-hiding
+                                        // reachable right here.
+                                        if !hiddenLandmarks.isEmpty {
+                                            Button {
+                                                showHiddenSheet = true
+                                            } label: {
+                                                Label("Hidden landmarks (\(hiddenLandmarks.count))", systemImage: "eye.slash")
+                                                    .fontWeight(.semibold)
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                            .controlSize(.large)
+                                            .tint(Color("BrandBrown"))
+                                            .buttonBorderShape(.roundedRectangle(radius: 12))
+                                        }
+                                    }
                                 }
                             } else {
                                 list(scoped, anchoredToArea: anchoredToArea)
@@ -594,6 +711,14 @@ struct NearMeView: View {
             .sheet(isPresented: $showHiddenSheet) {
                 HiddenLandmarksView()
             }
+            .onChange(of: pushedLookup) { _, newValue in
+                // Fire a pending review request at the natural pause after
+                // the user closes a landmark's details.
+                if newValue == nil, reviewPromptPending {
+                    reviewPromptPending = false
+                    requestReview()
+                }
+            }
         }
         .task {
             // Stale-while-revalidate cold-start: render last session's
@@ -612,10 +737,17 @@ struct NearMeView: View {
                 // pins under a "Within 2 miles" header.
                 if cached.radiusMeters == currentRadiusMeters {
                     state = cached.results.isEmpty ? .empty : .loaded(cached.results)
-                    lastFetchCenter = CLLocationCoordinate2D(
+                    let center = CLLocationCoordinate2D(
                         latitude: cached.fetchCenter.latitude,
                         longitude: cached.fetchCenter.longitude
                     )
+                    lastFetchCenter = center
+                    // The cache's fetchCenter is always the user's GPS (see
+                    // saveCurrentResultsToCache), so it also seeds the
+                    // user-centered reference the moved-cities check runs
+                    // against.
+                    lastUserFetchCenter = center
+                    lastUserFetchRadiusIndex = radiusIndex
                 }
             }
 
@@ -645,6 +777,7 @@ struct NearMeView: View {
             refreshTask?.cancel()
             panTask?.cancel()
             loadMoreTask?.cancel()
+            trimTask?.cancel()
         }
     }
 
@@ -671,6 +804,10 @@ struct NearMeView: View {
         refreshTask?.cancel()
         panTask?.cancel()
         loadMoreTask?.cancel()
+        // A pending narrow-trim holds a pre-refresh (possibly area-anchored)
+        // subset; landing it after this refresh commits would clobber the
+        // fresh results.
+        trimTask?.cancel()
         let task = Task {
             await refresh(force: force, recenter: recenter, reuseLocation: reuseLocation)
         }
@@ -697,7 +834,7 @@ struct NearMeView: View {
     /// is hidden never appears, and what's left is narrowed by partial
     /// (case-insensitive) substring match against the title.
     private func visibleResults(from results: [LandmarkResult]) -> [LandmarkResult] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         // Common case (nothing hidden, no active search): skip the Set
         // build and the filter pass entirely.
         if hiddenLandmarks.isEmpty && q.isEmpty { return results }
@@ -705,7 +842,10 @@ struct NearMeView: View {
         return results.filter { r in
             if hiddenURLs.contains(r.pageURL.absoluteString) { return false }
             if q.isEmpty { return true }
-            return r.title.lowercased().contains(q)
+            // localizedStandardContains is the system-recommended user-search
+            // comparison: case-, diacritic-, and width-insensitive, so typing
+            // "chateau" matches "Château" (landmark titles carry accents).
+            return r.title.localizedStandardContains(q)
         }
     }
 
@@ -721,13 +861,21 @@ struct NearMeView: View {
         guard let anchor = listAnchor?.center else { return visible }
         let anchorLoc = CLLocation(latitude: anchor.latitude, longitude: anchor.longitude)
         let maxMeters = Double(currentRadiusMeters)
-        func meters(_ r: LandmarkResult) -> CLLocationDistance {
-            guard let c = r.coordinates else { return .infinity }
-            return anchorLoc.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude))
+        // Decorate-sort-undecorate: compute each result's geodesic distance
+        // from the anchor ONCE, then filter and sort on the precomputed
+        // value. This runs in the body on every view update (each search
+        // keystroke, every spinner tick) over up to `maxNearbyResults` rows,
+        // and a closure-based sort recomputed two CLLocation distances per
+        // comparison. Coordinate-less results keep their "shown, sorted
+        // last" behavior via .infinity.
+        let scored: [(result: LandmarkResult, meters: CLLocationDistance)] = visible.map { r in
+            guard let c = r.coordinates else { return (r, .infinity) }
+            return (r, anchorLoc.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude)))
         }
-        return visible
-            .filter { $0.coordinates == nil || meters($0) <= maxMeters }
-            .sorted { meters($0) < meters($1) }
+        return scored
+            .filter { $0.result.coordinates == nil || $0.meters <= maxMeters }
+            .sorted { $0.meters < $1.meters }
+            .map(\.result)
     }
 
     private var hasResults: Bool {
@@ -745,7 +893,12 @@ struct NearMeView: View {
             recenterSignal: recenterSignal,
             onSelect: { open($0) },
             onMapCenterChanged: { center in
+                // USER pans only — NearbyMapView filters out its own
+                // programmatic camera settles (auto-fit on appear, recenter
+                // signal), so an auto-fit over cross-region pins can't
+                // re-anchor the list to a centroid nobody chose.
                 mapCenter = center
+                updateAreaAnchor(for: center)
                 startPanFetch(center)
             },
             radiusMiles: currentRadiusMiles,
@@ -836,9 +989,13 @@ struct NearMeView: View {
                         // center; "your location" on the default GPS-anchored
                         // list (and in the loading / empty / offline states).
                         Image(systemName: anchoredToArea ? "mappin.and.ellipse" : "location.fill")
+                        // formatRadius converts for metric locales ("3 km")
+                        // so the header agrees with the per-row distances,
+                        // which were already locale-aware — a metric user
+                        // saw "Within 2 miles" over rows showing km.
                         Text(anchoredToArea
-                             ? "Within \(currentRadiusMiles) miles of this area"
-                             : "Within \(currentRadiusMiles) miles of your location")
+                             ? "Within \(formatRadius(miles: currentRadiusMiles)) of this area"
+                             : "Within \(formatRadius(miles: currentRadiusMiles)) of your location")
                     }
                     Spacer(minLength: 8)
                     // Trailing radius stepper so the list can widen/tighten
@@ -868,6 +1025,10 @@ struct NearMeView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(Capsule().fill(Color(.tertiarySystemFill)))
+                        // The visual chip is ~23pt tall; outset the hit area
+                        // to ~44pt (HIG minimum) without growing the chip.
+                        // Nothing interactive sits in the outset band.
+                        .contentShape(Rectangle().inset(by: -11))
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back to your location")
@@ -1222,12 +1383,14 @@ struct NearMeView: View {
 
         // Spatial cache invalidation: if the rendered pins are from a
         // previous session and the fresh GPS fix is more than one
-        // search-radius from the cached center, the user has moved
-        // cities — drop the stale pins so they don't keep staring at
-        // last-session's landmarks while the new fetch runs. Done
-        // BEFORE the `lastFetchCenter = nil` reset below so we still
-        // know the cached center.
-        if hasResults, let cachedCenter = lastFetchCenter {
+        // search-radius from the last USER-centered fetch, the user has
+        // moved cities — drop the stale pins so they don't keep staring
+        // at last-session's landmarks while the new fetch runs. Compared
+        // against `lastUserFetchCenter`, never `lastFetchCenter`: pan and
+        // area fetches write the latter with a PANNED center, which made
+        // tab re-entry while panned look like a city move and wipe the
+        // pins (and the disk cache) for nothing.
+        if hasResults, let cachedCenter = lastUserFetchCenter {
             let cachedLoc = CLLocation(
                 latitude: cachedCenter.latitude,
                 longitude: cachedCenter.longitude
@@ -1241,8 +1404,16 @@ struct NearMeView: View {
         // Manual refresh discards any panned-around pins and recenters
         // on the user. Otherwise the "Nearby" list could drift to a
         // totally different part of the world without the user
-        // realizing.
+        // realizing. Re-anchoring the LIST home matters as much as the
+        // pins: leaving `areaAnchor` pointing at the old area scoped the
+        // fresh GPS-centered results to a place they aren't, stranding
+        // the list on "No landmarks in this area" until the Back chip
+        // was found. `previousFetchCenter` is kept so the transient-
+        // failure path below can restore pan-to-search.
+        let previousFetchCenter = lastFetchCenter
         lastFetchCenter = nil
+        areaAnchor = nil
+        mapCenter = loc.coordinate
 
         // Consume the streaming discover pipeline. First yield is the
         // closest-30 batch (gated); second yield is the full set
@@ -1300,13 +1471,21 @@ struct NearMeView: View {
         if sparqlFailed && finalResults.isEmpty {
             // SPARQL transport failed (timeout, retry exhaustion,
             // cancel). Don't claim the area is empty when we never
-            // heard back from the service. Leave `lastFetchCenter`
-            // alone — a future pan should still trigger a fetch from
-            // this center. Leave existing pins alone if we already
-            // have some (a refresh that failed shouldn't blow away
-            // the last successful results); only switch to the
+            // heard back from the service. Restore `lastFetchCenter`
+            // (it was nil'd above, before the stream ran) — a future
+            // pan should still trigger a fetch from the old center;
+            // leaving it nil silently disabled pan-to-search until the
+            // next successful refresh. Leave existing pins alone if we
+            // already have some (a refresh that failed shouldn't blow
+            // away the last successful results); only switch to the
             // explicit failure state when there are no pins to keep.
-            if !hasResults { state = .serviceUnavailable }
+            lastFetchCenter = previousFetchCenter
+            if !hasResults {
+                state = .serviceUnavailable
+                // The failure is otherwise visual-only; tell VoiceOver users
+                // the refresh they triggered didn't land.
+                announceForAccessibility("Couldn't load landmarks")
+            }
             return
         }
 
@@ -1314,6 +1493,8 @@ struct NearMeView: View {
             // SPARQL succeeded with zero hits — area is genuinely
             // empty within the search radius.
             lastFetchCenter = loc.coordinate
+            lastUserFetchCenter = loc.coordinate
+            lastUserFetchRadiusIndex = radiusIndex
             state = .empty
             hasMore = false
         } else {
@@ -1323,12 +1504,25 @@ struct NearMeView: View {
             // atomic swap from the previous results to the fresh
             // fetch.
             lastFetchCenter = loc.coordinate
+            lastUserFetchCenter = loc.coordinate
+            lastUserFetchRadiusIndex = radiusIndex
             state = .loaded(finalResults)
             // Fresh primary fetch = page 1; arm "load more" if the page
             // came back full (radius holds more than one page).
             pagesLoaded = 1
             hasMore = streamHasMore
         }
+
+        // Results landing (or the area coming back empty) was visual-only;
+        // announce the outcome so a VoiceOver user who triggered the refresh
+        // hears that it finished without having to re-scrub the screen.
+        announceForAccessibility(
+            finalResults.isEmpty
+                ? "No landmarks nearby"
+                : (finalResults.count == 1
+                    ? "1 landmark found"
+                    : "\(finalResults.count) landmarks found")
+        )
 
         // Tell the map to snap its camera back to the user (refit to
         // pins). If we don't, the refresh button is silent on the map —
@@ -1448,7 +1642,18 @@ struct NearMeView: View {
     /// radius changed, not the center). The merge mirrors that function's
     /// (dedup + user-anchored sort) — a small, deliberate duplication kept
     /// local to avoid touching the tested pan path.
-    private func fetchAroundCenterForRadiusChange(_ center: CLLocationCoordinate2D) {
+    ///
+    /// `revertOnFailureTo`: the pre-change `radiusIndex` to restore when the
+    /// fetch fails outright, so the ladder/header never stay committed to a
+    /// radius that never loaded. `markUserFetch`: true when `center` IS the
+    /// user's GPS (the `returnToUserLocation` gap-fill), so a successful
+    /// commit also updates the user-centered references the moved-cities
+    /// check and the next return-home test run against.
+    private func fetchAroundCenterForRadiusChange(
+        _ center: CLLocationCoordinate2D,
+        revertOnFailureTo previousIndex: Int? = nil,
+        markUserFetch: Bool = false
+    ) {
         // Zoom out around the panned center to the new radius right away (keep
         // the current pins visible while the fetch fills in), so the camera
         // reveals the wider area without snapping to the user's GPS.
@@ -1487,8 +1692,31 @@ struct NearMeView: View {
             // A newer radius change supersedes this one.
             guard radiusIndex == targetIndex else { return }
             recenterRegion = nil
-            if sparqlFailed && fresh.isEmpty { return }
+            if sparqlFailed && fresh.isEmpty {
+                // The change never loaded. Without a revert the +/- and the
+                // "Within N miles" header stay committed to a radius whose
+                // pins never arrived — silently, since this path keeps the
+                // existing pins. Roll the ladder back and zoom the camera
+                // back to the radius that's actually on screen. (The
+                // `targetIndex` guard above means no newer change is being
+                // stomped.)
+                if let previousIndex {
+                    radiusIndex = previousIndex
+                    let previousMeters = Double(Self.radiusMeters(forMiles: Self.radiusOptionsMiles[previousIndex]))
+                    recenterRegion = MKCoordinateRegion(
+                        center: center,
+                        latitudinalMeters: previousMeters * 2,
+                        longitudinalMeters: previousMeters * 2
+                    )
+                    recenterSignal += 1
+                }
+                return
+            }
             lastFetchCenter = center
+            if markUserFetch {
+                lastUserFetchCenter = center
+                lastUserFetchRadiusIndex = targetIndex
+            }
             guard !fresh.isEmpty else { return }
             // Merge into the existing pins (dedup + user-anchored sort,
             // capped), mirroring fetchAroundMapCenter. See `mergeResults`.
@@ -1626,6 +1854,18 @@ struct NearMeView: View {
         // an earlier pass already saved, so the placeholder write never
         // clears type/year on a re-tap.
         pushedLookup = LandmarkLookup.upsert(result: result, in: modelContext)
+        // A Nearby detail open is a successful lookup for review-prompt
+        // purposes; the request itself fires on detail dismissal.
+        successfulLookupCount += 1
+        if shouldRequestReview(afterSuccessCount: successfulLookupCount) {
+            reviewPromptPending = true
+        }
+        // Re-tapping a landmark already enriched this session would re-run
+        // the whole pipeline — Wikidata claims, the article-image download,
+        // and two on-device LLM calls — for fields the first pass already
+        // persisted (upsert preserve-on-nil means nothing new could land).
+        let sessionKey = result.pageURL.absoluteString
+        guard !enrichedThisSession.contains(sessionKey) else { return }
         Task {
             let enriched = await enrichDiscoveredLandmark(
                 result,
@@ -1640,6 +1880,15 @@ struct NearMeView: View {
                 }
             )
             LandmarkLookup.upsert(result: enriched, in: modelContext)
+            // Only mark the session done when the pass actually gained
+            // something beyond the discover result — an offline tap that
+            // enriched nothing should retry on the next tap, not get
+            // remembered as complete.
+            if enriched.articleImageData != nil
+                || enriched.wikidataType != nil
+                || enriched.summary != result.summary {
+                enrichedThisSession.insert(sessionKey)
+            }
         }
     }
 }

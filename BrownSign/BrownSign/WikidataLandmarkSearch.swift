@@ -140,23 +140,28 @@ nonisolated func discoverLandmarksViaSPARQL(
     OFFSET \(offset)
     """
 
-    guard let encoded = query.addingPercentEncoding(
-            withAllowedCharacters: .urlQueryAllowed
-          ),
-          let url = URL(string: "https://query.wikidata.org/sparql?format=json&query=\(encoded)") else {
+    // URLComponents-built so every character of the SPARQL text is encoded
+    // as data inside the `query` value (`.urlQueryAllowed` left `&`/`+`
+    // usable-but-unescaped, which only worked because today's query happens
+    // to contain neither).
+    guard let url = apiURL("https://query.wikidata.org/sparql", [
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "query", value: query),
+    ]) else {
         return nil
     }
 
-    var request = URLRequest(url: url)
-    request.setValue(brownSignUserAgent, forHTTPHeaderField: "User-Agent")
-    request.setValue("application/sparql-results+json", forHTTPHeaderField: "Accept")
     // Per-attempt timeout. WDQS answers a 5-mile query in <2 s, but a
     // wide-radius query (e.g. 25 miles in a dense area) has to materialise
     // + distance-sort a much larger result set server-side and runs ~10 s,
     // so the wide end needs more headroom before the timeout trips a false
     // failure — the fixed 12 s was firing right at that ~10 s runtime. Keep
     // the common small-radius case at 12 s so it still fails fast.
-    request.timeoutInterval = radiusKm > 20 ? 20 : 12
+    let request = apiRequest(
+        url,
+        timeout: radiusKm > 20 ? 20 : 12,
+        headers: ["Accept": "application/sparql-results+json"]
+    )
 
     // 3 attempts. Worst-case wait is `12 + 0.5 + 12 + 1.5 + 12 = 38 s`,
     // but the modal case is one of the early attempts succeeding —
@@ -168,14 +173,17 @@ nonisolated func discoverLandmarksViaSPARQL(
 }
 
 /// Parses the `results.bindings` array of a WDQS JSON response into
-/// `[WikidataLandmarkHit]`. Returns [] on malformed JSON or missing
-/// fields — matches the function's "graceful empty on any error"
-/// contract.
-nonisolated private func parseSPARQLBindings(_ data: Data) -> [WikidataLandmarkHit] {
+/// `[WikidataLandmarkHit]`. Returns nil when the body isn't a WDQS JSON
+/// response at all — a captive portal's login page or a proxy error served
+/// with HTTP 200 — so a garbage 200 reads as TRANSPORT FAILURE upstream,
+/// not as "this area has zero landmarks" (which wiped the pins and
+/// persisted an empty set to the disk cache). Individual malformed
+/// bindings are still skipped tolerantly.
+nonisolated private func parseSPARQLBindings(_ data: Data) -> [WikidataLandmarkHit]? {
     guard let root = jsonObject(data),
           let results = root["results"] as? [String: Any],
           let bindings = results["bindings"] as? [[String: Any]] else {
-        return []
+        return nil
     }
 
     var hits: [WikidataLandmarkHit] = []

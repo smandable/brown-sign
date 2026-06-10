@@ -37,6 +37,10 @@ struct DirectionsSheet: View {
     }
 
     var body: some View {
+        // ScrollView so the action buttons and Cancel stay reachable at
+        // accessibility text sizes, where the stack outgrows the fixed
+        // 460pt detent and used to clip with no way to scroll.
+        ScrollView {
         VStack(spacing: 20) {
             Map(initialPosition: .region(MKCoordinateRegion(
                 center: coordinate,
@@ -67,8 +71,13 @@ struct DirectionsSheet: View {
                         VStack(spacing: 4) {
                             Image(systemName: "map.fill")
                                 .font(.title3)
-                            Text("Google")
+                            // Product name, not company name — "Google"
+                            // alone under a generic map glyph didn't say
+                            // what would open.
+                            Text("Google Maps")
                                 .font(.caption.weight(.medium))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
@@ -104,8 +113,10 @@ struct DirectionsSheet: View {
                     VStack(spacing: 4) {
                         Image(systemName: "map")
                             .font(.title3)
-                        Text("Apple")
+                        Text("Apple Maps")
                             .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
@@ -120,7 +131,11 @@ struct DirectionsSheet: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
-        .presentationDetents([.height(460)])
+        }
+        // .height(460) fits the default text sizes; .large gives
+        // accessibility sizes room to expand into, with the ScrollView
+        // covering whatever still doesn't fit.
+        .presentationDetents([.height(460), .large])
         .presentationDragIndicator(.visible)
     }
 }

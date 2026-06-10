@@ -10,7 +10,7 @@ Identify roadside landmarks
 Shown above the description on your App Store page. Can be updated anytime without a new app review.
 
 ```
-Ever drive past a brown highway sign and wonder what it's pointing to? Snap a photo, type the name, or open Nearby to see what's around you.
+Ever drive past a brown highway sign and wonder what it's pointing to? Snap a photo, type the name, or browse Nearby. Free, with no account and no ads.
 ```
 
 ## Description
@@ -19,7 +19,7 @@ Ever drive past a brown highway sign and wonder what it's pointing to? Snap a ph
 Brown Sign identifies the landmarks behind brown roadside signs, and helps you discover new ones around you.
 
 SNAP OR TYPE
-Point your camera at a brown highway sign, or just type the name. Pinch to zoom in on a sign that's far away. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
+Point your camera at a brown highway sign, pick a photo from your library, or just type the name. Pinch to zoom in on a sign that's far away. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
 
 NEARBY DISCOVERY
 Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
@@ -46,7 +46,10 @@ SHARE
 Share any landmark's article link with friends, family, or fellow travelers in one tap.
 
 PRIVACY FIRST
-Everything runs on your device. Camera images stay local. Location is used only to rank nearby results, never tracked or shared. No accounts, no analytics, no ads.
+Everything runs on your device. Camera images stay local. Location is used only to find and rank nearby results, never tracked or shared. No accounts, no analytics, no ads.
+
+COMPLETELY FREE
+Every feature, everywhere. No subscription, no in-app purchases, no region packs to buy.
 
 Brown Sign works on any iPhone running iOS 26. Apple Intelligence enhances the experience with smarter text cleanup and polished summaries, but the core pipeline works on every supported device.
 ```
@@ -62,16 +65,20 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.7.0)
+## What's New (Version 1.8.0)
 ```
-On the Nearby tab, the list now follows the map. Pan the map to a new area, switch to the list, and you'll see the landmarks around that spot instead of the ones back where you started, with the heading updating to match. A new "Back to your location" button brings you home with one tap whenever you want to return.
+New: identify a sign from a photo. The passenger snaps a picture as you drive past, and you look it up at the next stop. Tap the photo button next to the camera on the Scan tab.
 
-This update also fixes a recent issue where saved landmark thumbnails could sometimes go missing from the Recent finds and History lists.
+Brown Sign now also tells you when it can't reach the landmark services, so a dead zone no longer reads as "no results", and lookups are quicker on slow connections because the searches run side by side.
+
+The Nearby tab's follow-the-map list got a big reliability pass: refreshing while exploring another area now brings the list home with your results, changing the radius no longer snaps the list away from the area you're browsing, and "Back to your location" fills in anything you're missing at the current radius. Plus kilometer units for metric travelers, clearer messages when something goes wrong, better dark mode contrast, larger touch targets, and more VoiceOver support throughout.
 ```
 
 ### Previous versions
 
 ```
+Version 1.7.0: On the Nearby tab, the list now follows the map. Pan the map to a new area, switch to the list, and you'll see the landmarks around that spot instead of the ones back where you started, with the heading updating to match. A new "Back to your location" button brings you home with one tap whenever you want to return. This update also fixes a recent issue where saved landmark thumbnails could sometimes go missing from the Recent finds and History lists.
+
 Version 1.6.1: Reliability and polish. Saved landmark photos now load faster and more reliably as you scroll through your history, the Nearby radius controls and map behave more consistently, and there's a round of small accessibility fixes throughout.
 
 Version 1.6.0: When Brown Sign isn't sure a result is the right landmark, it now tells you so you can check the other matches. Nearby is steadier, too: it no longer skips landmarks at the edge of a page of results, the area you pan or widen to is remembered when you reopen the app, a landmark's type and founding year now fill in right away when you tap a result, and the map behaves correctly even near the international date line. Plus a cleaner, more consistent look for the empty and directions screens, clearer permission wording, better dark mode legibility, and more VoiceOver and Dynamic Type support.

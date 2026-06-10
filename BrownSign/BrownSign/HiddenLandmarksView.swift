@@ -155,7 +155,9 @@ struct HiddenLandmarksView: View {
                     .tint(Color.accentColor)
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("All \(hidden.count) hidden landmarks will reappear in Nearby.")
+                // Grammar-agreed with the count: one entry reads
+                // "All 1 hidden landmark", not "landmarks".
+                Text("^[All \(hidden.count) hidden landmarks](inflect: true) will reappear in Nearby.")
             }
             // Tint at the dialog's container level too — confirmation
             // dialog buttons render in a system sheet that takes its

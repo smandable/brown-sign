@@ -30,11 +30,31 @@ nonisolated let brownSignUserAgent: String = {
 /// re-specified — or, as was the case, silently omitted — at each call
 /// site. Without an explicit timeout, requests inherit URLSession's 60 s
 /// default and can hang that long on a stalled connection.
-nonisolated func apiRequest(_ url: URL, timeout: TimeInterval = 15) -> URLRequest {
+nonisolated func apiRequest(_ url: URL, timeout: TimeInterval = 15, headers: [String: String] = [:]) -> URLRequest {
     var request = URLRequest(url: url)
     request.setValue(brownSignUserAgent, forHTTPHeaderField: "User-Agent")
+    for (field, value) in headers {
+        request.setValue(value, forHTTPHeaderField: field)
+    }
     request.timeoutInterval = timeout
     return request
+}
+
+/// Build an API URL from a base endpoint and query items via `URLComponents`,
+/// so user-derived values — OCR'd sign text, typed queries, landmark titles —
+/// are encoded as DATA inside a parameter value. The previous pattern
+/// (`.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)` into a
+/// string-interpolated URL) left `&`, `=` and `+` unescaped because they are
+/// legal *somewhere* in a query string, just not inside a value: one title
+/// like "Durango & Silverton Narrow Gauge Railroad" truncated its parameter
+/// at the `&` and could drop a whole pipe-joined batch request. `+` is
+/// additionally force-escaped because these APIs form-decode it as a space.
+nonisolated func apiURL(_ base: String, _ items: [URLQueryItem]) -> URL? {
+    guard var components = URLComponents(string: base) else { return nil }
+    components.queryItems = items
+    components.percentEncodedQuery = components.percentEncodedQuery?
+        .replacingOccurrences(of: "+", with: "%2B")
+    return components.url
 }
 
 /// Parse `data` as a top-level JSON object. Shared so the search providers

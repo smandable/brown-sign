@@ -39,7 +39,7 @@ nonisolated struct WikidataHistoricSignals {
 /// This is far more reliable than fuzzy `wbsearchentities`, which
 /// returns label matches and can land on the wrong entity entirely
 /// (e.g. a band called "Wadsworth Mansion" instead of the building).
-func fetchWikidataEnrichment(for wikipediaTitle: String) async -> WikidataEnrichment? {
+nonisolated func fetchWikidataEnrichment(for wikipediaTitle: String) async -> WikidataEnrichment? {
     guard let claims = await fetchWikidataClaimsByWikipediaTitle(wikipediaTitle) else {
         return nil
     }
@@ -89,8 +89,17 @@ nonisolated func fetchWikidataHistoricSignals(for wikipediaTitle: String) async 
 // MARK: - Step 1: fetch claims by exact Wikipedia title (sitelink lookup)
 
 nonisolated private func fetchWikidataClaimsByWikipediaTitle(_ title: String) async -> [String: Any]? {
-    guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=\(encoded)&format=json&props=claims&normalize=1") else {
+    // URLComponents-built so a title containing '&' or '+' ("Durango &
+    // Silverton Narrow Gauge Railroad") is encoded as data inside the
+    // `titles` value instead of truncating it at the '&'.
+    guard let url = apiURL("https://www.wikidata.org/w/api.php", [
+        URLQueryItem(name: "action", value: "wbgetentities"),
+        URLQueryItem(name: "sites", value: "enwiki"),
+        URLQueryItem(name: "titles", value: title),
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "props", value: "claims"),
+        URLQueryItem(name: "normalize", value: "1"),
+    ]) else {
         return nil
     }
 
@@ -126,7 +135,7 @@ nonisolated private func bestClaim(from list: [[String: Any]]) -> [String: Any]?
 }
 
 /// Digs `claims.P625` (best-rank statement) for `latitude`/`longitude`.
-private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
+nonisolated private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
     guard let list = claims["P625"] as? [[String: Any]],
           let first = bestClaim(from: list),
           let mainsnak = first["mainsnak"] as? [String: Any],
@@ -139,10 +148,13 @@ private func parseCoordinate(from claims: [String: Any]) -> Coordinate? {
     return Coordinate(latitude: lat, longitude: lon)
 }
 
-/// Extracts the 4-digit year from a time-valued Wikidata claim
+/// Extracts the year from a time-valued Wikidata claim
 /// (`claims.<property>[0].mainsnak.datavalue.value.time`, e.g.
-/// "+1934-07-01T00:00:00Z"). Shared by the inception (P571) and
-/// dissolved (P576) parsers since both claims have the same shape.
+/// "+1934-07-01T00:00:00Z"). BCE dates are signed ("-0500-01-01…"); the
+/// sign is preserved (negative = BCE) so a 500 BC archaeological site
+/// doesn't render as "Est. 500" — off by a millennium. Shared by the
+/// inception (P571) and dissolved (P576) parsers since both claims have
+/// the same shape.
 nonisolated private func parseClaimYear(from claims: [String: Any], property: String) -> Int? {
     guard let list = claims[property] as? [[String: Any]],
           let first = bestClaim(from: list),
@@ -152,10 +164,12 @@ nonisolated private func parseClaimYear(from claims: [String: Any], property: St
           let time = value["time"] as? String else {
         return nil
     }
-    let trimmed = time.hasPrefix("+") || time.hasPrefix("-")
+    let negative = time.hasPrefix("-")
+    let trimmed = time.hasPrefix("+") || negative
         ? String(time.dropFirst())
         : time
-    return Int(trimmed.prefix(4))
+    guard let year = Int(trimmed.prefix(4)) else { return nil }
+    return negative ? -year : year
 }
 
 /// P571 (inception). See `parseClaimYear`.
@@ -164,7 +178,7 @@ nonisolated private func parseInceptionYear(from claims: [String: Any]) -> Int? 
 }
 
 /// Digs `claims.P31[0].mainsnak.datavalue.value.id` (e.g. "Q33506").
-private func parseInstanceOfQID(from claims: [String: Any]) -> String? {
+nonisolated private func parseInstanceOfQID(from claims: [String: Any]) -> String? {
     guard let list = claims["P31"] as? [[String: Any]],
           let first = bestClaim(from: list),
           let mainsnak = first["mainsnak"] as? [String: Any],
@@ -196,7 +210,7 @@ nonisolated private func parseDissolvedYear(from claims: [String: Any]) -> Int? 
 
 // MARK: - Step 3: resolve a QID to an English label
 
-private func fetchWikidataLabel(for qid: String) async -> String? {
+nonisolated private func fetchWikidataLabel(for qid: String) async -> String? {
     guard let url = URL(string: "https://www.wikidata.org/w/api.php?action=wbgetentities&ids=\(qid)&format=json&props=labels&languages=en") else {
         return nil
     }

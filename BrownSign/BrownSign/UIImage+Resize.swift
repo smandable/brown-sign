@@ -23,7 +23,9 @@ extension UIImage {
     /// 1600–2400px image — inflating OCR input and the persisted
     /// SwiftData thumbnails by ~4–9x. `draw(in:)` still bakes in the
     /// source's `imageOrientation`, so the result is upright regardless.
-    func resized(to size: CGSize) -> UIImage {
+    /// nonisolated: UIGraphicsImageRenderer is thread-safe, and the capture
+    /// and photo-import pipelines encode thumbnails off the main actor.
+    nonisolated func resized(to size: CGSize) -> UIImage {
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
@@ -35,7 +37,7 @@ extension UIImage {
     /// Scale so the longest edge equals `maxDimension`, preserving
     /// aspect ratio. Returns `self` unchanged when the image is already
     /// smaller — callers don't have to guard.
-    func resized(toMaxDimension maxDimension: CGFloat) -> UIImage {
+    nonisolated func resized(toMaxDimension maxDimension: CGFloat) -> UIImage {
         let longest = max(size.width, size.height)
         guard longest > maxDimension else { return self }
         let scale = maxDimension / longest

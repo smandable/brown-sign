@@ -31,7 +31,7 @@ import Foundation
 /// (NPS) have their own coordinate pipelines and we don't want to risk
 /// an irrelevant regex hit against an NPS extract that happens to
 /// mention a coord.
-func backfillCoordinatesIfNeeded(
+nonisolated func backfillCoordinatesIfNeeded(
     for candidate: LandmarkResult
 ) async -> Coordinate? {
     if let existing = candidate.coordinates { return existing }
@@ -54,7 +54,7 @@ func backfillCoordinatesIfNeeded(
 /// the primary geo claim if present, nil otherwise. Many articles tag
 /// their coord here even when Wikidata doesn't — this is the cheapest
 /// structured fallback.
-func fetchWikipediaCoordinates(forTitle title: String) async -> Coordinate? {
+nonisolated func fetchWikipediaCoordinates(forTitle title: String) async -> Coordinate? {
     guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
           let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=coordinates&redirects=1&titles=\(encoded)") else {
         return nil

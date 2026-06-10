@@ -12,6 +12,19 @@ import SwiftData
 import UIKit
 import CoreLocation
 import StoreKit
+import PhotosUI
+
+/// Descriptor for the Scan tab's "Recent finds" preview: newest 3 only.
+/// Without the fetchLimit, the @Query on the launch tab materialized and
+/// observation-tracked the user's ENTIRE history — inline image blobs
+/// included — to show three rows.
+private let recentFindsDescriptor: FetchDescriptor<LandmarkLookup> = {
+    var d = FetchDescriptor<LandmarkLookup>(
+        sortBy: [SortDescriptor(\.date, order: .reverse)]
+    )
+    d.fetchLimit = 3
+    return d
+}()
 
 struct ContentView: View {
     @State private var signText = ""
@@ -41,6 +54,17 @@ struct ContentView: View {
 
     @State private var isSignTextFocused = false
 
+    /// In-flight photo-ingest pipeline (downsample → thumbnail → OCR →
+    /// normalize) for the MOST RECENT photo. Tracked so a retake or a new
+    /// library pick cancels the previous photo's pipeline: two concurrent
+    /// runs raced, and the SLOWER (stale) one could overwrite `signText`
+    /// with the older photo's text after the newer photo had landed.
+    @State private var processTask: Task<Void, Never>?
+
+    /// Library photo selected via the "Choose a photo" picker; routed
+    /// through the same ingest pipeline as a camera capture, then reset.
+    @State private var photoPickerItem: PhotosPickerItem?
+
     /// Per-row height for the non-scrolling "Recent finds" List, which can't
     /// self-size inside the outer ScrollView. Scales with Dynamic Type, with
     /// a little headroom so large text sizes don't clip; the per-row
@@ -63,8 +87,9 @@ struct ContentView: View {
     @Environment(\.requestReview) private var requestReview
 
     /// Recent lookups for the empty-state "Recent finds" preview.
-    /// Same sort order as HistoryView, so the top rows match.
-    @Query(sort: \LandmarkLookup.date, order: .reverse)
+    /// Same sort order as HistoryView, so the top rows match; capped at
+    /// 3 by `recentFindsDescriptor` since only 3 are ever shown.
+    @Query(recentFindsDescriptor)
     private var recentLookups: [LandmarkLookup]
 
     var body: some View {
@@ -90,6 +115,13 @@ struct ContentView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .overlay(alignment: .topTrailing) {
                                     Button {
+                                        // Cancel any in-flight OCR for this
+                                        // photo too — its text landing after
+                                        // the photo was removed reads as a
+                                        // ghost.
+                                        processTask?.cancel()
+                                        isProcessing = false
+                                        statusMessage = ""
                                         capturedImage = nil
                                         capturedThumbnailData = nil
                                     } label: {
@@ -110,19 +142,7 @@ struct ContentView: View {
                                 }
                         }
 
-                        Button {
-                            showCamera = true
-                        } label: {
-                            Label("Snap a landmark sign", systemImage: "camera.fill")
-                                .fontWeight(.regular)
-                                .frame(maxWidth: .infinity, minHeight: 28)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        // Filled buttons use AccentButton instead of
-                        // AccentColor — needs more saturation in dark
-                        // mode for white-text contrast (4.8:1 vs 3.2:1).
-                        .tint(Color("AccentButton"))
-                        .buttonBorderShape(.roundedRectangle(radius: 12))
+                        photoInputRow
 
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
@@ -186,8 +206,15 @@ struct ContentView: View {
                         .id("textField")
 
                         if locationManager.isDenied && !locationBannerDismissed {
+                            // Faded while the keyboard is up — but opacity 0
+                            // alone still hit-tests, leaving an invisible
+                            // "Open Settings" that could yank a blind tap
+                            // into the Settings app. Disable hits and hide
+                            // from VoiceOver while faded.
                             locationDeniedBanner
                                 .opacity(isSignTextFocused ? 0 : 1)
+                                .allowsHitTesting(!isSignTextFocused)
+                                .accessibilityHidden(isSignTextFocused)
                         }
 
                         if !statusMessage.isEmpty {
@@ -219,6 +246,11 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 32)
                             .opacity(isSignTextFocused ? 0 : 1)
+                            // Same ghost-tap guard as the banner: invisible
+                            // recent-find rows must not open a detail sheet
+                            // from under the keyboard.
+                            .allowsHitTesting(!isSignTextFocused)
+                            .accessibilityHidden(isSignTextFocused)
                             .accessibilityElement(children: .contain)
                             .accessibilityLabel("Brown Sign. Snap a sign or type to look up a landmark.")
                         }
@@ -294,22 +326,12 @@ struct ContentView: View {
             .fullScreenCover(isPresented: $showCamera) {
                 CameraView(
                     onCapture: { data in
-                        // Downsample straight from the photo data via ImageIO so
-                        // a full-resolution (up to 48MP) frame is never fully
-                        // decoded into memory. 1600px keeps distant-sign text
-                        // legible for OCR while staying light; high-res capture
-                        // means a zoomed crop is still sharp at that size.
-                        guard let scaled = UIImage.downsampled(from: data, maxDimension: 1600) else {
-                            showCamera = false
-                            return
-                        }
-                        capturedImage = scaled
-                        // Encode the history thumbnail once here instead of
-                        // re-deriving it in each lookup path.
-                        capturedThumbnailData = scaled.resized(to: CGSize(width: 112, height: 112))
-                            .jpegData(compressionQuality: 0.7)
+                        // Dismiss immediately; the heavy decode runs in
+                        // ingestPhoto off the main actor (synchronously
+                        // downsampling an up-to-48MP frame here stuttered
+                        // the camera-dismissal transition).
                         showCamera = false
-                        Task { await processImage(scaled) }
+                        ingestPhoto(data: data)
                     },
                     onCancel: {
                         showCamera = false
@@ -318,7 +340,9 @@ struct ContentView: View {
                 .ignoresSafeArea()
             }
             .sheet(isPresented: $showSafari) {
-                if let url = result?.pageURL {
+                // isSafariPresentableURL: SFSafariViewController crashes on
+                // non-http(s) schemes, and pageURL comes from remote data.
+                if let url = result?.pageURL, isSafariPresentableURL(url) {
                     SafariView(url: url)
                 }
             }
@@ -345,6 +369,55 @@ struct ContentView: View {
                             }
                         }
                 }
+            }
+        }
+    }
+
+    // MARK: - Photo input row
+
+    /// The camera button plus the library picker (extracted from `body` to
+    /// keep the type checker happy). Library import sits beside the camera
+    /// because the safe road-trip flow is "passenger photographs the sign,
+    /// identifies it at the next stop" — that photo lives in the library,
+    /// not the live camera. Both route through the same ingest pipeline.
+    private var photoInputRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                showCamera = true
+            } label: {
+                Label("Snap a landmark sign", systemImage: "camera.fill")
+                    .fontWeight(.regular)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            // Filled buttons use AccentButton instead of
+            // AccentColor — needs more saturation in dark
+            // mode for white-text contrast (4.8:1 vs 3.2:1).
+            .tint(Color("AccentButton"))
+            .buttonBorderShape(.roundedRectangle(radius: 12))
+
+            // Icon-only width matches the Share button on the result card.
+            PhotosPicker(selection: $photoPickerItem, matching: .images) {
+                Label("Choose a photo", systemImage: "photo.on.rectangle")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 44)
+                    .frame(minHeight: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color("AccentButton"))
+            .buttonBorderShape(.roundedRectangle(radius: 12))
+            .accessibilityLabel("Choose a photo")
+        }
+        .onChange(of: photoPickerItem) { _, item in
+            guard let item else { return }
+            // Reset so re-picking the same photo re-fires.
+            photoPickerItem = nil
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self) else {
+                    statusMessage = "Couldn't load that photo. Try a different one."
+                    return
+                }
+                ingestPhoto(data: data)
             }
         }
     }
@@ -626,7 +699,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color("BrandBrown"))
                     .buttonBorderShape(.roundedRectangle(radius: 12))
-                    .disabled(result.pageURL.absoluteString.isEmpty)
+                    .disabled(!isSafariPresentableURL(result.pageURL))
 
                     ShareLink(item: result.pageURL,
                               subject: Text(result.title),
@@ -755,7 +828,10 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                 }
                 if let year = result.inceptionYear {
-                    Label("Est. \(String(year))", systemImage: "calendar")
+                    // Negative = BCE (parseClaimYear preserves the sign), so
+                    // a 500 BC site reads "Est. 500 BC", not "Est. 500".
+                    Label(year < 0 ? "Est. \(String(-year)) BC" : "Est. \(String(year))",
+                          systemImage: "calendar")
                         .font(.caption)
                 }
                 if let type = result.wikidataType {
@@ -777,12 +853,47 @@ struct ContentView: View {
 
     // MARK: - Pipeline
 
+    /// Shared photo-ingest pipeline for the camera capture AND the library
+    /// picker: downsample to the 1600px OCR sink and encode the 112px
+    /// history thumbnail off the main actor, then OCR + normalize. Cancels
+    /// any previous photo's pipeline first so a retake (or rapid
+    /// double-shutter) can't have the slower, stale run overwrite the newer
+    /// photo's state.
+    private func ingestPhoto(data: Data) {
+        processTask?.cancel()
+        processTask = Task {
+            // 1600px keeps distant-sign text legible for OCR while staying
+            // light; high-res capture means a zoomed crop is still sharp at
+            // that size. ImageIO decodes straight to the target size, so a
+            // full-resolution frame is never fully decoded into memory.
+            let scaled = await Task.detached(priority: .userInitiated) {
+                UIImage.downsampled(from: data, maxDimension: 1600)
+            }.value
+            guard let scaled, !Task.isCancelled else { return }
+            // Encode the history thumbnail once here instead of re-deriving
+            // it in each lookup path.
+            let thumb = await Task.detached(priority: .userInitiated) {
+                scaled.resized(to: CGSize(width: 112, height: 112))
+                    .jpegData(compressionQuality: 0.7)
+            }.value
+            guard !Task.isCancelled else { return }
+            capturedImage = scaled
+            capturedThumbnailData = thumb
+            await processImage(scaled)
+        }
+    }
+
     private func processImage(_ image: UIImage) async {
         isProcessing = true
         statusMessage = "Reading sign…"
+        announceForAccessibility("Reading sign")
         let lines = await recognizeText(from: image)
+        // Superseded by a retake/new pick: the successor pipeline owns the
+        // isProcessing/status state now, so bail without touching it.
+        guard !Task.isCancelled else { return }
         statusMessage = "Identifying landmark…"
         let normalized = await normalizeLandmarkName(fromLines: lines)
+        guard !Task.isCancelled else { return }
         signText = normalized
         statusMessage = ""
         isProcessing = false
@@ -811,15 +922,23 @@ struct ContentView: View {
         )
 
         // Phase 1: candidate list (fast — Wikipedia + Wikidata only).
-        let found = await searchLandmarkCandidates(
+        let outcome = await searchLandmarkCandidates(
             query: trimmed,
             userLocation: userLocation
         )
-        candidates = found
+        candidates = outcome.candidates
 
-        guard let first = found.first else {
-            statusMessage = "No results"
+        guard let first = outcome.candidates.first else {
+            // Two different situations used to collapse into one bare
+            // "No results": being offline (every source transport-failed,
+            // which told the user there's no such landmark — wrong
+            // information) and a genuine no-match (which offered no next
+            // step). Say which one it is, with what to do about it.
+            statusMessage = outcome.transportFailed
+                ? "Couldn't reach the landmark services. Check your connection, then try again."
+                : "No matches for \"\(trimmed)\". Check the sign text, or try fewer words."
             isSearching = false
+            announceForAccessibility(statusMessage)
             return
         }
 
@@ -832,6 +951,7 @@ struct ContentView: View {
         result = first
         statusMessage = ""
         isSearching = false
+        announceForAccessibility("Found \(first.title)")
         let thumb: Data? = capturedThumbnailData
         savedLookup = LandmarkLookup.upsert(
             result: first, in: modelContext, rawSignText: trimmed, capturedThumb: thumb
@@ -841,16 +961,20 @@ struct ContentView: View {
     }
 
     /// Prompts for an App Store rating after the user has had a few
-    /// successful lookups. Apple throttles review requests to at most
-    /// 3 per year per user, so calling this more often than that is
-    /// fine — the system simply ignores extra calls. We also skip the
-    /// first few lookups to avoid prompting during initial exploration.
+    /// successful lookups (Nearby detail opens count too, via the shared
+    /// counter — Nearby-first users otherwise never got asked). Apple
+    /// throttles review requests to at most 3 per year per user, so
+    /// calling this more often than that is fine — the system simply
+    /// ignores extra calls. We also skip the first few lookups to avoid
+    /// prompting during initial exploration.
     private func maybeRequestReview() {
         successfulLookupCount += 1
-        // Ask after the 3rd, 10th, and 25th successful lookup.
-        // Apple's own heuristics decide whether to actually show.
-        let triggers: Set<Int> = [3, 10, 25]
-        if triggers.contains(successfulLookupCount) {
+        guard shouldRequestReview(afterSuccessCount: successfulLookupCount) else { return }
+        // Defer past the result card landing: requesting synchronously
+        // popped the system rating alert over the result the user just
+        // asked for, mid-read — the worst possible moment to interrupt.
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
             requestReview()
         }
     }

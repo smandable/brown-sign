@@ -1,6 +1,6 @@
 # Brown Sign — Privacy Policy
 
-**Effective date:** June 7, 2026
+**Effective date:** June 10, 2026
 
 Brown Sign is developed by Sean Mandable. This privacy policy explains what data the app accesses, how it's used, and what leaves your device.
 
@@ -26,7 +26,7 @@ The app makes network requests to these services to look up landmark information
 | Service | What's sent | Privacy policy |
 | --- | --- | --- |
 | **Wikipedia / Wikimedia** | Search queries, coordinates | [wikimediafoundation.org/wiki/Privacy_policy](https://foundation.wikimedia.org/wiki/Privacy_policy) |
-| **Wikidata** | Landmark titles | Same as Wikipedia |
+| **Wikidata** | Landmark titles, coordinates (for Nearby searches) | Same as Wikipedia |
 | **National Park Service API** | Search queries | [nps.gov/aboutus/privacy.htm](https://www.nps.gov/aboutus/privacy.htm) |
 
 No personal information (name, email, device ID, IP address) is intentionally sent to any of these services. Standard HTTPS requests may expose your IP address to the server, as with any internet connection.

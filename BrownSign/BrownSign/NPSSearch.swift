@@ -9,7 +9,7 @@
 
 import Foundation
 
-struct NPSResult {
+nonisolated struct NPSResult {
     let title: String
     let summary: String
     let pageURL: URL
@@ -17,7 +17,7 @@ struct NPSResult {
     let imageURL: URL?
 }
 
-func searchNPS(query: String) async -> NPSResult? {
+nonisolated func searchNPS(query: String) async -> NPSResult? {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     guard !npsAPIKey.hasPrefix("REPLACE_") && !npsAPIKey.isEmpty else { return nil }
@@ -30,11 +30,11 @@ func searchNPS(query: String) async -> NPSResult? {
 
 // MARK: - Shared image decoding
 
-private struct NPSImage: Decodable {
+nonisolated private struct NPSImage: Decodable {
     let url: String?
 }
 
-private func firstValidImageURL(_ images: [NPSImage]?) -> URL? {
+nonisolated private func firstValidImageURL(_ images: [NPSImage]?) -> URL? {
     guard let images else { return nil }
     for image in images {
         if let urlString = image.url, let url = URL(string: urlString) {
@@ -46,24 +46,30 @@ private func firstValidImageURL(_ images: [NPSImage]?) -> URL? {
 
 // MARK: - /parks endpoint
 
-private struct ParksResponse: Decodable {
+nonisolated private struct ParksResponse: Decodable {
     let data: [ParkItem]
 }
 
-private struct ParkItem: Decodable {
+nonisolated private struct ParkItem: Decodable {
     let fullName: String?
     let description: String?
     let url: String?
     let images: [NPSImage]?
 }
 
-private func fetchNPSPark(query: String) async -> NPSResult? {
-    guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://developer.nps.gov/api/v1/parks?q=\(encoded)&limit=1&api_key=\(npsAPIKey)") else {
+nonisolated private func fetchNPSPark(query: String) async -> NPSResult? {
+    // URLComponents-built (an "&" in the query can't truncate the value) and
+    // the key rides in the X-Api-Key header, not the URL — URLs are the most
+    // logged part of a request, and URLSession's on-disk cache keys entries
+    // by the full URL, key included.
+    guard let url = apiURL("https://developer.nps.gov/api/v1/parks", [
+        URLQueryItem(name: "q", value: query),
+        URLQueryItem(name: "limit", value: "1"),
+    ]) else {
         return nil
     }
 
-    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let data = await httpDataWithRetry(apiRequest(url, headers: ["X-Api-Key": npsAPIKey])) else { return nil }
     guard let decoded = try? JSONDecoder().decode(ParksResponse.self, from: data),
           let first = decoded.data.first,
           let name = first.fullName, !name.isEmpty,
@@ -82,24 +88,27 @@ private func fetchNPSPark(query: String) async -> NPSResult? {
 
 // MARK: - /places endpoint (NRHP + NPS historic places)
 
-private struct PlacesResponse: Decodable {
+nonisolated private struct PlacesResponse: Decodable {
     let data: [PlaceItem]
 }
 
-private struct PlaceItem: Decodable {
+nonisolated private struct PlaceItem: Decodable {
     let title: String?
     let listingDescription: String?
     let url: String?
     let images: [NPSImage]?
 }
 
-private func fetchNPSPlace(query: String) async -> NPSResult? {
-    guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://developer.nps.gov/api/v1/places?q=\(encoded)&limit=1&api_key=\(npsAPIKey)") else {
+nonisolated private func fetchNPSPlace(query: String) async -> NPSResult? {
+    // Same URLComponents + X-Api-Key treatment as /parks above.
+    guard let url = apiURL("https://developer.nps.gov/api/v1/places", [
+        URLQueryItem(name: "q", value: query),
+        URLQueryItem(name: "limit", value: "1"),
+    ]) else {
         return nil
     }
 
-    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let data = await httpDataWithRetry(apiRequest(url, headers: ["X-Api-Key": npsAPIKey])) else { return nil }
     guard let decoded = try? JSONDecoder().decode(PlacesResponse.self, from: data),
           let first = decoded.data.first,
           let name = first.title, !name.isEmpty,

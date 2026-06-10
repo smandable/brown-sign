@@ -79,8 +79,11 @@ struct NearbyRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 HStack(spacing: 8) {
-                    if let coord = result.coordinates {
-                        let d = distanceMeters(from: referenceLocation, to: coord)
+                    // No reference point (the cold-start cached list before
+                    // the GPS fix lands) → no distance chip, rather than the
+                    // literal "0 ft" the old zero-fallback rendered.
+                    if let coord = result.coordinates,
+                       let d = distanceMeters(from: referenceLocation, to: coord) {
                         // Manual HStack instead of Label so the
                         // location-arrow / number gap is tighter than
                         // the default Label spacing.
@@ -118,10 +121,10 @@ struct NearbyRow: View {
         )
     }
 
-    private func distanceMeters(from user: CLLocation?, to coord: Coordinate) -> CLLocationDistance {
-        guard let user else { return 0 }
+    private func distanceMeters(from reference: CLLocation?, to coord: Coordinate) -> CLLocationDistance? {
+        guard let reference else { return nil }
         let other = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-        return user.distance(from: other)
+        return reference.distance(from: other)
     }
 }
 
@@ -165,6 +168,15 @@ struct NearbyMapView: View {
 
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
+    /// Count of programmatic camera assignments whose settle hasn't been
+    /// consumed yet (the `.onAppear` auto-fit and the recenter-signal moves).
+    /// `.onMapCameraChange` fires for those settles exactly like user pans;
+    /// without filtering them out, the auto-fit over accumulated cross-region
+    /// pins was reported as a "pan" to a centroid nobody chose — re-anchoring
+    /// the parent's list and firing a spurious fetch there on every
+    /// list→map switch. A counter (not a Bool) because a recenter can land
+    /// while the appear-fit is still animating.
+    @State private var pendingProgrammaticMoves = 0
 
     /// True only when the selected pin still exists in the current results, so
     /// a stale selection (the pin left the set via search/hide or a re-sorted/
@@ -189,7 +201,10 @@ struct NearbyMapView: View {
                                 longitude: coord.longitude
                             )
                         )
-                        .tint(Color("BrandBrown"))
+                        // Foreground variant: identical brown in light mode,
+                        // lightened in dark so the balloon reads against the
+                        // dark map style (raw BrandBrown is ~2.2:1 there).
+                        .tint(Color("BrandBrownForeground"))
                         .tag(result.pageURL.absoluteString)
                     }
                 }
@@ -199,21 +214,36 @@ struct NearbyMapView: View {
                 MapCompass()
             }
             .onAppear {
+                pendingProgrammaticMoves += 1
                 cameraPosition = .region(initialRegion())
             }
             .onChange(of: recenterSignal) { _, _ in
                 // Recenter: use a parent-supplied region when present (a
                 // radius-decrease zooms to the new radius BEFORE its pins
                 // are trimmed); otherwise fit the current pins.
+                pendingProgrammaticMoves += 1
                 withAnimation { cameraPosition = .region(recenterRegion ?? initialRegion()) }
             }
             .onMapCameraChange(frequency: .onEnd) { context in
-                // Report the new map center to the parent at the end
-                // of every gesture. The parent compares against its
-                // last-fetched center and decides whether the pan was
-                // significant enough to warrant another geosearch.
-                // `.onEnd` only fires after the user stops
-                // interacting, so we don't spam refetches mid-gesture.
+                // Report the new map center to the parent at the end of every
+                // USER gesture. The parent compares against its last-fetched
+                // center and decides whether the pan was significant enough
+                // to warrant another geosearch. `.onEnd` only fires after the
+                // camera stops moving, so we don't spam refetches mid-gesture.
+                //
+                // Programmatic settles must NOT be reported: belt and braces,
+                // a user-positioned camera always reports (and clears any
+                // stale pending count — a programmatic assignment that
+                // produced no camera change never consumes its increment),
+                // while a non-user settle is swallowed against the pending
+                // count so the appear auto-fit / recenter animation can't
+                // masquerade as a pan.
+                if cameraPosition.positionedByUser {
+                    pendingProgrammaticMoves = 0
+                } else if pendingProgrammaticMoves > 0 {
+                    pendingProgrammaticMoves -= 1
+                    return
+                }
                 onMapCenterChanged(context.region.center)
             }
             // Apple/Google-style zoom control, bottom-trailing (where map
@@ -313,8 +343,9 @@ struct MapZoomControl: View {
             button("plus", action: onZoomIn, enabled: canZoomIn)
             Divider().frame(width: 44)
             // Current search radius — the scale cue, since the map has no
-            // "Within N miles" header like the list.
-            Text("\(miles) mi")
+            // "Within N miles" header like the list. Locale-aware ("3 km"
+            // for metric users), matching the list header and row distances.
+            Text(formatRadius(miles: miles, abbreviated: true))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 44, height: 28)
@@ -369,7 +400,11 @@ struct RadiusStepper: View {
             Image(systemName: systemName)
                 .font(.footnote.weight(.semibold))
                 .frame(width: 32, height: 26)
-                .contentShape(Rectangle())
+                // Outset the hit area to ~44pt (HIG minimum) while keeping
+                // the compact 26pt capsule visual. The two buttons' outsets
+                // overlap over the divider; the trailing button wins that
+                // 9pt strip, which beats the dead zone both had before.
+                .contentShape(Rectangle().inset(by: -9))
         }
         .buttonStyle(.plain)
         .foregroundStyle(enabled ? Color.accentColor : Color.secondary.opacity(0.4))

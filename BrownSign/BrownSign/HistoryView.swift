@@ -28,12 +28,14 @@ struct HistoryView: View {
     @State private var displayMode: LandmarkDisplayMode = .list
     @State private var searchText: String = ""
 
-    /// Lookups narrowed by the live search field. Partial, case-
-    /// insensitive substring match against the resolved title.
+    /// Lookups narrowed by the live search field. Partial substring match
+    /// against the resolved title via localizedStandardContains — the
+    /// system-recommended user-search comparison (case-, diacritic-, and
+    /// width-insensitive), so typing "chateau" matches "Château".
     private var filteredLookups: [LandmarkLookup] {
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return lookups }
-        return lookups.filter { $0.resolvedTitle.lowercased().contains(q) }
+        return lookups.filter { $0.resolvedTitle.localizedStandardContains(q) }
     }
 
 
@@ -89,13 +91,17 @@ struct HistoryView: View {
                                 // Search yielded nothing — render the
                                 // empty-state on its own instead of
                                 // overlaying it on the List, which
-                                // would centre the "No matches" copy
+                                // would centre the "No results" copy
                                 // right on top of the "Recently viewed
-                                // landmarks" header row.
+                                // landmarks" header row. "No results"
+                                // (not "No matches") and "finds" (not
+                                // "lookups"): the same terms Nearby's
+                                // empty search and Scan's section header
+                                // use for the identical interaction.
                                 BrandEmptyState(
                                     systemImage: "magnifyingglass",
-                                    title: "No matches",
-                                    message: "No saved lookups match \"\(searchText)\"."
+                                    title: "No results",
+                                    message: "No saved finds match \"\(searchText)\"."
                                 )
                             } else {
                                 // Header lives OUTSIDE the List so it
@@ -270,7 +276,10 @@ struct HistoryView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This will remove all \(lookups.count) saved lookups. This cannot be undone.")
+                // ^[…](inflect: true) grammar-agrees the noun phrase with
+                // the count, so one entry reads "all 1 saved find", not
+                // "all 1 saved lookups". "Finds" matches Scan's term.
+                Text("This will remove ^[all \(lookups.count) saved finds](inflect: true). This cannot be undone.")
             }
         }
     }
@@ -288,7 +297,7 @@ struct HistoryView: View {
         // identically.
         BrandEmptyState(
             systemImage: "signpost.right.and.left",
-            title: "No lookups yet",
+            title: "No finds yet",
             message: "Snap a landmark sign to get started."
         )
     }
@@ -376,7 +385,7 @@ struct HistoryMapView: View {
             BrandEmptyState(
                 systemImage: "mappin.slash",
                 title: "No mapped landmarks",
-                message: "Lookups with coordinates will appear here on a map."
+                message: "Finds with coordinates will appear here on a map."
             )
         } else {
             ZStack(alignment: .bottom) {
@@ -389,7 +398,10 @@ struct HistoryMapView: View {
                                 systemImage: "signpost.right.fill",
                                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
                             )
-                            .tint(Color("BrandBrown"))
+                            // Foreground variant: identical in light mode,
+                            // lightened in dark so the balloon reads against
+                            // the dark map style.
+                            .tint(Color("BrandBrownForeground"))
                             .tag(lookup)
                         }
                     }
@@ -673,7 +685,9 @@ struct LandmarkDetailView: View {
         .navigationTitle(lookup.resolvedTitle)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showSafari) {
-            if let url = lookup.pageURL {
+            // isSafariPresentableURL: SFSafariViewController crashes on
+            // non-http(s) schemes, and pageURL comes from remote data.
+            if let url = lookup.pageURL, isSafariPresentableURL(url) {
                 SafariView(url: url)
             }
         }
@@ -801,7 +815,9 @@ struct LandmarkDetailView: View {
                 .buttonStyle(.plain)
             }
             if let year = lookup.inceptionYear {
-                Label("Est. \(String(year))", systemImage: "calendar")
+                // Negative = BCE (parseClaimYear preserves the sign).
+                Label(year < 0 ? "Est. \(String(-year)) BC" : "Est. \(String(year))",
+                      systemImage: "calendar")
                     .font(.caption)
             }
             if let type = lookup.wikidataType {

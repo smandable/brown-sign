@@ -13,6 +13,7 @@ import SwiftUI
 import CoreLocation
 import MapKit
 import UIKit
+import Accessibility
 
 // MARK: - List / Map display mode
 
@@ -78,6 +79,19 @@ struct DisplayModeSegmentedPicker: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color(.tertiarySystemFill))
         )
+        // The custom segments are plain Buttons, so VoiceOver heard "List,
+        // button / Map, button" with no hint of which was selected. Present
+        // a native segmented Picker to assistive tech instead — selected
+        // state, "1 of 2" semantics, and adjustability for free — while the
+        // visuals above stay exactly as designed.
+        .accessibilityRepresentation {
+            Picker("Display mode", selection: $selection) {
+                ForEach(LandmarkDisplayMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
     }
 }
 
@@ -274,6 +288,42 @@ func formatLandmarkDistance(_ meters: CLLocationDistance) -> String {
     }
 }
 
+/// Locale-aware search-radius string for the Nearby chrome — the "Within …"
+/// list header (spelled out: "2 miles" / "3 km") and the map zoom control's
+/// scale cue (`abbreviated`: "2 mi" / "3 km"). Uses the same measurement-
+/// system check as `formatLandmarkDistance` so the radius chrome and the
+/// per-row distances always agree; the radius LADDER stays defined in miles
+/// (2/5/10/25) — only the display converts (→ 3/8/16/40 km).
+func formatRadius(miles: Int, abbreviated: Bool = false) -> String {
+    let usesMetric = Locale.current.measurementSystem == .metric
+    if usesMetric {
+        let km = max(1, Int((Double(miles) * 1.609344).rounded()))
+        return abbreviated ? "\(km) km" : (km == 1 ? "1 kilometer" : "\(km) kilometers")
+    }
+    return abbreviated ? "\(miles) mi" : (miles == 1 ? "1 mile" : "\(miles) miles")
+}
+
+// MARK: - Review prompt policy
+
+/// Shared review-prompt policy for Scan and Nearby: both tabs bump the
+/// same persistent `successfulLookupCount` and ask at the 3rd, 10th, and
+/// 25th success. Apple's own heuristics still throttle whether the alert
+/// actually shows (at most 3/year), so over-calling is harmless.
+nonisolated func shouldRequestReview(afterSuccessCount count: Int) -> Bool {
+    [3, 10, 25].contains(count)
+}
+
+// MARK: - Accessibility announcements
+
+/// Post a VoiceOver announcement for an async state change that is otherwise
+/// visual-only (results landing, a lookup finishing, an error appearing).
+/// Without these, a VoiceOver user who triggers a fetch gets silence until
+/// they re-scrub the screen. No-op (and ignored by the system) when VoiceOver
+/// isn't running.
+func announceForAccessibility(_ message: String) {
+    AccessibilityNotification.Announcement(message).post()
+}
+
 // MARK: - Map region fitting
 
 /// Default map region when there are no points to fit: the continental US.
@@ -388,7 +438,13 @@ struct BrandEmptyState<Actions: View>: View {
                 HStack(spacing: 16) {
                     Image(systemName: systemImage)
                         .font(.system(size: 40, weight: .semibold))
-                        .foregroundStyle(Color("BrandBrown"))
+                        // BrandBrownForeground, not BrandBrown: the brand
+                        // value is ~2.2:1 against the dark background (the
+                        // same murky-glyph problem LandmarkThumbnail's
+                        // placeholder fixed locally), so glyphs use the
+                        // foreground variant that lightens in dark mode.
+                        // Fills under white text keep using BrandBrown.
+                        .foregroundStyle(Color("BrandBrownForeground"))
                         .frame(width: 54)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
@@ -479,6 +535,11 @@ struct MapCalloutCard<Wrapped: View, Detail: View>: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
                     .foregroundStyle(.secondary)
+                    // The bare ~20pt glyph is well under the 44pt HIG
+                    // minimum; outset the hit area without growing the card.
+                    // The X is the later sibling, so it wins the small
+                    // overlap with the card's own (huge) tap target.
+                    .contentShape(Rectangle().inset(by: -12))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss")

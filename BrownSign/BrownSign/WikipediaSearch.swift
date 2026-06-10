@@ -43,21 +43,26 @@ nonisolated struct WikiResult {
 ///   - Maximum radius is **10,000 meters** — larger values return an error.
 ///   - Maximum `gslimit` is 500. Use a large value because dense areas
 ///     can have hundreds of geo-tagged articles within a few km.
-func searchWikipediaNearby(
+///
+/// Returns nil on TRANSPORT failure of the primary list fetch (offline,
+/// retries exhausted, garbage response), `[]` only when Wikipedia answered
+/// and nothing matched — so the Scan flow can tell "you're offline" from
+/// "no such landmark" instead of showing both as "No results".
+nonisolated func searchWikipediaNearby(
     query: String,
     latitude: Double,
     longitude: Double,
     radiusMeters: Int = 10_000
-) async -> [WikiResult] {
+) async -> [WikiResult]? {
     let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedQuery.isEmpty else { return [] }
 
     // Step 1: get nearby page list (distance-ordered).
-    let nearby = await wikipediaGeosearchPageList(
+    guard let nearby = await wikipediaGeosearchPageList(
         latitude: latitude,
         longitude: longitude,
         radiusMeters: radiusMeters
-    )
+    ) else { return nil }
     guard !nearby.isEmpty else { return [] }
 
     // Step 2: title-match filter (client side).
@@ -98,9 +103,20 @@ nonisolated private struct NearbyPage {
     let title: String
 }
 
+/// Character set for Wikipedia REST path segments. `.urlPathAllowed` keeps
+/// "/" unescaped (it's legal BETWEEN path segments), but a "/" inside a
+/// title ("Annie M. Warner Hospital/Gettysburg Hospital") must be encoded
+/// or REST reads it as a path separator and 404s — exactly the case the
+/// call-site comments always claimed to handle.
+nonisolated private let wikipediaRESTPathAllowed: CharacterSet = {
+    var set = CharacterSet.urlPathAllowed
+    set.remove(charactersIn: "/")
+    return set
+}()
+
 /// Truncates text at the last word boundary before `maxLength` and
 /// appends "…" if the original was longer. Short text is returned as-is.
-private func truncateAtWordBoundary(_ text: String, maxLength: Int) -> String {
+nonisolated private func truncateAtWordBoundary(_ text: String, maxLength: Int) -> String {
     guard text.count > maxLength else { return text }
     var truncated = String(text.prefix(maxLength))
     if let lastSpace = truncated.lastIndex(of: " ") {
@@ -109,43 +125,48 @@ private func truncateAtWordBoundary(_ text: String, maxLength: Int) -> String {
     return truncated.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
 }
 
-private func wikipediaGeosearchPageList(
+/// nil = transport failure or a body that isn't a MediaWiki response
+/// (captive portal); [] = Wikipedia answered with no geo hits.
+nonisolated private func wikipediaGeosearchPageList(
     latitude: Double,
     longitude: Double,
     radiusMeters: Int
-) async -> [NearbyPage] {
+) async -> [NearbyPage]? {
     let clampedRadius = min(max(radiusMeters, 10), 10_000)
-    let coord = "\(latitude)|\(longitude)"
-    guard let encodedCoord = coord.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&list=geosearch&gscoord=\(encodedCoord)&gsradius=\(clampedRadius)&gslimit=500") else {
-        return []
+    guard let url = apiURL("https://en.wikipedia.org/w/api.php", [
+        URLQueryItem(name: "action", value: "query"),
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "list", value: "geosearch"),
+        URLQueryItem(name: "gscoord", value: "\(latitude)|\(longitude)"),
+        URLQueryItem(name: "gsradius", value: "\(clampedRadius)"),
+        URLQueryItem(name: "gslimit", value: "500"),
+    ]) else {
+        return nil
     }
 
-    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [] }
-    do {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let queryObj = root["query"] as? [String: Any],
-              let geosearch = queryObj["geosearch"] as? [[String: Any]] else {
-            return []
-        }
-        return geosearch.compactMap { entry in
-            guard let pageid = entry["pageid"] as? Int,
-                  let title = entry["title"] as? String else { return nil }
-            return NearbyPage(pageID: pageid, title: title)
-        }
-    } catch {
-        return []
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let root = jsonObject(data),
+          let queryObj = root["query"] as? [String: Any],
+          let geosearch = queryObj["geosearch"] as? [[String: Any]] else {
+        return nil
+    }
+    return geosearch.compactMap { entry in
+        guard let pageid = entry["pageid"] as? Int,
+              let title = entry["title"] as? String else { return nil }
+        return NearbyPage(pageID: pageid, title: title)
     }
 }
 
 /// Returns the ranked list of non-disambiguation Wikipedia candidates for
 /// the given query. Up to 15 entries. The orchestrator then uses Wikidata
 /// P31 type-filtering to pick the first one that's actually a landmark.
-func searchWikipediaCandidates(query: String) async -> [WikiResult] {
+/// nil on transport failure of the primary search call (so offline isn't
+/// reported as "no results"); [] when Wikipedia answered with no matches.
+nonisolated func searchWikipediaCandidates(query: String) async -> [WikiResult]? {
     let cleaned = cleanWikipediaQuery(query)
     guard !cleaned.isEmpty else { return [] }
 
-    let candidates = await wikipediaSearchCandidates(cleaned)
+    guard let candidates = await wikipediaSearchCandidates(cleaned) else { return nil }
     guard !candidates.isEmpty else { return [] }
 
     let details = await wikipediaFetchPageDetails(pageIDs: candidates.map { $0.pageID })
@@ -183,7 +204,7 @@ func searchWikipediaCandidates(query: String) async -> [WikiResult] {
 nonisolated func wikipediaRESTSummaryExtract(for title: String) async -> String? {
     let pathTitle = title.replacingOccurrences(of: " ", with: "_")
     guard let encoded = pathTitle.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
+            withAllowedCharacters: wikipediaRESTPathAllowed
           ),
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
         return nil
@@ -220,7 +241,7 @@ nonisolated func wikipediaArticleImageURLs(
 ) async -> [URL] {
     let pathTitle = title.replacingOccurrences(of: " ", with: "_")
     guard let encoded = pathTitle.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
+            withAllowedCharacters: wikipediaRESTPathAllowed
           ),
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/media-list/\(encoded)") else {
         return []
@@ -319,7 +340,7 @@ nonisolated func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
     // are legal, but "/" and "?" in titles must be percent-encoded.
     let pathTitle = title.replacingOccurrences(of: " ", with: "_")
     guard let encoded = pathTitle.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed
+            withAllowedCharacters: wikipediaRESTPathAllowed
           ),
           let url = URL(string: "https://en.wikipedia.org/api/rest_v1/page/summary/\(encoded)") else {
         return nil
@@ -353,7 +374,7 @@ nonisolated func wikipediaRESTSummaryImageURL(for title: String) async -> URL? {
 /// Park"). Those words are part of many official landmark names and
 /// should NOT be removed — Apple Intelligence normalization handles
 /// the intelligent cleanup upstream.
-private func cleanWikipediaQuery(_ raw: String) -> String {
+nonisolated private func cleanWikipediaQuery(_ raw: String) -> String {
     let patterns = [
         #"\bsite of\b"#,
         #"\best\.\s*\d{4}\b"#
@@ -386,28 +407,32 @@ nonisolated private struct WikiCandidate {
     let title: String
 }
 
-private func wikipediaSearchCandidates(_ query: String) async -> [WikiCandidate] {
-    guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&list=search&srlimit=15&srsearch=\(encoded)") else {
-        return []
+/// nil = transport failure / non-MediaWiki body; [] = zero search hits.
+/// URLComponents-built so '&'/'='/'+' in the (user-derived) query text are
+/// encoded as data inside `srsearch` instead of truncating it.
+nonisolated private func wikipediaSearchCandidates(_ query: String) async -> [WikiCandidate]? {
+    guard let url = apiURL("https://en.wikipedia.org/w/api.php", [
+        URLQueryItem(name: "action", value: "query"),
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "list", value: "search"),
+        URLQueryItem(name: "srlimit", value: "15"),
+        URLQueryItem(name: "srsearch", value: query),
+    ]) else {
+        return nil
     }
 
-    guard let data = await httpDataWithRetry(apiRequest(url)) else { return [] }
-    do {
-        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let queryObj = root["query"] as? [String: Any],
-              let searchList = queryObj["search"] as? [[String: Any]] else {
-            return []
+    guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }
+    guard let root = jsonObject(data),
+          let queryObj = root["query"] as? [String: Any],
+          let searchList = queryObj["search"] as? [[String: Any]] else {
+        return nil
+    }
+    return searchList.compactMap { entry -> WikiCandidate? in
+        guard let pageid = entry["pageid"] as? Int,
+              let title = entry["title"] as? String else {
+            return nil
         }
-        return searchList.compactMap { entry -> WikiCandidate? in
-            guard let pageid = entry["pageid"] as? Int,
-                  let title = entry["title"] as? String else {
-                return nil
-            }
-            return WikiCandidate(pageID: pageid, title: title)
-        }
-    } catch {
-        return []
+        return WikiCandidate(pageID: pageid, title: title)
     }
 }
 
@@ -586,9 +611,25 @@ nonisolated func wikipediaFetchPageDetailsByTitles(_ titles: [String]) async -> 
 /// redirect chain.
 nonisolated private func fetchPageDetailsBatchByTitles(_ titles: [String]) async -> [String: WikiPageDetails] {
     guard !titles.isEmpty else { return [:] }
+    // URLComponents-built: one title containing '&' ("Durango & Silverton
+    // Narrow Gauge Railroad") under the old .urlQueryAllowed interpolation
+    // truncated the `titles` value at the '&' and silently dropped the
+    // WHOLE 20-title batch's hydration. The pipe separator survives
+    // encoding (MediaWiki accepts %7C).
     let titleList = titles.joined(separator: "|")
-    guard let encoded = titleList.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts%7Cpageprops%7Cinfo%7Cpageimages&ppprop=disambiguation&inprop=url&exintro=1&explaintext=1&redirects=1&piprop=thumbnail&pithumbsize=600&titles=\(encoded)") else {
+    guard let url = apiURL("https://en.wikipedia.org/w/api.php", [
+        URLQueryItem(name: "action", value: "query"),
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "prop", value: "extracts|pageprops|info|pageimages"),
+        URLQueryItem(name: "ppprop", value: "disambiguation"),
+        URLQueryItem(name: "inprop", value: "url"),
+        URLQueryItem(name: "exintro", value: "1"),
+        URLQueryItem(name: "explaintext", value: "1"),
+        URLQueryItem(name: "redirects", value: "1"),
+        URLQueryItem(name: "piprop", value: "thumbnail"),
+        URLQueryItem(name: "pithumbsize", value: "600"),
+        URLQueryItem(name: "titles", value: titleList),
+    ]) else {
         return [:]
     }
 
@@ -665,9 +706,22 @@ nonisolated private func fetchPageDetailsBatchByTitles(_ titles: [String]) async
 /// Fetches one page-details batch. Expects `pageIDs.count <= 50`.
 nonisolated private func fetchPageDetailsBatch(pageIDs: [Int]) async -> [Int: WikiPageDetails] {
     guard !pageIDs.isEmpty else { return [:] }
+    // Page IDs are app-generated integers (no injection risk), but built
+    // the same way as the titles variant so the two stay symmetrical.
     let idList = pageIDs.map(String.init).joined(separator: "|")
-    guard let encoded = idList.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts%7Cpageprops%7Cinfo%7Cpageimages&ppprop=disambiguation&inprop=url&exintro=1&explaintext=1&redirects=1&piprop=thumbnail&pithumbsize=600&pageids=\(encoded)") else {
+    guard let url = apiURL("https://en.wikipedia.org/w/api.php", [
+        URLQueryItem(name: "action", value: "query"),
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "prop", value: "extracts|pageprops|info|pageimages"),
+        URLQueryItem(name: "ppprop", value: "disambiguation"),
+        URLQueryItem(name: "inprop", value: "url"),
+        URLQueryItem(name: "exintro", value: "1"),
+        URLQueryItem(name: "explaintext", value: "1"),
+        URLQueryItem(name: "redirects", value: "1"),
+        URLQueryItem(name: "piprop", value: "thumbnail"),
+        URLQueryItem(name: "pithumbsize", value: "600"),
+        URLQueryItem(name: "pageids", value: idList),
+    ]) else {
         return [:]
     }
 

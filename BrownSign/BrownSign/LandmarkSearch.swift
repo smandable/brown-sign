@@ -13,6 +13,17 @@ import CoreLocation
 import UIKit
 #endif
 
+/// Result of the phase-1 candidate search. `transportFailed` is true when
+/// every Wikipedia source that was attempted failed at the TRANSPORT layer
+/// (offline, retries exhausted, captive portal) — so an empty `candidates`
+/// then means "couldn't reach the landmark services", not "no such
+/// landmark", and the Scan UI can say so instead of a misleading
+/// "No results".
+nonisolated struct LandmarkCandidateSearchOutcome {
+    let candidates: [LandmarkResult]
+    let transportFailed: Bool
+}
+
 /// Phase-1 candidate search. Returns all plausible landmarks as
 /// lightweight `LandmarkResult` values (basic info + Wikidata enrichment,
 /// but no polish/match score). Sorted nearby-first when a user
@@ -21,28 +32,45 @@ import UIKit
 /// The slower phase-2 work (summary polish, on-device match
 /// judgment) runs per-candidate only when the user actually selects one,
 /// via `enrichLandmark(_:query:)`.
-func searchLandmarkCandidates(
+nonisolated func searchLandmarkCandidates(
     query: String,
     userLocation: CLLocation? = nil
-) async -> [LandmarkResult] {
+) async -> LandmarkCandidateSearchOutcome {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return [] }
+    guard !trimmed.isEmpty else {
+        return LandmarkCandidateSearchOutcome(candidates: [], transportFailed: false)
+    }
+
+    // 1a + 1b run CONCURRENTLY — the two pipelines are fully independent
+    // until the merge, and each is 2+ sequential round-trips, so running
+    // them back-to-back doubled worst-case latency on slow cellular.
+    //
+    // 1b. Text-ranked candidates (started first so it runs while the
+    //     geosearch path awaits).
+    async let textAsync = searchWikipediaCandidates(query: trimmed)
 
     // 1a. Geographic Wikipedia search within 10 km of the user (if
     //     known). 10 km is Wikipedia's API-enforced maximum for
     //     geosearch; larger radii get rejected.
-    var nearbyCandidates: [WikiResult] = []
+    var nearbyOutcome: [WikiResult]? = []
+    var nearbyAttempted = false
     if let user = userLocation {
-        nearbyCandidates = await searchWikipediaNearby(
+        nearbyAttempted = true
+        nearbyOutcome = await searchWikipediaNearby(
             query: trimmed,
             latitude: user.coordinate.latitude,
             longitude: user.coordinate.longitude,
             radiusMeters: 10_000
         )
     }
+    let textOutcome = await textAsync
 
-    // 1b. Text-ranked candidates.
-    let textCandidates = await searchWikipediaCandidates(query: trimmed)
+    // Transport failed only when every source we actually asked failed to
+    // answer. One source answering (even with zero hits) means we have a
+    // real "no match" from Wikipedia, so empty results stay empty results.
+    let transportFailed = textOutcome == nil && (!nearbyAttempted || nearbyOutcome == nil)
+    let nearbyCandidates = nearbyOutcome ?? []
+    let textCandidates = textOutcome ?? []
 
     // 1c. Merge — geosearch hits first, then text hits (deduped by title).
     var wikiCandidates: [WikiResult] = nearbyCandidates
@@ -135,11 +163,12 @@ func searchLandmarkCandidates(
 
     var results = built.map { $0.result }
 
-    // 5. NPS fallback only if we got zero Wikipedia candidates.
-    //    Apply the same title-match filter so NPS's fuzzy search
-    //    doesn't return something completely unrelated (e.g.
-    //    "Battleship Bunker" for a "taco" query).
-    if results.isEmpty, let nps = await searchNPS(query: trimmed),
+    // 5. NPS fallback only if we got zero Wikipedia candidates — and only
+    //    when the network is actually answering (a transport-failed pass
+    //    would just stall on NPS timing out too). Apply the same
+    //    title-match filter so NPS's fuzzy search doesn't return something
+    //    completely unrelated (e.g. "Battleship Bunker" for a "taco" query).
+    if results.isEmpty, !transportFailed, let nps = await searchNPS(query: trimmed),
        titleMatchesQuery(query: trimmed, title: nps.title) {
         let wd = await fetchWikidataEnrichment(for: nps.title)
         let npsResult = LandmarkResult(
@@ -158,7 +187,7 @@ func searchLandmarkCandidates(
         results.append(npsResult)
     }
 
-    return results
+    return LandmarkCandidateSearchOutcome(candidates: results, transportFailed: transportFailed)
 }
 
 /// Returns up to `limit` geo-tagged Wikipedia landmarks within
@@ -386,7 +415,7 @@ nonisolated private func computeGateDrops(
 /// Wikidata lookup in parallel with phase-2 (polish / KG / match score /
 /// image download) so the detail view has the same chips as a scan
 /// result (type, inception year).
-func enrichDiscoveredLandmark(
+nonisolated func enrichDiscoveredLandmark(
     _ candidate: LandmarkResult,
     query: String,
     onWikidata: (@MainActor (LandmarkResult) -> Void)? = nil
@@ -409,7 +438,7 @@ func enrichDiscoveredLandmark(
     // Wikidata is still fetched exactly once (reused for the final result).
     let wd = await wikidata
     if let onWikidata {
-        onWikidata(LandmarkResult(
+        await onWikidata(LandmarkResult(
             title: candidate.title,
             // Keep the same (unpolished) summary the placeholder already shows;
             // the final result below upgrades it to the polished version.
@@ -455,7 +484,7 @@ func enrichDiscoveredLandmark(
 /// downloading + resizing the article image bytes so we never have to
 /// rely on AsyncImage's unreliable network fetch at display time.
 /// Always succeeds (all underlying calls fall back gracefully).
-func enrichLandmark(
+nonisolated func enrichLandmark(
     _ candidate: LandmarkResult,
     query: String
 ) async -> LandmarkResult {
@@ -496,7 +525,7 @@ func enrichLandmark(
 /// returning the JPEG-encoded bytes. Returns nil on any failure so the
 /// caller can fall through to a placeholder. Routes through the shared
 /// retry helper (`apiRequest` + `httpDataWithRetry`).
-private func downloadArticleImage(from url: URL?) async -> Data? {
+nonisolated private func downloadArticleImage(from url: URL?) async -> Data? {
     guard let url else { return nil }
     // Route through the shared retry helper so a transient 5xx/429 or
     // network blip on the Wikimedia image CDN gets the same backoff
@@ -516,7 +545,7 @@ private func downloadArticleImage(from url: URL?) async -> Data? {
 /// return their own image URL directly.
 /// Returns both the resolved URL (so callers can persist it alongside
 /// the downloaded bytes) and the resized JPEG data.
-private func downloadArticleImageWithFallback(
+nonisolated private func downloadArticleImageWithFallback(
     candidate: LandmarkResult
 ) async -> (url: URL?, data: Data?) {
     var resolved = candidate.articleImageURL
@@ -532,7 +561,7 @@ private func downloadArticleImageWithFallback(
 /// re-encode it at that size as JPEG quality 0.8. Otherwise return the
 /// original bytes unchanged. Keeps history row loads fast and the
 /// SwiftData store small.
-private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Data? {
+nonisolated private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Data? {
     #if canImport(UIKit)
     // Downsample straight from the compressed bytes with ImageIO so a
     // multi-megapixel Wikimedia original (the REST summary prefers the
@@ -554,7 +583,7 @@ private func resizeImageDataIfNeeded(_ data: Data, maxDimension: CGFloat) -> Dat
 /// both by `isLandmarkType` (P31 label check) and by
 /// `titleContainsPlaceWord` (title fallback for missing Wikidata).
 /// Shared so the two checks stay in sync.
-private let placeIndicators: [String] = [
+nonisolated private let placeIndicators: [String] = [
     // Structures
     "building", "structure", "house", "home", "mansion", "estate",
     "villa", "cottage", "cabin", "lodge", "inn", "hotel", "resort",
@@ -613,7 +642,7 @@ private let placeIndicators: [String] = [
 /// Returns true if the title and query are a close match — either the
 /// title contains the full query or the query contains the full title.
 /// Used to prioritize exact matches over distance-based ranking.
-private func isCloseTitleMatch(_ title: String, query: String) -> Bool {
+nonisolated private func isCloseTitleMatch(_ title: String, query: String) -> Bool {
     let t = title.lowercased()
     return t.contains(query) || query.contains(t)
 }
@@ -622,7 +651,7 @@ private func isCloseTitleMatch(_ title: String, query: String) -> Bool {
 /// place-indicating word. Used as a fallback when an article has no
 /// Wikidata type — "Choco Taco" has no place word → rejected, while
 /// "Fort Nathan Hale" contains "fort" → kept.
-private func titleContainsPlaceWord(_ title: String) -> Bool {
+nonisolated private func titleContainsPlaceWord(_ title: String) -> Bool {
     let lower = title.lowercased()
     for word in placeIndicators {
         if lower.contains(word) { return true }
@@ -714,7 +743,7 @@ nonisolated private func institutionPassesGate(
 
 /// Stopwords stripped when tokenizing query/title text for overlap
 /// scoring. These carry no discriminative weight for landmark names.
-private let queryStopwords: Set<String> = [
+nonisolated private let queryStopwords: Set<String> = [
     "the", "and", "for", "from", "that", "this", "with", "into", "onto",
     "near", "over", "under", "about", "around",
     "state", "national", "historic", "historical", "site", "area",
@@ -723,7 +752,7 @@ private let queryStopwords: Set<String> = [
 
 /// Split a query or title into significant lowercase tokens: letters
 /// and digits only, ≥3 characters, minus stopwords.
-private func significantTokens(_ text: String) -> [String] {
+nonisolated private func significantTokens(_ text: String) -> [String] {
     return text
         .lowercased()
         .split { !$0.isLetter && !$0.isNumber }
@@ -745,7 +774,7 @@ private func significantTokens(_ text: String) -> [String] {
 ///
 /// If the query has no significant tokens (too short, all stopwords),
 /// the filter passes everything rather than rejecting it all.
-private func titleMatchesQuery(query: String, title: String) -> Bool {
+nonisolated private func titleMatchesQuery(query: String, title: String) -> Bool {
     let queryTokens = significantTokens(query)
     guard !queryTokens.isEmpty else { return true }
 
@@ -774,7 +803,7 @@ private func titleMatchesQuery(query: String, title: String) -> Bool {
 /// Items with a nil P31 label (Wikidata didn't return a type) are
 /// handled by the caller — they're accepted as "unknown, might be a
 /// landmark". This function is only called when a label IS present.
-private func isLandmarkType(_ label: String) -> Bool {
+nonisolated private func isLandmarkType(_ label: String) -> Bool {
     let lower = label
         .lowercased()
         .trimmingCharacters(in: .whitespacesAndNewlines)
