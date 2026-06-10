@@ -28,10 +28,14 @@ struct HiddenLandmarksView: View {
         NavigationStack {
             Group {
                 if hidden.isEmpty {
+                    // Restore-green icon (Sean's call): this sheet's whole
+                    // action vocabulary is the green restore controls, so
+                    // the empty state matches it rather than brand brown.
                     BrandEmptyState(
                         systemImage: "eye",
                         title: "No hidden landmarks",
-                        message: "Landmarks you hide from Nearby will appear here."
+                        message: "Landmarks you hide from Nearby will appear here.",
+                        iconColor: Color("AccentButton")
                     )
                 } else {
                     List {

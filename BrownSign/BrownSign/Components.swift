@@ -435,17 +435,23 @@ struct BrandEmptyState<Actions: View>: View {
     let systemImage: String
     let title: String
     let message: String
+    /// Icon tint. Brand brown by default; overridable where another color
+    /// carries the screen's theme (Hidden Landmarks passes its restore
+    /// green so the empty state matches the sheet's actions).
+    let iconColor: Color
     private let actions: Actions
 
     init(
         systemImage: String,
         title: String,
         message: String,
+        iconColor: Color = Color("BrandBrownForeground"),
         @ViewBuilder actions: () -> Actions = { EmptyView() }
     ) {
         self.systemImage = systemImage
         self.title = title
         self.message = message
+        self.iconColor = iconColor
         self.actions = actions()
     }
 
@@ -456,13 +462,14 @@ struct BrandEmptyState<Actions: View>: View {
                 HStack(spacing: 16) {
                     Image(systemName: systemImage)
                         .font(.system(size: 40, weight: .semibold))
-                        // BrandBrownForeground, not BrandBrown: the brand
-                        // value is ~2.2:1 against the dark background (the
-                        // same murky-glyph problem LandmarkThumbnail's
-                        // placeholder fixed locally), so glyphs use the
-                        // foreground variant that lightens in dark mode.
-                        // Fills under white text keep using BrandBrown.
-                        .foregroundStyle(Color("BrandBrownForeground"))
+                        // Default is BrandBrownForeground, not BrandBrown:
+                        // the brand value is ~2.2:1 against the dark
+                        // background (the same murky-glyph problem
+                        // LandmarkThumbnail's placeholder fixed locally),
+                        // so glyphs use the foreground variant that
+                        // lightens in dark mode. Fills under white text
+                        // keep using BrandBrown.
+                        .foregroundStyle(iconColor)
                         .frame(width: 54)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
