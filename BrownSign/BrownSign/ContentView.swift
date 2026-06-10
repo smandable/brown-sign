@@ -774,7 +774,7 @@ struct ContentView: View {
                 articleImageData: alt.articleImageData,
                 articleImageURL: alt.articleImageURL,
                 size: 44,
-                cornerRadius: 6
+                cornerRadius: 12
             )
 
             VStack(alignment: .leading, spacing: 2) {

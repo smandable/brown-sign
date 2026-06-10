@@ -114,7 +114,9 @@ struct LandmarkThumbnail: View {
     /// placeholder. Only saved lookups (History, map cards) carry one.
     var capturedImageData: Data? = nil
     var size: CGFloat = 56
-    var cornerRadius: CGFloat = 8
+    /// 12 to match the list rows' corner radius (Sean's call: one radius
+    /// across rows and the thumbnails inside them, the app's standard 12pt).
+    var cornerRadius: CGFloat = 12
 
     /// This instance's freshly-decoded image, tagged with the key it was
     /// decoded for so a recycled row never renders a stale image. Backed by a
