@@ -170,13 +170,14 @@ struct HistoryView: View {
                                                 )
                                                 .fill(Color("CardBackground"))
                                             )
-                                            // 6pt top/bottom matches the Scan
-                                            // recents card so the same
-                                            // landmark row looks the same
-                                            // size in both places — Sean
-                                            // noticed History rows reading
-                                            // taller because they were 8/8.
-                                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                                            // 8pt + the row's internal 4pt =
+                                            // a 12pt gap above the thumbnail,
+                                            // equal to the leading gap, so the
+                                            // first row sits symmetrically in
+                                            // the card corner. ALL lists use
+                                            // 8/12 so rows stay the same size
+                                            // everywhere.
+                                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                                         }
                                         .onDelete(perform: deleteFilteredLookups)
                                     }

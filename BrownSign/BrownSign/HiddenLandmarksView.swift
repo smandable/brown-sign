@@ -82,10 +82,11 @@ struct HiddenLandmarksView: View {
                                 }
                             }
                             .listRowBackground(Color("CardBackground"))
-                            // 6pt vertical insets, matching the Nearby /
+                            // 8pt vertical insets, matching the Nearby /
                             // History / Scan-recents rows this sheet's row
-                            // is built to look identical to.
-                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                            // is built to look identical to (8 + internal
+                            // 4 = the 12pt gap that equals the leading one).
+                            .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button {
                                     restore(item)

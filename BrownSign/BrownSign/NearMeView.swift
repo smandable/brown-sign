@@ -83,10 +83,10 @@ struct NearMeView: View {
     /// Fallback row height (points) for the radius scroll-nudge before the
     /// first row has been measured; a real measured value replaces it as soon
     /// as a row appears.
-    private static let estimatedRowHeight: CGFloat = 84
-    /// Vertical chrome added to a measured row's content height: the 6pt top +
-    /// 6pt bottom `listRowInsets` applied to every Nearby row (6 + 6 = 12).
-    private static let rowVerticalInset: CGFloat = 12
+    private static let estimatedRowHeight: CGFloat = 88
+    /// Vertical chrome added to a measured row's content height: the 8pt top +
+    /// 8pt bottom `listRowInsets` applied to every Nearby row (8 + 8 = 16).
+    private static let rowVerticalInset: CGFloat = 16
 
     @State private var state: LoadState = .idle
     @State private var loadingPhase: LoadingPhase = .locating
@@ -1158,7 +1158,11 @@ struct NearMeView: View {
                     // 6pt vertical insets to match the Scan recents
                     // card so the same landmark looks the same size
                     // in both places.
-                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    // 8pt + the rows' internal 4pt = a 12pt visual gap
+                    // above the thumbnail, equal to the 12pt leading gap,
+                    // so the first row sits symmetrically inside the
+                    // card's corner (Sean: left and top must match).
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button {
                             hide(result)
@@ -1217,7 +1221,11 @@ struct NearMeView: View {
                         )
                         .fill(Color("CardBackground"))
                     )
-                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    // 8pt + the rows' internal 4pt = a 12pt visual gap
+                    // above the thumbnail, equal to the 12pt leading gap,
+                    // so the first row sits symmetrically inside the
+                    // card's corner (Sean: left and top must match).
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                 }
 
                 if showLoadMore {

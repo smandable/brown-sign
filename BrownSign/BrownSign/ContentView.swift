@@ -69,7 +69,7 @@ struct ContentView: View {
     /// self-size inside the outer ScrollView. Scales with Dynamic Type, with
     /// a little headroom so large text sizes don't clip; the per-row
     /// parchment hides any slack.
-    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 112
+    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 116
 
     /// Per-session dismiss for the "Turn on location" banner. Flips back
     /// to false every cold launch, so a user who taps the X still sees
@@ -602,7 +602,7 @@ struct ContentView: View {
                         )
                         .fill(Color("CardBackground"))
                     )
-                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                     .listRowSeparatorTint(Color.secondary.opacity(0.2))
                 }
             }
@@ -764,7 +764,7 @@ struct ContentView: View {
                                 referenceLocation: locationManager.lastLocation
                             )
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .padding(.vertical, 8)
                         }
                         .buttonStyle(.plain)
                         if idx < others.count - 1 {
