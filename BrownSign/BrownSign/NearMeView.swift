@@ -1195,12 +1195,12 @@ struct NearMeView: View {
                             Image(systemName: "chevron.right")
                                 .foregroundStyle(.tertiary)
                         }
-                        // Compact .caption sizing keeps this footer
-                        // visually subordinate to the section header
-                        // ("Within 5 miles…") above the list — that
-                        // header is now subheadline+semibold to match
-                        // Scan's "Recent finds".
-                        .font(.caption)
+                        // Same subheadline+semibold treatment as the
+                        // "Within N miles…" radius header — Sean tried
+                        // the smaller "subordinate" caption sizing and
+                        // reversed it: the footer was too small to
+                        // read as the control it is.
+                        .font(.subheadline)
                         .foregroundStyle(Color.accentColor)
                     }
                     // The footer button is the visual last row of
