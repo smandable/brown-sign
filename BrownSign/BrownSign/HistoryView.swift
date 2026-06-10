@@ -809,9 +809,9 @@ struct LandmarkDetailView: View {
                 } label: {
                     Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                         .font(.caption)
-                        // App accent, not hardcoded .blue (matches the Scan
-                        // card's Directions button).
-                        .foregroundStyle(Color("AccentButton"))
+                        // Blue by Sean's call: it's a link, keep it
+                        // looking like one.
+                        .foregroundStyle(.blue)
                 }
                 .buttonStyle(.plain)
             }

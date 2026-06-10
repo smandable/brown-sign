@@ -48,7 +48,11 @@ struct HiddenLandmarksView: View {
                                     Button {
                                         restore(item)
                                     } label: {
-                                        Image(systemName: "eye.fill")
+                                        // Restore glyph (same icon as the
+                                        // swipe action), not a second eye —
+                                        // two identical eyes per row read
+                                        // as a mistake.
+                                        Image(systemName: "arrow.uturn.backward")
                                             .font(.system(size: 11, weight: .bold))
                                             .foregroundStyle(.white)
                                             .frame(width: 22, height: 22)

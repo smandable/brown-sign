@@ -179,20 +179,16 @@ struct ContentView: View {
                                 Button {
                                     clearSearch()
                                 } label: {
-                                    // Body size (no .title2), matching the
-                                    // shared SearchField's clear button so
-                                    // the two fields read identically.
                                     Image(systemName: "xmark.circle.fill")
+                                        .font(.title2)
                                         .foregroundStyle(.secondary)
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("Clear search")
                             }
                         }
-                        // 10/8 padding to match SearchField's chrome (was
-                        // 12/6 — same visual concept, different metrics).
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(Color(.secondarySystemBackground))
@@ -452,9 +448,9 @@ struct ContentView: View {
                         .font(.footnote.weight(.semibold))
                 }
                 .buttonStyle(.plain)
-                // App accent, not hardcoded .blue — AccentButton for the
-                // dark-mode saturation, per the repo's filled-button rule.
-                .foregroundStyle(Color("AccentButton"))
+                // Blue by Sean's call: text links should look like the
+                // links they are, not blend into the accent palette.
+                .foregroundStyle(.blue)
                 .padding(.top, 2)
             }
             Spacer(minLength: 0)
@@ -658,18 +654,15 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
-            // 12pt internal horizontal padding for everything except the
-            // full-bleed hero image — the title and summary used to run
-            // flush against the card's rounded edges, unlike every other
-            // card in the app.
+            // Content runs to the card edge by design (Sean's call —
+            // matches the detail view, where everything shares one
+            // margin). Don't add internal horizontal padding here.
             SelectableText(
                 text: result.title,
                 font: .preferredFont(forTextStyle: .title2).bold()
             )
-            .padding(.horizontal, 12)
 
             metadataChips(for: result)
-                .padding(.horizontal, 12)
 
             // Tap anywhere on the polished summary to open full details
             // — same action as the "View full details" button below.
@@ -680,7 +673,6 @@ struct ContentView: View {
                 text: result.summary,
                 lineLimit: 6
             )
-            .padding(.horizontal, 12)
             .contentShape(Rectangle())
             .onTapGesture {
                 if savedLookup != nil {
@@ -689,9 +681,8 @@ struct ContentView: View {
             }
 
             buttonStack(for: result)
-                .padding(.horizontal, 12)
         }
-        .padding(.bottom, 12)
+        .padding(.bottom, 2)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.secondary.opacity(0.1))
@@ -848,7 +839,9 @@ struct ContentView: View {
                     } label: {
                         Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                             .font(.caption)
-                            .foregroundStyle(Color("AccentButton"))
+                            // Blue by Sean's call: it's a link, keep it
+                            // looking like one.
+                            .foregroundStyle(.blue)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1047,6 +1040,12 @@ struct ContentView: View {
     /// the captured photo alone — if the user wants a new one they
     /// can tap Snap a Sign again.
     private func clearSearch() {
+        // Cancel any in-flight OCR/normalize pipeline first: without this,
+        // clearing during (or just after) a photo's processing let the
+        // pipeline land late and refill `signText` — the X appeared to do
+        // nothing.
+        processTask?.cancel()
+        isProcessing = false
         signText = ""
         result = nil
         savedLookup = nil
