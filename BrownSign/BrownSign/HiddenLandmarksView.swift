@@ -36,48 +36,46 @@ struct HiddenLandmarksView: View {
                 } else {
                     List {
                         ForEach(hidden) { item in
-                            // Custom edit-mode affordance: a green eye
-                            // button on the leading side replaces the
-                            // iOS-default red delete minus that
-                            // .onDelete would emit. The action is
-                            // restoration, not deletion, so the visual
-                            // language has to read "bring back", not
-                            // "destroy".
+                            // Custom edit-mode affordance: a green
+                            // restore button replaces the iOS-default
+                            // red delete minus that .onDelete would
+                            // emit. The action is restoration, not
+                            // deletion, so the visual language has to
+                            // read "bring back", not "destroy". It
+                            // mirrors the row's swipe action exactly —
+                            // same trailing position, same ~56pt circle
+                            // + "Restore" caption iOS 26 renders for
+                            // swipe buttons — so edit mode reads as
+                            // "every row's swipe action, pre-revealed"
+                            // (Sean's screenshots drove the position,
+                            // 20pt size, and regular weight).
                             HStack(spacing: 12) {
+                                HiddenLandmarkRow(item: item)
                                 if editMode.isEditing {
                                     Button {
                                         restore(item)
                                     } label: {
-                                        // Restore glyph (same icon as the
-                                        // swipe action), not a second eye —
-                                        // two identical eyes per row read
-                                        // as a mistake. Sized to mirror the
-                                        // swipe action's iOS 26 rendering (a
-                                        // ~56pt circular button with a ~24pt
-                                        // glyph), per Sean's screenshots —
-                                        // the same control, just leading.
-                                        // Regular weight at 22pt — matched
-                                        // by eye against the system's swipe
-                                        // circle on Sean's screenshots
-                                        // (bold, then medium, still read
-                                        // heavier side by side).
-                                        Image(systemName: "arrow.uturn.backward")
-                                            .font(.system(size: 22, weight: .regular))
-                                            .foregroundStyle(.white)
-                                            .frame(width: 56, height: 56)
-                                            // Filled brand-green —
-                                            // uses AccentButton (more
-                                            // saturated) instead of
-                                            // AccentColor so the white
-                                            // eye keeps proper
-                                            // contrast in dark mode.
-                                            .background(Circle().fill(Color("AccentButton")))
+                                        VStack(spacing: 4) {
+                                            Image(systemName: "arrow.uturn.backward")
+                                                .font(.system(size: 20, weight: .regular))
+                                                .foregroundStyle(.white)
+                                                .frame(width: 56, height: 56)
+                                                // Filled brand-green —
+                                                // uses AccentButton (more
+                                                // saturated) instead of
+                                                // AccentColor so the white
+                                                // glyph keeps proper
+                                                // contrast in dark mode.
+                                                .background(Circle().fill(Color("AccentButton")))
+                                            Text("Restore")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityLabel("Restore \(item.title)")
-                                    .transition(.move(edge: .leading).combined(with: .opacity))
+                                    .transition(.move(edge: .trailing).combined(with: .opacity))
                                 }
-                                HiddenLandmarkRow(item: item)
                             }
                             .listRowBackground(Color("CardBackground"))
                             // 6pt vertical insets, matching the Nearby /
