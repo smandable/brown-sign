@@ -201,10 +201,11 @@ struct NearbyMapView: View {
                                 longitude: coord.longitude
                             )
                         )
-                        // Foreground variant: identical brown in light mode,
-                        // lightened in dark so the balloon reads against the
-                        // dark map style (raw BrandBrown is ~2.2:1 there).
-                        .tint(Color("BrandBrownForeground"))
+                        // Plain BrandBrown by Sean's call: the lightened
+                        // dark-mode foreground variant (tried for contrast on
+                        // the dark map style) read wrong as a pin color. The
+                        // balloon shape + white glyph carry legibility.
+                        .tint(Color("BrandBrown"))
                         .tag(result.pageURL.absoluteString)
                     }
                 }

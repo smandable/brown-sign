@@ -398,10 +398,9 @@ struct HistoryMapView: View {
                                 systemImage: "signpost.right.fill",
                                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
                             )
-                            // Foreground variant: identical in light mode,
-                            // lightened in dark so the balloon reads against
-                            // the dark map style.
-                            .tint(Color("BrandBrownForeground"))
+                            // Plain BrandBrown by Sean's call (see the Nearby
+                            // map's Marker for the dark-mode trade-off note).
+                            .tint(Color("BrandBrown"))
                             .tag(lookup)
                         }
                     }

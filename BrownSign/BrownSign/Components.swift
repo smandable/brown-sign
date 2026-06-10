@@ -147,6 +147,12 @@ struct LandmarkThumbnail: View {
             // Decorative: the row/card title already names the landmark, so
             // the thumbnail is a redundant VoiceOver stop.
             .accessibilityHidden(true)
+            // Fade a freshly-decoded image in instead of popping it — most
+            // visible on the map callout, which slides up for 200ms while
+            // its thumbnail finishes decoding. Cache hits don't animate:
+            // `currentImage` reads the cache synchronously in body, so a
+            // scrolled-back row still shows its image in the first frame.
+            .animation(.easeInOut(duration: 0.15), value: decoded?.key)
             .task(id: cacheKey) { await loadThumbnail() }
     }
 
@@ -225,11 +231,18 @@ struct LandmarkThumbnail: View {
             Image(uiImage: image).resizable().scaledToFill()
         } else if (articleImageData == nil || decodeFailed), let articleImageURL {
             // No inline bytes, or they failed to decode: try the remote URL
-            // before degrading to the captured photo / placeholder.
-            AsyncImage(url: articleImageURL) { phase in
+            // before degrading to the captured photo / placeholder. The
+            // transaction animates the phase swap so the downloaded image
+            // fades in over the neutral tile instead of popping — the pop
+            // was glaring on the map callout's slide-up.
+            AsyncImage(
+                url: articleImageURL,
+                transaction: Transaction(animation: .easeInOut(duration: 0.2))
+            ) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().scaledToFill()
+                        .transition(.opacity)
                 case .empty:
                     Color.secondary.opacity(0.1)
                 default:
