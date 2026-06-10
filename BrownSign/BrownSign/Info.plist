@@ -2,10 +2,40 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.seanmandable.brownsign</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>brownsign</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>comgooglemaps</string>
 		<string>waze</string>
+	</array>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.seanmandable.brownsign.scan</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Scan a Sign</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>camera.viewfinder</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>com.seanmandable.brownsign.nearby</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Nearby Landmarks</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>map.fill</string>
+		</dict>
 	</array>
 </dict>
 </plist>

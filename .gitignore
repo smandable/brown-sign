@@ -75,3 +75,4 @@ docs/screenshots/
 
 # Office app lock/temp files (e.g. Word ~$foo.docx)
 ~$*
+BrownSign/build/

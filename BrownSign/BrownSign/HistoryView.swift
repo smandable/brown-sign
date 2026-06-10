@@ -561,6 +561,13 @@ struct LandmarkDetailView: View {
     /// jump between slides without the user swiping.
     @State private var carouselSelection: String = "primary"
 
+    /// Street-level Look Around scene at the landmark's coordinates.
+    /// Stays nil when the lookup has no coordinates or Apple has no
+    /// coverage there (common for rural brown-sign territory — and
+    /// "no coverage" is a nil scene on success, not an error); the
+    /// section hides entirely in both cases.
+    @State private var lookAroundScene: MKLookAroundScene?
+
     /// Slides assembled for the image carousel. Slot 0 is always
     /// reserved as `id: "primary"` whenever we know about an article
     /// image — either the persisted JPEG bytes (instant) or, while
@@ -636,6 +643,15 @@ struct LandmarkDetailView: View {
 
                 metadataBlock
 
+                // Street-level look at the landmark, answering "is
+                // this worth pulling off for". Tap opens the
+                // full-screen Look Around viewer.
+                if let scene = lookAroundScene {
+                    LookAroundPreview(initialScene: scene)
+                        .frame(height: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+
                 if !lookup.rawSummary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 6) {
@@ -704,6 +720,16 @@ struct LandmarkDetailView: View {
             // Safety-net backfill in case the row's task was cancelled
             // mid-fetch (scrolled off) before the user tapped through.
             await lookup.backfillSummaryIfNeeded()
+        }
+        // Keyed on the coordinate values, not the lookup: coords can
+        // arrive AFTER the view opens (staged Wikidata enrichment
+        // with preserve-on-nil upsert), and the re-keyed task is what
+        // picks them up.
+        .task(id: "\(lookup.latitude ?? .nan),\(lookup.longitude ?? .nan)") {
+            guard let lat = lookup.latitude, let lon = lookup.longitude else { return }
+            lookAroundScene = try? await MKLookAroundSceneRequest(
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            ).scene
         }
         .task(id: lookup.resolvedTitle) {
             // Fetch extra gallery-worthy article images for the

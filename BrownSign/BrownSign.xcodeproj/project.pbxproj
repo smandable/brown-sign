@@ -6,8 +6,37 @@
 	objectVersion = 100;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B5190000000000000000000E /* BrownSignWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B51900000000000000000001 /* BrownSignWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B5190000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 148C0FAC2F8AE8C90091888E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B51900000000000000000004;
+			remoteInfo = BrownSignWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B5190000000000000000000D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B5190000000000000000000E /* BrownSignWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		148C0FB42F8AE8CA0091888E /* BrownSign.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BrownSign.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B51900000000000000000001 /* BrownSignWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BrownSignWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -17,6 +46,13 @@
 				Info.plist,
 			);
 			target = 148C0FB32F8AE8CA0091888E /* BrownSign */;
+		};
+		B51900000000000000000003 /* Exceptions for "BrownSignWidgets" folder in "BrownSignWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B51900000000000000000004 /* BrownSignWidgets */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -29,10 +65,28 @@
 			path = BrownSign;
 			sourceTree = "<group>";
 		};
+		B51900000000000000000002 /* BrownSignWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B51900000000000000000003 /* Exceptions for "BrownSignWidgets" folder in "BrownSignWidgets" target */,
+			);
+			path = BrownSignWidgets;
+			sourceTree = "<group>";
+		};
+		B5190000000000000000000F /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		148C0FB12F8AE8CA0091888E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		B51900000000000000000006 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -44,6 +98,8 @@
 			isa = PBXGroup;
 			children = (
 				148C0FB62F8AE8CA0091888E /* BrownSign */,
+				B5190000000000000000000F /* Shared */,
+				B51900000000000000000002 /* BrownSignWidgets */,
 				148C0FB52F8AE8CA0091888E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -52,6 +108,7 @@
 			isa = PBXGroup;
 			children = (
 				148C0FB42F8AE8CA0091888E /* BrownSign.app */,
+				B51900000000000000000001 /* BrownSignWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -66,18 +123,52 @@
 				148C0FB02F8AE8CA0091888E /* Sources */,
 				148C0FB12F8AE8CA0091888E /* Frameworks */,
 				148C0FB22F8AE8CA0091888E /* Resources */,
+				B5190000000000000000000D /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
+			dependencies = (
+				B5190000000000000000000C /* PBXTargetDependency */,
+			);
 			fileSystemSynchronizedGroups = (
 				148C0FB62F8AE8CA0091888E /* BrownSign */,
+				B5190000000000000000000F /* Shared */,
 			);
 			name = BrownSign;
 			productName = BrownSign;
 			productReference = 148C0FB42F8AE8CA0091888E /* BrownSign.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B51900000000000000000004 /* BrownSignWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B51900000000000000000008 /* Build configuration list for PBXNativeTarget "BrownSignWidgets" */;
+			buildPhases = (
+				B51900000000000000000005 /* Sources */,
+				B51900000000000000000006 /* Frameworks */,
+				B51900000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B51900000000000000000002 /* BrownSignWidgets */,
+				B5190000000000000000000F /* Shared */,
+			);
+			name = BrownSignWidgets;
+			productName = BrownSignWidgets;
+			productReference = B51900000000000000000001 /* BrownSignWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXTargetDependency section */
+		B5190000000000000000000C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B51900000000000000000004 /* BrownSignWidgets */;
+			targetProxy = B5190000000000000000000B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		148C0FAC2F8AE8C90091888E /* Project object */ = {
@@ -107,6 +198,7 @@
 			projectRoot = "";
 			targets = (
 				148C0FB32F8AE8CA0091888E /* BrownSign */,
+				B51900000000000000000004 /* BrownSignWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -117,10 +209,20 @@
 			files = (
 			);
 		};
+		B51900000000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		148C0FB02F8AE8CA0091888E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		B51900000000000000000005 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 			);
@@ -162,6 +264,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 40;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -183,6 +286,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.9.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -227,6 +331,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 40;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -242,6 +347,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.9.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
@@ -258,7 +364,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -278,7 +383,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.seanmandable.brownsign;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -302,7 +406,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -322,9 +425,72 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.seanmandable.brownsign;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		B51900000000000000000009 /* Debug configuration for PBXNativeTarget "BrownSignWidgets" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 7VP76365KX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BrownSignWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Brown Sign";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.seanmandable.brownsign.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		B5190000000000000000000A /* Release configuration for PBXNativeTarget "BrownSignWidgets" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 7VP76365KX;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BrownSignWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Brown Sign";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.seanmandable.brownsign.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -355,6 +521,14 @@
 			buildConfigurations = (
 				148C0FC22F8AE8CA0091888E /* Debug configuration for PBXNativeTarget "BrownSign" */,
 				148C0FC32F8AE8CA0091888E /* Release configuration for PBXNativeTarget "BrownSign" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		B51900000000000000000008 /* Build configuration list for PBXNativeTarget "BrownSignWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B51900000000000000000009 /* Debug configuration for PBXNativeTarget "BrownSignWidgets" */,
+				B5190000000000000000000A /* Release configuration for PBXNativeTarget "BrownSignWidgets" */,
 			);
 			defaultConfigurationName = Release;
 		};

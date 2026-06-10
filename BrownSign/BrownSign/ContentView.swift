@@ -65,6 +65,14 @@ struct ContentView: View {
     /// through the same ingest pipeline as a camera capture, then reset.
     @State private var photoPickerItem: PhotosPickerItem?
 
+    /// Presentation flag for the library picker. The modifier form
+    /// (`.photosPicker(isPresented:)`) is used instead of the
+    /// `PhotosPicker` button so launcher-driven camera opens can
+    /// dismiss the picker programmatically — without it, a Siri or
+    /// Control Center scan fired mid-pick would silently fail to
+    /// present the camera and wedge `showCamera` true.
+    @State private var photoPickerPresented = false
+
     /// Per-row height for the non-scrolling "Recent finds" List, which can't
     /// self-size inside the outer ScrollView. Scales with Dynamic Type, with
     /// a little headroom so large text sizes don't clip; the per-row
@@ -82,6 +90,7 @@ struct ContentView: View {
     @AppStorage("successfulLookupCount") private var successfulLookupCount = 0
 
     private let locationManager = LocationManager.shared
+    private let router = AppRouter.shared
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.requestReview) private var requestReview
@@ -370,6 +379,68 @@ struct ContentView: View {
                         }
                 }
             }
+            // Launcher-driven camera open: onAppear covers cold launch
+            // (the trigger fired before this view existed and parked
+            // the action on the router), onChange covers warm launch.
+            .onAppear {
+                consumeLaunchAction()
+            }
+            .onChange(of: router.pendingAction) {
+                consumeLaunchAction()
+            }
+        }
+    }
+
+    /// Consumes a parked `.scanCamera` launcher request (Siri, the
+    /// Control Center button, the Home Screen quick action). The
+    /// window's presentation slot must actually be free before the
+    /// camera is raised: a fullScreenCover presented while ANY modal
+    /// is up — including sheets owned by other tabs, which survive
+    /// the programmatic tab switch — or in the first frame at cold
+    /// launch is silently dropped, leaving `showCamera` wedged true.
+    /// So this clears the slot at the UIKit level (one place covers
+    /// every sheet/dialog owner, present and future), polls until
+    /// it's free, and recovers a wedged flag by toggling it.
+    private func consumeLaunchAction() {
+        guard router.pendingAction == .scanCamera else { return }
+        router.pendingAction = nil
+        // Scan's own modals still clear via their bindings so SwiftUI
+        // state agrees with the UIKit dismissal below.
+        showSafari = false
+        showMapsDialog = false
+        photoPickerPresented = false
+        presentedLookup = nil
+        Task { @MainActor in
+            await Self.clearPresentedModals()
+            if showCamera {
+                // A previously dropped presentation left the flag
+                // true with no cover on screen; true-over-true is not
+                // a state change, so dip through false to re-present.
+                showCamera = false
+                try? await Task.sleep(for: .milliseconds(75))
+            }
+            showCamera = true
+        }
+    }
+
+    /// Dismisses whatever the key window is presenting and waits for
+    /// the presentation slot to free up (capped at ~2s), so the
+    /// camera cover that follows is never dropped.
+    @MainActor
+    private static func clearPresentedModals() async {
+        // One frame-ish beat first: at cold launch the request is
+        // consumed in the root view's onAppear, before the window
+        // hierarchy can host a presentation.
+        try? await Task.sleep(for: .milliseconds(75))
+        guard let root = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow })
+            .first?.rootViewController
+        else { return }
+        guard root.presentedViewController != nil else { return }
+        root.dismiss(animated: true)
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .milliseconds(100))
+            if root.presentedViewController == nil { return }
         }
     }
 
@@ -397,7 +468,9 @@ struct ContentView: View {
             .buttonBorderShape(.roundedRectangle(radius: 12))
 
             // Icon-only width matches the Share button on the result card.
-            PhotosPicker(selection: $photoPickerItem, matching: .images) {
+            Button {
+                photoPickerPresented = true
+            } label: {
                 Label("Choose a photo", systemImage: "photo.on.rectangle")
                     .labelStyle(.iconOnly)
                     .frame(width: 44)
@@ -408,6 +481,11 @@ struct ContentView: View {
             .buttonBorderShape(.roundedRectangle(radius: 12))
             .accessibilityLabel("Choose a photo")
         }
+        .photosPicker(
+            isPresented: $photoPickerPresented,
+            selection: $photoPickerItem,
+            matching: .images
+        )
         .onChange(of: photoPickerItem) { _, item in
             guard let item else { return }
             // Reset so re-picking the same photo re-fires.

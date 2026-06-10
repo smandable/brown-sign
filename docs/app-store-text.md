@@ -21,6 +21,9 @@ Brown Sign identifies the landmarks behind brown roadside signs, and helps you d
 SNAP OR TYPE
 Point your camera at a brown highway sign, pick a photo from your library, or just type the name. Pinch to zoom in on a sign that's far away. Brown Sign identifies the landmark, pulls up a summary, and shows you a photo.
 
+LAUNCH FROM ANYWHERE
+Signs don't wait. Ask Siri to "Scan a sign with Brown Sign", add the scan button to Control Center, the Lock Screen, or your Action button, or long-press the app icon, and the camera is already up when the app opens.
+
 NEARBY DISCOVERY
 Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go, and the list follows along to show what's around the area you're viewing, with one tap to jump back to your own location. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
 
@@ -40,7 +43,7 @@ HISTORY
 Every lookup is saved with a photo and full details. Swipe to delete, or tap to revisit any landmark you've looked up before.
 
 RICH DETAIL CARDS
-Each result includes coordinates, founding year, type (museum, park, fort, etc.), a Wikipedia photo, and the full article summary, with a one-tap link to read more in Safari. Text is fully selectable for easy copying.
+Each result includes coordinates, founding year, type (museum, park, fort, etc.), a Wikipedia photo, and the full article summary, with a one-tap link to read more in Safari. Where Apple has street-level imagery, a Look Around preview shows you the landmark from the road. Text is fully selectable for easy copying.
 
 SHARE
 Share any landmark's article link with friends, family, or fellow travelers in one tap.
@@ -65,18 +68,18 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 1.8.0)
+## What's New (Version 1.9.0)
 ```
-New: identify a sign from a photo. The passenger snaps a picture as you drive past, and you look it up at the next stop. Tap the photo button next to the camera on the Scan tab.
+New: get to the camera before the sign is gone. Say "Scan a sign with Brown Sign" to Siri, add the new Brown Sign button to Control Center, the Lock Screen, or the Action button, or long-press the app icon. Every one of them opens the app with the camera already up. There's a shortcut straight to Nearby, too.
 
-Brown Sign now also tells you when it can't reach the landmark services, so a dead zone no longer reads as "no results", and lookups are quicker on slow connections because the searches run side by side.
-
-The Nearby tab's follow-the-map list got a big reliability pass: refreshing while exploring another area now brings the list home with your results, changing the radius no longer snaps the list away from the area you're browsing, and "Back to your location" fills in anything you're missing at the current radius. Plus kilometer units for metric travelers, clearer messages when something goes wrong, better dark mode contrast, larger touch targets, and more VoiceOver support throughout.
+Also new: landmark pages can show a street-level Look Around preview, so you can see what you'd be pulling off the highway for before you go.
 ```
 
 ### Previous versions
 
 ```
+Version 1.8.0: Identify a sign from a photo. The passenger snaps a picture as you drive past, and you look it up at the next stop. Brown Sign also now tells you when it can't reach the landmark services, so a dead zone no longer reads as "no results", and lookups are quicker on slow connections. The Nearby follow-the-map list got a big reliability pass: refreshing while exploring another area brings the list home with your results, changing the radius keeps you on the area you're browsing, and "Back to your location" fills in anything missing at the current radius. Plus kilometer units for metric travelers, clearer error messages, better dark mode contrast, larger touch targets, and more VoiceOver support throughout.
+
 Version 1.7.0: On the Nearby tab, the list now follows the map. Pan the map to a new area, switch to the list, and you'll see the landmarks around that spot instead of the ones back where you started, with the heading updating to match. A new "Back to your location" button brings you home with one tap whenever you want to return. This update also fixes a recent issue where saved landmark thumbnails could sometimes go missing from the Recent finds and History lists.
 
 Version 1.6.1: Reliability and polish. Saved landmark photos now load faster and more reliably as you scroll through your history, the Nearby radius controls and map behave more consistently, and there's a round of small accessibility fixes throughout.
