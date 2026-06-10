@@ -746,73 +746,38 @@ struct ContentView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.accentColor)
 
+                // The SAME row component and parchment card the Nearby,
+                // History, and Recent-finds lists use (Sean's call) — not a
+                // hand-rolled lookalike with its own thumbnail size and
+                // paddings. Alternatives are LandmarkResults, which is
+                // exactly what NearbyRow renders; 12/6 padding mirrors the
+                // lists' row insets, and the divider's 80pt leading inset
+                // (12 inset + 56 thumbnail + 12 gap) matches where List
+                // separators start.
                 VStack(spacing: 0) {
                     ForEach(Array(others.enumerated()), id: \.element.pageURL) { idx, alt in
                         Button {
                             switchTo(alt)
                         } label: {
-                            alternativeRow(alt)
+                            NearbyRow(
+                                result: alt,
+                                referenceLocation: locationManager.lastLocation
+                            )
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
                         }
                         .buttonStyle(.plain)
                         if idx < others.count - 1 {
-                            Divider()
+                            Divider().padding(.leading, 80)
                         }
                     }
                 }
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.secondary.opacity(0.08))
+                        .fill(Color("CardBackground"))
                 )
             }
         }
-    }
-
-    @ViewBuilder
-    private func alternativeRow(_ alt: LandmarkResult) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            LandmarkThumbnail(
-                articleImageData: alt.articleImageData,
-                articleImageURL: alt.articleImageURL,
-                size: 44
-            )
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(alt.title)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                // Distance first with the location glyph, then type —
-                // the same order and iconography as NearbyRow, so the
-                // identical metadata pair reads identically everywhere.
-                HStack(spacing: 6) {
-                    if let coord = alt.coordinates,
-                       let user = locationManager.lastLocation {
-                        let d = user.distance(from: CLLocation(
-                            latitude: coord.latitude,
-                            longitude: coord.longitude
-                        ))
-                        HStack(spacing: 3) {
-                            Image(systemName: "location")
-                            Text(formatLandmarkDistance(d))
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    if let type = alt.wikidataType {
-                        Text(type)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(12)
-        .contentShape(Rectangle())
     }
 
     @ViewBuilder
