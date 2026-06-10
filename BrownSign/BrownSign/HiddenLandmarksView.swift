@@ -56,12 +56,13 @@ struct HiddenLandmarksView: View {
                                         // ~56pt circular button with a ~24pt
                                         // glyph), per Sean's screenshots —
                                         // the same control, just leading.
-                                        // Medium weight, not bold — the
-                                        // system renders swipe glyphs at
-                                        // medium, and bold read chunkier
-                                        // side by side.
+                                        // Regular weight at 22pt — matched
+                                        // by eye against the system's swipe
+                                        // circle on Sean's screenshots
+                                        // (bold, then medium, still read
+                                        // heavier side by side).
                                         Image(systemName: "arrow.uturn.backward")
-                                            .font(.system(size: 24, weight: .medium))
+                                            .font(.system(size: 22, weight: .regular))
                                             .foregroundStyle(.white)
                                             .frame(width: 56, height: 56)
                                             // Filled brand-green —
