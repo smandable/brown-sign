@@ -51,11 +51,12 @@ struct HiddenLandmarksView: View {
                                         // Restore glyph (same icon as the
                                         // swipe action), not a second eye —
                                         // two identical eyes per row read
-                                        // as a mistake.
+                                        // as a mistake. Sized to match the
+                                        // swipe action's icon, per Sean.
                                         Image(systemName: "arrow.uturn.backward")
-                                            .font(.system(size: 11, weight: .bold))
+                                            .font(.system(size: 16, weight: .bold))
                                             .foregroundStyle(.white)
-                                            .frame(width: 22, height: 22)
+                                            .frame(width: 32, height: 32)
                                             // Filled brand-green —
                                             // uses AccentButton (more
                                             // saturated) instead of

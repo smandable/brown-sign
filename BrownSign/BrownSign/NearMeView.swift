@@ -1055,18 +1055,19 @@ struct NearMeView: View {
             // values used to live in this string but wrapped to
             // a second line at the larger size — dropped them
             // since the user already knows where they are.
-            // Bottom padding is 4, not the 8 History/Scan use:
-            // the 26pt stepper makes this header row taller than
-            // a text-only one, centering the label with ~4pt of
-            // extra space below its text — 4pt of padding brings
-            // the visual text-to-list gap back in line with the
-            // other tabs (Sean flagged the mismatch). Top stays
-            // at 16 for breathing room below the search field.
+            // 12 top / 4 bottom, not the 16/8 History and Scan use:
+            // the 26pt stepper makes this header row taller than a
+            // text-only one, centering the label with ~4pt of extra
+            // space above AND below its text. Trimming 4 from each
+            // side puts the green label text and the list's top edge
+            // at exactly the same y as History's, so flipping between
+            // the tabs doesn't make the header text jump (Sean
+            // flagged both the gap and the jump on-device).
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.accentColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-            .padding(.top, 16)
+            .padding(.top, 12)
             .padding(.bottom, 4)
         }
     }

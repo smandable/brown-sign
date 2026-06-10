@@ -114,9 +114,12 @@ struct LandmarkThumbnail: View {
     /// placeholder. Only saved lookups (History, map cards) carry one.
     var capturedImageData: Data? = nil
     var size: CGFloat = 56
-    /// 12 to match the list rows' corner radius (Sean's call: one radius
-    /// across rows and the thumbnails inside them, the app's standard 12pt).
-    var cornerRadius: CGFloat = 12
+    /// 10, splitting the difference between the rows' 12 and the original 8.
+    /// Equal ABSOLUTE radii don't look equal: 12pt on a 56pt tile spans a
+    /// fifth of its edge and reads far rounder than 12pt on a screen-wide
+    /// card (Sean confirmed on-device). 10 is where the perceived curvature
+    /// matches the rows'.
+    var cornerRadius: CGFloat = 10
 
     /// This instance's freshly-decoded image, tagged with the key it was
     /// decoded for so a recycled row never renders a stale image. Backed by a

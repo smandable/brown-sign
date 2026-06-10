@@ -773,8 +773,7 @@ struct ContentView: View {
             LandmarkThumbnail(
                 articleImageData: alt.articleImageData,
                 articleImageURL: alt.articleImageURL,
-                size: 44,
-                cornerRadius: 12
+                size: 44
             )
 
             VStack(alignment: .leading, spacing: 2) {
