@@ -21,11 +21,26 @@
 //
 
 import Foundation
+import CoreLocation
 
-/// Resolves coordinates for a phase-2 candidate that came back from
-/// phase-1 with `coordinates: nil`. Returns nil when none of the
-/// fallbacks find anything; the caller should preserve the original
-/// nil in that case.
+/// Beyond this, the article's own geo claim and the stored (Wikidata
+/// P625) coordinate aren't describing the same spot, and the article
+/// wins. Below it, the stored value stays — the two sources routinely
+/// disagree by a few meters of harmless precision noise.
+nonisolated private let coordinateTrustThresholdMeters: Double = 250
+
+/// Resolves coordinates for a phase-2 candidate. Two jobs:
+///
+/// - `coordinates: nil` from phase-1 → backfill from the fallback
+///   chain below. Returns nil when nothing is found; the caller
+///   should preserve the original nil.
+/// - coordinates present → VERIFY against the article's own geo
+///   claim. Wikidata P625 is occasionally wrong by whole streets
+///   (the Willard Homestead's pointed at a garden center 770 m up
+///   the road, which put the map pin, Directions, and Look Around
+///   on the wrong block), while the article's `prop=coordinates` is
+///   the curated, building-accurate point. A disagreement beyond
+///   `coordinateTrustThresholdMeters` trusts the article.
 ///
 /// Only fires for Wikipedia-sourced candidates — non-Wikipedia sources
 /// (NPS) have their own coordinate pipelines and we don't want to risk
@@ -34,9 +49,15 @@ import Foundation
 nonisolated func backfillCoordinatesIfNeeded(
     for candidate: LandmarkResult
 ) async -> Coordinate? {
-    if let existing = candidate.coordinates { return existing }
     guard candidate.pageURL.host?.contains("wikipedia.org") == true else {
-        return nil
+        return candidate.coordinates
+    }
+
+    if let existing = candidate.coordinates {
+        return preferArticleCoordinate(
+            stored: existing,
+            article: await fetchWikipediaCoordinates(forTitle: candidate.title)
+        )
     }
 
     if let fromAPI = await fetchWikipediaCoordinates(forTitle: candidate.title) {
@@ -48,6 +69,28 @@ nonisolated func backfillCoordinatesIfNeeded(
     return nil
 }
 
+/// Pure selection between a stored coordinate (usually Wikidata P625)
+/// and the article's own geo claim: the article wins when they
+/// disagree beyond the trust threshold, the stored value otherwise.
+/// Shared by both enrichment paths (Scan phase-2 and the Nearby
+/// tap-time `enrichDiscoveredLandmark`).
+nonisolated func preferArticleCoordinate(
+    stored: Coordinate?,
+    article: Coordinate?
+) -> Coordinate? {
+    guard let stored else { return article }
+    guard let article,
+          distanceMeters(stored, article) > coordinateTrustThresholdMeters else {
+        return stored
+    }
+    return article
+}
+
+nonisolated private func distanceMeters(_ a: Coordinate, _ b: Coordinate) -> Double {
+    CLLocation(latitude: a.latitude, longitude: a.longitude)
+        .distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude))
+}
+
 // MARK: - Wikipedia prop=coordinates
 
 /// Calls MediaWiki's `prop=coordinates` for an article title. Returns
@@ -55,8 +98,18 @@ nonisolated func backfillCoordinatesIfNeeded(
 /// their coord here even when Wikidata doesn't — this is the cheapest
 /// structured fallback.
 nonisolated func fetchWikipediaCoordinates(forTitle title: String) async -> Coordinate? {
-    guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-          let url = URL(string: "https://en.wikipedia.org/w/api.php?action=query&format=json&prop=coordinates&redirects=1&titles=\(encoded)") else {
+    // URLComponents-built (apiURL): under the old .urlQueryAllowed
+    // interpolation a title containing '&' truncated the query and
+    // silently fetched a DIFFERENT article's coordinate — survivable
+    // when this was only a nil-coordinate backfill, poisonous now
+    // that every enrichment verifies its coordinate through here.
+    guard let url = apiURL("https://en.wikipedia.org/w/api.php", [
+        URLQueryItem(name: "action", value: "query"),
+        URLQueryItem(name: "format", value: "json"),
+        URLQueryItem(name: "prop", value: "coordinates"),
+        URLQueryItem(name: "redirects", value: "1"),
+        URLQueryItem(name: "titles", value: title),
+    ]) else {
         return nil
     }
     guard let data = await httpDataWithRetry(apiRequest(url)) else { return nil }

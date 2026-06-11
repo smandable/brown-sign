@@ -428,6 +428,9 @@ nonisolated func enrichDiscoveredLandmark(
         candidateSummary: candidate.rawSummary
     )
     async let imageTask = downloadArticleImageWithFallback(candidate: candidate)
+    // The article's own geo claim, fetched alongside the other work to
+    // verify Wikidata's P625 below (occasionally a whole street off).
+    async let articleCoords = fetchWikipediaCoordinates(forTitle: candidate.title)
 
     // Resolve the FAST Wikidata task first and surface its fields (type /
     // inception year / coords) right away via `onWikidata`, before awaiting the
@@ -459,9 +462,15 @@ nonisolated func enrichDiscoveredLandmark(
     let match   = await matchScore
     let imagePair = await imageTask
 
-    // Prefer Wikidata coords if available, else fall back to the
-    // geosearch coords we already had.
-    let coord = wd?.coordinate ?? candidate.coordinates
+    // Prefer Wikidata coords if available, else the geosearch coords —
+    // then verify against the article's own geo claim: P625 put the
+    // Willard Homestead's pin (and Directions, and Look Around) on the
+    // wrong street 770 m away. Past 250 m of disagreement the article,
+    // the curated building-accurate point, wins.
+    let coord = preferArticleCoordinate(
+        stored: wd?.coordinate ?? candidate.coordinates,
+        article: await articleCoords
+    )
 
     return LandmarkResult(
         title: candidate.title,
@@ -495,9 +504,11 @@ nonisolated func enrichLandmark(
         candidateSummary: candidate.rawSummary
     )
     async let imageTask  = downloadArticleImageWithFallback(candidate: candidate)
-    // Backfill coordinates when phase-1 (Wikidata P625) had none. No-op
-    // when candidate.coordinates is already set, so existing happy-path
-    // results don't pay an extra roundtrip.
+    // Backfill coordinates when phase-1 (Wikidata P625) had none — and
+    // when it HAD some, verify them against the article's own geo claim
+    // (P625 is occasionally a whole street off; the article wins past
+    // 250 m). One extra roundtrip per enrichment, alongside the LLM +
+    // image work already in flight here.
     async let coordsTask = backfillCoordinatesIfNeeded(for: candidate)
 
     let polish  = await polished
