@@ -44,7 +44,7 @@ nonisolated public func parseCoordinatesFromText(_ text: String) -> (latitude: D
 
 // MARK: - DMS
 
-private func parseDMSCoordinates(_ text: String) -> (Double, Double)? {
+nonisolated private func parseDMSCoordinates(_ text: String) -> (Double, Double)? {
     // Normalize prime/quote variants so the regex below stays simple.
     let normalized = text
         .replacingOccurrences(of: "\u{2032}", with: "'")  // ′ prime
@@ -105,7 +105,7 @@ private func parseDMSCoordinates(_ text: String) -> (Double, Double)? {
     return (lat, lon)
 }
 
-private func dmsToDecimal(
+nonisolated private func dmsToDecimal(
     degrees: Double,
     minutes: Double,
     seconds: Double,
@@ -124,12 +124,12 @@ private func dmsToDecimal(
 
 // MARK: - Decimal
 
-private func parseDecimalCoordinates(_ text: String) -> (Double, Double)? {
+nonisolated private func parseDecimalCoordinates(_ text: String) -> (Double, Double)? {
     if let withHemis = parseDecimalWithHemisphere(text) { return withHemis }
     return parseSignedDecimalPair(text)
 }
 
-private func parseDecimalWithHemisphere(_ text: String) -> (Double, Double)? {
+nonisolated private func parseDecimalWithHemisphere(_ text: String) -> (Double, Double)? {
     // `(-)?DDD(.DDD)? (°)? <hemi>` for each half. The degree symbol is now
     // captured (group 2/5) so we can require each half to carry either a
     // decimal point OR an explicit degree symbol. Without that, this
@@ -176,7 +176,7 @@ private func parseDecimalWithHemisphere(_ text: String) -> (Double, Double)? {
     return (lat, lon)
 }
 
-private func applyHemisphere(magnitude: Double, hemisphere: String) -> Double? {
+nonisolated private func applyHemisphere(magnitude: Double, hemisphere: String) -> Double? {
     switch hemisphere.uppercased() {
     case "N", "E": return magnitude
     case "S", "W": return -magnitude
@@ -187,7 +187,7 @@ private func applyHemisphere(magnitude: Double, hemisphere: String) -> Double? {
 /// Signed-pair fallback: `38.0826, -122.9319`. Requires both numbers
 /// to look coord-shaped (decimal point, valid range) so date pairs
 /// like "1934, 1942" don't false-match.
-private func parseSignedDecimalPair(_ text: String) -> (Double, Double)? {
+nonisolated private func parseSignedDecimalPair(_ text: String) -> (Double, Double)? {
     let pattern = #"(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)"#
     guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
     let range = NSRange(text.startIndex..<text.endIndex, in: text)
@@ -205,15 +205,15 @@ private func parseSignedDecimalPair(_ text: String) -> (Double, Double)? {
 
 // MARK: - Helpers
 
-private func isLatHemisphere(_ s: String) -> Bool {
+nonisolated private func isLatHemisphere(_ s: String) -> Bool {
     let u = s.uppercased()
     return u == "N" || u == "S"
 }
 
-private func isValidLatitude(_ value: Double) -> Bool {
+nonisolated private func isValidLatitude(_ value: Double) -> Bool {
     value >= -90 && value <= 90
 }
 
-private func isValidLongitude(_ value: Double) -> Bool {
+nonisolated private func isValidLongitude(_ value: Double) -> Bool {
     value >= -180 && value <= 180
 }
