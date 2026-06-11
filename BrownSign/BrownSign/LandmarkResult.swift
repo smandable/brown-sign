@@ -41,3 +41,48 @@ nonisolated struct LandmarkResult: Codable {
     /// Apple Intelligence on-device match judgment (0.0–1.0).
     let onDeviceMatchScore: Double?
 }
+
+extension LandmarkResult {
+    /// A copy of `self` with enrichment gaps filled from `other` — the
+    /// same landmark seen by another pass (a fresh Nearby fetch, or
+    /// tap-time enrichment). Existing values always win; only fields
+    /// `self` lacks adopt `other`'s. This is how a row whose hydration
+    /// once missed a field (one bad network moment) heals later,
+    /// instead of the gap being preserved by every merge and re-saved
+    /// into the Nearby disk cache indefinitely.
+    func fillingEnrichmentGaps(from other: LandmarkResult) -> LandmarkResult {
+        LandmarkResult(
+            title: title,
+            summary: summary.isEmpty ? other.summary : summary,
+            rawSummary: rawSummary.isEmpty ? other.rawSummary : rawSummary,
+            pageURL: pageURL,
+            source: source,
+            articleImageURL: articleImageURL ?? other.articleImageURL,
+            articleImageData: articleImageData ?? other.articleImageData,
+            coordinates: coordinates ?? other.coordinates,
+            inceptionYear: inceptionYear ?? other.inceptionYear,
+            wikidataType: wikidataType ?? other.wikidataType,
+            onDeviceMatchScore: onDeviceMatchScore ?? other.onDeviceMatchScore
+        )
+    }
+
+    /// A copy of `self` without the downloaded image bytes. Nearby's
+    /// in-state rows (and therefore its disk cache, which serializes
+    /// them verbatim as JSON) should carry the image URL, not base64'd
+    /// JPEGs — the bytes already live in SwiftData via upsert.
+    var droppingImageBytes: LandmarkResult {
+        LandmarkResult(
+            title: title,
+            summary: summary,
+            rawSummary: rawSummary,
+            pageURL: pageURL,
+            source: source,
+            articleImageURL: articleImageURL,
+            articleImageData: nil,
+            coordinates: coordinates,
+            inceptionYear: inceptionYear,
+            wikidataType: wikidataType,
+            onDeviceMatchScore: onDeviceMatchScore
+        )
+    }
+}

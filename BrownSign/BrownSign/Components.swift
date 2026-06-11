@@ -130,6 +130,9 @@ struct LandmarkThumbnail: View {
     /// degrades to the URL / captured photo / placeholder instead of parking
     /// on a permanent neutral tile.
     @State private var decodeFailed = false
+    /// Key already given its one cache-bypassing retry, so a failing URL
+    /// doesn't loop the network.
+    @State private var retriedKey: String?
     @Environment(\.colorScheme) private var colorScheme
 
     private struct Decoded { let key: String; let image: UIImage }
@@ -204,6 +207,32 @@ struct LandmarkThumbnail: View {
         }
     }
 
+    /// One cache-bypassing download for a URL whose `AsyncImage` load
+    /// failed. Replaces whatever poisoned entry the shared URLCache held
+    /// (the fresh 200 is cached normally), downsamples off-main, and
+    /// banks the result exactly like the inline-bytes path so `content`
+    /// renders it via `currentImage`.
+    private func retryRemoteImageBypassingCache() async {
+        let key = cacheKey
+        guard retriedKey != key, let url = articleImageURL else { return }
+        retriedKey = key
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+        let target = size * 3
+        let image = await Task.detached(priority: .utility) {
+            UIImage.downsampled(from: data, maxDimension: target)
+        }.value
+        guard let image else { return }
+        Self.cache.setObject(image, forKey: key as NSString)
+        // Same supersession rule as loadThumbnail: never stamp a stale
+        // key's image onto a recycled row.
+        if key == cacheKey {
+            decoded = Decoded(key: key, image: image)
+        }
+    }
+
     /// The image to show for the CURRENT key: this instance's freshly-decoded
     /// image if it still matches, else a process-wide cache hit. Read in `body`
     /// so a recycled row that scrolls back re-shows instantly (no re-decode, no
@@ -250,6 +279,17 @@ struct LandmarkThumbnail: View {
                         .transition(.opacity)
                 case .empty:
                     Color.secondary.opacity(0.1)
+                case .failure:
+                    // AsyncImage failures are sticky: it never retries,
+                    // and it reads the shared URLCache, so a corrupt or
+                    // error response cached once keeps "failing" from
+                    // disk on every launch even while the URL serves
+                    // fine (Seth Wetmore House was stuck like this for
+                    // weeks). One fresh attempt that bypasses the cache;
+                    // success lands in `decoded`/the NSCache, which
+                    // `content` prefers over this whole branch.
+                    capturedOrPlaceholder
+                        .task { await retryRemoteImageBypassingCache() }
                 default:
                     capturedOrPlaceholder
                 }
@@ -268,18 +308,16 @@ struct LandmarkThumbnail: View {
         if let capturedImageData, let image = UIImage(data: capturedImageData) {
             Image(uiImage: image).resizable().scaledToFill()
         } else {
-            // Keep the warm brand-brown tile in light mode; in dark mode a
-            // dark-brown glyph on a dark tile reads as a near-empty square, so
-            // bump the tile and use a light glyph for legible contrast.
-            Color("BrandBrown").opacity(colorScheme == .dark ? 0.28 : 0.18)
+            // Placeholder tile (Sean's call, 2026-06-10): solid
+            // lightened-brown ground (BrandBrownForeground, the color
+            // the map pins wore briefly in 1.8.0) with the signpost in
+            // plain BrandBrown — brown-on-brown like a real roadside
+            // sign. (A green AccentButton glyph was tried and rejected.)
+            Color("BrandBrownForeground")
                 .overlay {
                     Image(systemName: "signpost.right.fill")
                         .font(.title2)
-                        .foregroundStyle(
-                            colorScheme == .dark
-                                ? Color.white.opacity(0.55)
-                                : Color("BrandBrown").opacity(0.55)
-                        )
+                        .foregroundStyle(Color("BrandBrown"))
                 }
         }
     }

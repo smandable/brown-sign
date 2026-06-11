@@ -1773,6 +1773,22 @@ struct NearMeView: View {
         var merged = existing
         let seen = Set(existing.map(\.pageURL))
         let before = merged.count
+        // Fresh duplicates used to be discarded wholesale, which made
+        // any gap in an existing entry permanent: a thumbnail lost to
+        // one bad hydration moment was preserved by every later merge
+        // and re-saved into the disk cache, indefinitely (the Seth
+        // Wetmore House placeholder rode that loop for weeks).
+        // Existing entries still win on identity and order, but adopt
+        // the fresh copy's fields where they have none.
+        let freshByURL = Dictionary(
+            fresh.map { ($0.pageURL, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for index in merged.indices {
+            if let update = freshByURL[merged[index].pageURL] {
+                merged[index] = merged[index].fillingEnrichmentGaps(from: update)
+            }
+        }
         for result in fresh where !seen.contains(result.pageURL) {
             merged.append(result)
         }
@@ -1907,6 +1923,12 @@ struct NearMeView: View {
                 }
             )
             LandmarkLookup.upsert(result: enriched, in: modelContext)
+            // Graft what the pass healed back into the in-state list
+            // row + disk cache. Without this, enrichment only reached
+            // SwiftData (History/detail), so a Nearby row missing its
+            // thumbnail kept rendering the placeholder even after a
+            // tap had downloaded the image.
+            applyEnrichmentToRow(enriched)
             // Only mark the session done when the pass actually gained
             // something beyond the discover result — an offline tap that
             // enriched nothing should retry on the next tap, not get
@@ -1917,5 +1939,34 @@ struct NearMeView: View {
                 enrichedThisSession.insert(sessionKey)
             }
         }
+    }
+
+    /// Fills the matching in-state row's missing thumbnail URL from a
+    /// completed tap-enrichment pass, then persists the healed set so
+    /// the fix survives the next cold start. ONLY the image URL is
+    /// grafted: type/year made tapped rows sprout "house" chips the
+    /// rest of the list doesn't show (Sean's call, 2026-06-10), and
+    /// image BYTES would be serialized verbatim into the disk cache
+    /// as base64 (they already live in SwiftData).
+    private func applyEnrichmentToRow(_ enriched: LandmarkResult) {
+        guard case .loaded(var results) = state,
+              let index = results.firstIndex(where: { $0.pageURL == enriched.pageURL })
+        else { return }
+        let imageOnly = LandmarkResult(
+            title: enriched.title,
+            summary: "",
+            rawSummary: "",
+            pageURL: enriched.pageURL,
+            source: enriched.source,
+            articleImageURL: enriched.articleImageURL,
+            articleImageData: nil,
+            coordinates: nil,
+            inceptionYear: nil,
+            wikidataType: nil,
+            onDeviceMatchScore: nil
+        )
+        results[index] = results[index].fillingEnrichmentGaps(from: imageOnly)
+        state = .loaded(results)
+        Task { await saveCurrentResultsToCache() }
     }
 }
