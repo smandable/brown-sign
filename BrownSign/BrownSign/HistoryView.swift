@@ -568,6 +568,18 @@ struct LandmarkDetailView: View {
     /// section hides entirely in both cases.
     @State private var lookAroundScene: MKLookAroundScene?
 
+    /// Badge-free static image of `lookAroundScene`, layered over
+    /// the live preview as the tile's visible face (the preview's
+    /// binoculars badge has no API to hide it). Nil = the live
+    /// preview shows through, badge and all — a graceful fallback.
+    @State private var lookAroundSnapshot: UIImage?
+
+    /// The live preview (the tap target under the snapshot) mounts
+    /// only AFTER the tile's fade-in completes: opacity-fading the
+    /// stack doesn't group-composite the hosted preview, so its
+    /// badge bled through the half-transparent snapshot mid-fade.
+    @State private var lookAroundPreviewMounted = false
+
     /// Slides assembled for the image carousel. Slot 0 is always
     /// reserved as `id: "primary"` whenever we know about an article
     /// image — either the persisted JPEG bytes (instant) or, while
@@ -642,15 +654,6 @@ struct LandmarkDetailView: View {
                 )
 
                 metadataBlock
-
-                // Street-level look at the landmark, answering "is
-                // this worth pulling off for". Tap opens the
-                // full-screen Look Around viewer.
-                if let scene = lookAroundScene {
-                    LookAroundPreview(initialScene: scene)
-                        .frame(height: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
 
                 if !lookup.rawSummary.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -727,9 +730,32 @@ struct LandmarkDetailView: View {
         // picks them up.
         .task(id: "\(lookup.latitude ?? .nan),\(lookup.longitude ?? .nan)") {
             guard let lat = lookup.latitude, let lon = lookup.longitude else { return }
-            lookAroundScene = try? await MKLookAroundSceneRequest(
+            guard let scene = try? await MKLookAroundSceneRequest(
                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            ).scene
+            ).scene else { return }
+            let options = MKLookAroundSnapshotter.Options()
+            options.size = CGSize(width: 110, height: 88)
+            let snapshot = try? await MKLookAroundSnapshotter(
+                scene: scene, options: options
+            ).snapshot.image
+            // Publish together AFTER the snapshot resolves: setting
+            // the scene first renders the live preview's badge for a
+            // beat before the clean snapshot lands over it.
+            withAnimation(.easeIn(duration: 0.5)) {
+                lookAroundSnapshot = snapshot
+                lookAroundScene = scene
+            }
+            if snapshot == nil {
+                // No clean face to hide behind; show the badged
+                // preview immediately rather than an empty tile.
+                lookAroundPreviewMounted = true
+            } else {
+                // Slot the tap target in only once the fade is done
+                // (it's fully covered by the snapshot, so the swap
+                // is invisible).
+                try? await Task.sleep(for: .milliseconds(650))
+                lookAroundPreviewMounted = true
+            }
         }
         .task(id: lookup.resolvedTitle) {
             // Fetch extra gallery-worthy article images for the
@@ -812,49 +838,109 @@ struct LandmarkDetailView: View {
         // gating — even an entry with no Wikidata enrichment shows
         // its source and date in the parchment box).
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                Button {
-                    showSafari = true
-                } label: {
-                    sourceBadge
-                }
-                .buttonStyle(.plain)
-                Text(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if (lookup.onDeviceMatchScore ?? 1) < LowConfidenceMatchNote.threshold {
-                LowConfidenceMatchNote()
-            }
-            if let lat = lookup.latitude, let lon = lookup.longitude {
-                Label(String(format: "%.4f, %.4f", lat, lon),
-                      systemImage: "mappin.and.ellipse")
-                    .font(.caption)
-                    .accessibilityLabel("Map coordinates")
-                Button {
-                    showMapsDialog = true
-                } label: {
-                    Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                HStack(spacing: 12) {
+                    Button {
+                        showSafari = true
+                    } label: {
+                        sourceBadge
+                    }
+                    .buttonStyle(.plain)
+                    Text(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))
                         .font(.caption)
-                        // Blue by Sean's call: it's a link, keep it
-                        // looking like one.
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-            }
-            if let year = lookup.inceptionYear {
-                // Negative = BCE (parseClaimYear preserves the sign).
-                Label(year < 0 ? "Est. \(String(-year)) BC" : "Est. \(String(year))",
-                      systemImage: "calendar")
-                    .font(.caption)
-                    // VoiceOver reads the bare "Est." abbreviation oddly.
-                    .accessibilityLabel(year < 0
-                        ? "Established \(String(-year)) BC"
-                        : "Established \(String(year))")
-            }
+                if (lookup.onDeviceMatchScore ?? 1) < LowConfidenceMatchNote.threshold {
+                    LowConfidenceMatchNote()
+                }
+                // Lat/long stays: tried hiding it (1.9.0 design
+                // pass), but the shorter text column read oddly
+                // against the Look Around tile.
+                if let lat = lookup.latitude, let lon = lookup.longitude {
+                    Label(String(format: "%.4f, %.4f", lat, lon),
+                          systemImage: "mappin.and.ellipse")
+                        .font(.caption)
+                        .accessibilityLabel("Map coordinates")
+                    Button {
+                        showMapsDialog = true
+                    } label: {
+                        Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                            .font(.caption)
+                            // Blue by Sean's call: it's a link, keep it
+                            // looking like one.
+                            .foregroundStyle(.blue)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if let year = lookup.inceptionYear {
+                    // Negative = BCE (parseClaimYear preserves the sign).
+                    Label(year < 0 ? "Est. \(String(-year)) BC" : "Est. \(String(year))",
+                          systemImage: "calendar")
+                        .font(.caption)
+                        // VoiceOver reads the bare "Est." abbreviation oddly.
+                        .accessibilityLabel(year < 0
+                            ? "Established \(String(-year)) BC"
+                            : "Established \(String(year))")
+                }
             if let type = lookup.wikidataType {
                 Label(type, systemImage: "tag.fill")
                     .font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The text column ALONE defines the card height: the Look
+        // Around tile is an overlay capped to that height, so its
+        // async fade-in can never stretch the card. The trailing
+        // padding reserves the tile's footprint while it's visible
+        // (the metadata rows are short enough not to re-wrap).
+        .padding(.trailing, lookAroundScene != nil ? 122 : 0)
+        .overlay(alignment: .trailing) {
+            // Street-level Look Around teaser, only where Apple has
+            // imagery at the landmark. Tap opens the full-screen
+            // viewer. Thumbnail-class tile, so 10pt radius per the
+            // rows-12/thumbnails-10 ruling.
+            if let scene = lookAroundScene {
+                ZStack {
+                    // The live preview is the tap target (native
+                    // full-screen expansion + chrome), but its
+                    // binoculars badge can't be hidden at any
+                    // size — so a badge-free static snapshot of
+                    // the same scene sits on top as the visible
+                    // tile, and taps pass through it.
+                    if lookAroundPreviewMounted {
+                        LookAroundPreview(initialScene: scene)
+                    }
+                    if let snapshot = lookAroundSnapshot {
+                        Image(uiImage: snapshot)
+                            .resizable()
+                            .scaledToFill()
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(width: 110)
+                .frame(maxHeight: 88)
+                // "Look Around" is Apple's feature name, so it
+                // keeps its capitals even in sentence-case land.
+                // Frosted-capsule label, the system's own badge
+                // treatment, so it reads over any street scene.
+                .overlay(alignment: .bottom) {
+                    Text("Look Around")
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        // 6pt, not the tile's nominal 10: at this
+                        // chip height 10 would clamp to a full
+                        // capsule; 6 is what reads as the same
+                        // corner language as the tile.
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                        .padding(.bottom, 4)
+                        .allowsHitTesting(false)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Arrives async (scene + snapshot fetch), so fade in
+                // like the list thumbnails do — a hard pop-in reads
+                // as a glitch. The insertion is animated from the
+                // withAnimation in the fetch task.
+                .transition(.opacity)
             }
         }
         .padding(12)
