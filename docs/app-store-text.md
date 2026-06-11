@@ -73,6 +73,8 @@ roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,tra
 New: get to the camera before the sign is gone. Say "Scan a sign with Brown Sign" to Siri, add the new Brown Sign button to Control Center, the Lock Screen, or the Action button, or long-press the app icon. Every one of them opens the app with the camera already up. There's a shortcut straight to Nearby, too.
 
 Also new: landmark pages can show a street-level Look Around preview, so you can see what you'd be pulling off the highway for before you go.
+
+Plus some housekeeping: landmark photos in the Nearby list now recover on their own if a download once failed, and landmark locations are more accurate, so directions and Look Around point at the right spot.
 ```
 
 ### Previous versions
