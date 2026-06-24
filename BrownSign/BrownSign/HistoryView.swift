@@ -579,11 +579,6 @@ struct LandmarkDetailView: View {
     /// jump between slides without the user swiping.
     @State private var carouselSelection: String = "primary"
 
-    /// Measured height of the metadata text column, so the Look Around tile
-    /// can be sized to track it (shorter card → shorter tile) instead of a
-    /// fixed 104 that overflows and touches a short card's edges.
-    @State private var metadataColumnHeight: CGFloat = 0
-
     /// Street-level Look Around scene at the landmark's coordinates.
     /// Stays nil when the lookup has no coordinates or Apple has no
     /// coverage there (common for rural brown-sign territory — and
@@ -879,6 +874,28 @@ struct LandmarkDetailView: View {
         }
     }
 
+    /// How many rows the metadata text column renders — drives the Look Around
+    /// tile height so it doesn't overflow a short card.
+    private var metadataRowCount: Int {
+        var n = 1  // source badge + saved date
+        if (lookup.onDeviceMatchScore ?? 1) < LowConfidenceMatchNote.threshold { n += 1 }
+        if lookup.latitude != nil && lookup.longitude != nil { n += 2 }  // coordinates + Directions
+        if lookup.inceptionYear != nil { n += 1 }
+        if lookup.wikidataType != nil { n += 1 }
+        return n
+    }
+
+    /// Look Around tile height for the current metadata row count: full size on
+    /// a tall card, smaller on a short one so it keeps a comfortable gap to the
+    /// card edges either way.
+    private var lookAroundTileHeight: CGFloat {
+        switch metadataRowCount {
+        case 5...: return 104
+        case 4: return 88
+        default: return 72
+        }
+    }
+
     @ViewBuilder
     private var metadataBlock: some View {
         // Source badge + saved date now live INSIDE the block, so
@@ -941,15 +958,6 @@ struct LandmarkDetailView: View {
         // padding reserves the tile's footprint while it's visible
         // (the metadata rows are short enough not to re-wrap).
         .padding(.trailing, lookAroundScene != nil ? 116 : 0)
-        // Measure the text column so the Look Around tile can match its height
-        // (it's an overlay, so this never feeds back into the column's layout).
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear { metadataColumnHeight = proxy.size.height }
-                    .onChange(of: proxy.size.height) { _, h in metadataColumnHeight = h }
-            }
-        }
         .overlay(alignment: .trailing) {
             // Street-level Look Around teaser, only where Apple has
             // imagery at the landmark. Tap opens the full-screen
@@ -973,14 +981,11 @@ struct LandmarkDetailView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                // Explicit height tracking the measured column (min 56, max
-                // 104), with ~6pt to spare each side — so on a short (4-row)
-                // card the tile shrinks instead of overflowing and touching the
-                // edges, and on a tall (5-row) card it's the full 104.
-                .frame(
-                    width: 104,
-                    height: min(104, max(56, metadataColumnHeight - 12))
-                )
+                // Height keyed to the number of metadata rows (deterministic,
+                // unlike measuring the column in an overlay): a full 104 on a
+                // 5+-row card, shorter on a 4-row card so it doesn't overflow
+                // and touch the card's top/bottom edges.
+                .frame(width: 104, height: lookAroundTileHeight)
                 // "Look Around" is Apple's feature name, so it
                 // keeps its capitals even in sentence-case land.
                 // Frosted-capsule label, the system's own badge
