@@ -38,6 +38,45 @@ struct HistoryView: View {
         return lookups.filter { $0.resolvedTitle.localizedStandardContains(q) }
     }
 
+    /// One day's worth of History rows. A struct (not a tuple) so `ForEach`
+    /// can identify it by `day` — key paths don't work on tuples.
+    private struct DayGroup: Identifiable {
+        let day: Date
+        let header: String
+        let items: [LandmarkLookup]
+        var id: Date { day }
+    }
+
+    /// `filteredLookups` bucketed into day groups for the History list,
+    /// newest day first — each with a relative header. `filteredLookups` is
+    /// already date-descending, so one pass groups consecutive same-day items.
+    private var groupedLookups: [DayGroup] {
+        let cal = Calendar.current
+        var groups: [(day: Date, items: [LandmarkLookup])] = []
+        for lookup in filteredLookups {
+            let day = cal.startOfDay(for: lookup.date)
+            if let last = groups.last, last.day == day {
+                groups[groups.count - 1].items.append(lookup)
+            } else {
+                groups.append((day: day, items: [lookup]))
+            }
+        }
+        return groups.map { DayGroup(day: $0.day, header: dayHeader(for: $0.day), items: $0.items) }
+    }
+
+    /// Relative day-group header: "Today" / "Yesterday", else "EEE, MMM d"
+    /// ("Sun, Jun 21"), adding the year only when it isn't the current one.
+    /// The header view displays it uppercased.
+    private func dayHeader(for day: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(day) { return "Today" }
+        if cal.isDateInYesterday(day) { return "Yesterday" }
+        let sameYear = cal.component(.year, from: day) == cal.component(.year, from: Date())
+        return sameYear
+            ? day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+            : day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year())
+    }
+
 
     var body: some View {
         NavigationStack {
@@ -104,111 +143,61 @@ struct HistoryView: View {
                                     message: "No saved finds match \"\(searchText)\"."
                                 )
                             } else {
-                                // Header lives OUTSIDE the List so it
-                                // doesn't steal the inset-grouped
-                                // section's rounded top corners from
-                                // the first landmark row. Inside the
-                                // List with a clear background, the
-                                // List still treats it as row 0 and
-                                // applies the top-rounded corners
-                                // there — making the first visible row
-                                // look chopped. As a sibling above the
-                                // List, we control its spacing with
-                                // simple padding and the List's first
-                                // row keeps its native rounded cap.
-                                VStack(spacing: 0) {
-                                    if !editMode.isEditing {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "clock.fill")
-                                            Text("Recently viewed landmarks")
-                                        }
-                                        // Match the "Recent finds"
-                                        // section header on Scan
-                                        // (subheadline + semibold) so
-                                        // the three list-section
-                                        // labels read consistently
-                                        // across tabs. Bottom padding
-                                        // matches Scan's 8pt VStack
-                                        // spacing between header and
-                                        // list; top stays at 16 for
-                                        // breathing room between the
-                                        // search field above and the
-                                        // section header.
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(Color.accentColor)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 16)
-                                        .padding(.top, 16)
-                                        .padding(.bottom, 8)
-                                    }
+                                // Day-grouped list: each day is its own
+                                // parchment card under a relative header
+                                // ("Today" / "Yesterday" / "Sun, Jun 21") with
+                                // a hairline and a per-day count. Replaces the
+                                // single "Recently viewed landmarks" header +
+                                // flat list (and the per-row "Viewed <date>").
+                                List {
+                                    ForEach(groupedLookups) { group in
+                                        // Header as a plain row on the dark
+                                        // background (NOT a Section header,
+                                        // which would pin on scroll), above the
+                                        // day's card.
+                                        dayHeaderRow(group)
 
-                                    List {
-                                        ForEach(Array(filteredLookups.enumerated()), id: \.element.id) { index, lookup in
+                                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, lookup in
                                             NavigationLink(value: lookup) {
                                                 HistoryRow(lookup: lookup)
                                             }
-                                            // Parchment lives per-row,
-                                            // not on the whole list.
-                                            // Only the first row gets
-                                            // rounded top corners and
-                                            // only the last row gets
-                                            // rounded bottoms — the
-                                            // visual "card" is
-                                            // composed of abutted
-                                            // rows, so the parchment
-                                            // ends exactly with the
-                                            // last row regardless of
-                                            // how short the list is.
+                                            // Per-DAY parchment card: rounded
+                                            // top on the day's first row, rounded
+                                            // bottom on its last, so each day
+                                            // reads as its own card.
                                             .listRowBackground(
                                                 UnevenRoundedRectangle(
                                                     cornerRadii: .init(
                                                         topLeading: index == 0 ? 12 : 0,
-                                                        bottomLeading: index == filteredLookups.count - 1 ? 12 : 0,
-                                                        bottomTrailing: index == filteredLookups.count - 1 ? 12 : 0,
+                                                        bottomLeading: index == group.items.count - 1 ? 12 : 0,
+                                                        bottomTrailing: index == group.items.count - 1 ? 12 : 0,
                                                         topTrailing: index == 0 ? 12 : 0
                                                     )
                                                 )
                                                 .fill(Color("CardBackground"))
                                             )
-                                            // 8pt + the row's internal 4pt =
-                                            // a 12pt gap above the thumbnail,
-                                            // equal to the leading gap, so the
-                                            // first row sits symmetrically in
-                                            // the card corner. ALL lists use
-                                            // 8/12 so rows stay the same size
-                                            // everywhere.
                                             .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                                         }
-                                        .onDelete(perform: deleteFilteredLookups)
+                                        // Delete by resolving the offset against
+                                        // THIS day's items (object identity) —
+                                        // per-section IndexSet offsets are NOT
+                                        // valid against the flat list, so a flat
+                                        // delete here would remove the wrong row.
+                                        .onDelete { deleteItems(group.items, at: $0) }
                                     }
-                                    // Plain style so rows extend
-                                    // full-width within the padded
-                                    // frame; inset-grouped doubles
-                                    // up margins with .padding.
-                                    .listStyle(.plain)
-                                    .environment(\.editMode, $editMode)
-                                    .scrollDismissesKeyboard(.immediately)
-                                    // No list-level background — per-row
-                                    // backgrounds carry the parchment so
-                                    // it ends exactly at the last row.
-                                    .scrollContentBackground(.hidden)
-                                    // Round the viewport edges so the
-                                    // top corners stay rounded as the
-                                    // first row scrolls out of view.
-                                    // Without this clip, the per-row
-                                    // rounded corners leave the screen
-                                    // with row 1 and the visible top
-                                    // becomes square mid-scroll.
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                                    // Match the picker/search field's
-                                    // horizontal margin so the list
-                                    // lines up with the chrome above
-                                    // it.
-                                    .padding(.horizontal)
                                 }
-                                // Match the map case's bottom padding so
-                                // the parchment list card sits the same
-                                // distance above the tab bar as the map.
+                                .listStyle(.plain)
+                                .environment(\.editMode, $editMode)
+                                .scrollDismissesKeyboard(.immediately)
+                                // No list-level background — per-row backgrounds
+                                // carry the parchment so each day's card ends
+                                // exactly at its last row.
+                                .scrollContentBackground(.hidden)
+                                // Match the picker/search field's horizontal
+                                // margin so the cards line up with the chrome.
+                                .padding(.horizontal)
+                                // Match the map case's bottom padding so the
+                                // list sits the same distance above the tab bar.
                                 .padding(.bottom, 16)
                             }
                         case .map:
@@ -303,11 +292,39 @@ struct HistoryView: View {
         )
     }
 
-    /// Swipe-delete handler for the displayed (filtered) list. Index
-    /// offsets are relative to `filteredLookups`, not the full `lookups`
-    /// query, so we resolve through the filtered array first.
-    private func deleteFilteredLookups(at offsets: IndexSet) {
-        let items = filteredLookups
+    /// Day-group header row: relative label + hairline + per-day count, on the
+    /// dark background above the day's card. A plain row (NOT a Section header,
+    /// which would pin on scroll) that can't be selected or swiped away.
+    @ViewBuilder
+    private func dayHeaderRow(_ group: DayGroup) -> some View {
+        HStack(spacing: 10) {
+            Text(group.header)
+                .font(.footnote.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            Rectangle()
+                .fill(Color(.separator))
+                .frame(height: 1)
+                .frame(maxWidth: .infinity)
+            Text("\(group.items.count)")
+                .font(.footnote.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 18, leading: 6, bottom: 6, trailing: 6))
+        .listRowSeparator(.hidden)
+        .selectionDisabled()
+        .deleteDisabled(true)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.header), \(group.items.count) finds")
+    }
+
+    /// Swipe/Edit delete handler resolved against a SPECIFIC day's items by
+    /// object identity. The IndexSet offsets are relative to that day's rows,
+    /// not the flat list — indexing the flat list here would delete the wrong
+    /// finds (silent data loss).
+    private func deleteItems(_ items: [LandmarkLookup], at offsets: IndexSet) {
         for index in offsets {
             modelContext.delete(items[index])
         }
@@ -483,10 +500,6 @@ private struct SelectedLookupCard: View {
 
 struct HistoryRow: View {
     let lookup: LandmarkLookup
-    /// Verb that prefaces the date on the row's caption line. Defaults
-    /// to "Viewed" (History tab); Scan's recents preview passes
-    /// "Found" so the same row reads as "this is when I scanned it".
-    var datePrefix: String = "Viewed"
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -495,13 +508,12 @@ struct HistoryRow: View {
                 Text(lookup.resolvedTitle)
                     .font(.headline)
                     .lineLimit(1)
+                // No per-row date now — the day-group header carries it,
+                // freeing the summary's full two lines.
                 Text(lookup.summary)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                Text("\(datePrefix) \(lookup.date.formatted(.dateTime.month(.abbreviated).day().year()))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
