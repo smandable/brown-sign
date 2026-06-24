@@ -196,6 +196,17 @@ struct NearbyMapView: View {
                 initialRegion: initialRegion(),
                 recenterToken: recenterSignal,
                 recenterRegion: recenterRegion,
+                // "Locate me" jumps to the user at the current radius (a 2×radius
+                // diameter), not the current zoom — so it doesn't keep a deep
+                // cluster zoom.
+                recenterTarget: userLocation.map { user in
+                    let meters = Double(radiusMiles) * 1609.344 * 2
+                    return MKCoordinateRegion(
+                        center: user.coordinate,
+                        latitudinalMeters: meters,
+                        longitudinalMeters: meters
+                    )
+                },
                 onUserPan: onMapCenterChanged
             )
             // Apple/Google-style zoom control, bottom-trailing. Follows zoom

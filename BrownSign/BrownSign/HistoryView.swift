@@ -431,7 +431,9 @@ struct HistoryMapView: View {
                     selectedID: $selectedID,
                     initialRegion: regionFittingAll(mapped),
                     recenterToken: recenterToken,
-                    recenterRegion: regionFittingAll(mapped)
+                    recenterRegion: regionFittingAll(mapped),
+                    // "Locate me" fits all saved pins.
+                    recenterTarget: regionFittingAll(mapped)
                 )
                 .onChange(of: mapped.count) { _, _ in
                     // Re-fit when the set changes (search filter, deletes).

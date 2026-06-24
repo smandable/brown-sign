@@ -1057,25 +1057,22 @@ struct NearMeView: View {
                 }
             }
             // Match the "Recent finds" section header on Scan
-            // (subheadline + semibold) so the three list-section
-            // labels read consistently across tabs. Lat/long
-            // values used to live in this string but wrapped to
-            // a second line at the larger size — dropped them
-            // since the user already knows where they are.
-            // 12 top / 4 bottom, not the 16/8 History and Scan use:
-            // the 26pt stepper makes this header row taller than a
-            // text-only one, centering the label with ~4pt of extra
-            // space above AND below its text. Trimming 4 from each
-            // side puts the green label text and the list's top edge
-            // at exactly the same y as History's, so flipping between
-            // the tabs doesn't make the header text jump (Sean
-            // flagged both the gap and the jump on-device).
+            // (subheadline + semibold) so the section labels read
+            // consistently across tabs.
+            // Tuned so this "Within N miles" line AND the list below it
+            // sit at the same y as History's day-group header ("TODAY")
+            // and its first card — Phase-3 grouping moved History's header
+            // INTO the List (row top-inset 18 / bottom 6), lower than the
+            // old standalone header, so flipping tabs shouldn't make either
+            // jump. 16 top moves the label down to match; 6 bottom widens
+            // the gap to the list to match History's header→card gap (the
+            // 26pt stepper centring the label is why these aren't 18/6).
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(Color.accentColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 4)
+            .padding(.top, 18)
+            .padding(.bottom, 8)
         }
     }
 

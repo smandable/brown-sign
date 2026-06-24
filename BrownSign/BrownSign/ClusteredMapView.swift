@@ -123,6 +123,11 @@ struct ClusteredMapView: UIViewRepresentable {
     /// `recenterRegion` (or fits all annotations if nil).
     var recenterToken: Int = 0
     var recenterRegion: MKCoordinateRegion? = nil
+    /// Region the lower-left "locate me" button jumps to — the user at the
+    /// current radius (Nearby) or all pins (History). Used INSTEAD of the
+    /// current zoom, so recentering after zooming into a cluster doesn't keep
+    /// that extreme zoom.
+    var recenterTarget: MKCoordinateRegion? = nil
     /// Called at the end of a USER pan/zoom gesture with the new center.
     /// Programmatic moves (initial fit, recenter, cluster-tap zoom) are
     /// filtered out. Nil on maps that don't refetch (History).
@@ -312,17 +317,36 @@ struct ClusteredMapView: UIViewRepresentable {
             view.clusteringIdentifier = "landmark"
             view.markerTintColor = UIColor(named: "BrandBrown")
             view.glyphImage = UIImage(systemName: "signpost.right.fill")
-            view.displayPriority = .defaultLow
+            // .defaultHigh, not .defaultLow: low priority kept pins clustered
+            // too aggressively (they wouldn't split when zoomed). High priority
+            // still clusters genuinely-overlapping pins but declusters as soon
+            // as there's room.
+            view.displayPriority = .defaultHigh
             view.canShowCallout = false
             return view
         }
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
             if let cluster = view.annotation as? MKClusterAnnotation {
-                // Tap a cluster → zoom to fit exactly its members (and split it).
+                // Tap a cluster → zoom IN tight to its members so they split
+                // into individual pins. showAnnotations padded too generously
+                // and left close members still clustered; this fits them with
+                // only light padding, floored so co-located members still land
+                // at a useful street-level zoom (truly identical coords can't
+                // separate and stay a cluster, which is correct).
                 mapView.deselectAnnotation(cluster, animated: false)
+                let coords = cluster.memberAnnotations.map(\.coordinate)
+                let lats = coords.map(\.latitude), lons = coords.map(\.longitude)
+                let center = CLLocationCoordinate2D(
+                    latitude: (lats.min()! + lats.max()!) / 2,
+                    longitude: (lons.min()! + lons.max()!) / 2
+                )
+                let span = MKCoordinateSpan(
+                    latitudeDelta: max((lats.max()! - lats.min()!) * 1.4, 0.0008),
+                    longitudeDelta: max((lons.max()! - lons.min()!) * 1.4, 0.0008)
+                )
                 programmaticMoves += 1
-                mapView.showAnnotations(cluster.memberAnnotations, animated: true)
+                mapView.setRegion(MKCoordinateRegion(center: center, span: span), animated: true)
             } else if let landmark = view.annotation as? LandmarkAnnotation {
                 parent.selectedID = landmark.id
             }
@@ -359,14 +383,19 @@ struct ClusteredMapView: UIViewRepresentable {
         }
 
         @objc func recenterTapped() {
-            guard let map = mapView, let loc = map.userLocation.location else { return }
-            // Programmatic recenter (keep current zoom) — bump the counter so
-            // the settle isn't reported as a user pan.
+            guard let map = mapView else { return }
+            // Bump the counter so the settle isn't reported as a user pan.
             programmaticMoves += 1
-            map.setRegion(
-                MKCoordinateRegion(center: loc.coordinate, span: map.region.span),
-                animated: true
-            )
+            if let target = parent.recenterTarget {
+                // Reset to the radius (Nearby) / all-pins (History) overview —
+                // NOT the current zoom, which may be a deep cluster zoom.
+                map.setRegion(target, animated: true)
+            } else if let loc = map.userLocation.location {
+                map.setRegion(
+                    MKCoordinateRegion(center: loc.coordinate, span: map.region.span),
+                    animated: true
+                )
+            }
         }
 
         // Our detection gestures must not block MKMapView's own pan/pinch.
