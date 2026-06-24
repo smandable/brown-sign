@@ -979,6 +979,13 @@ struct LandmarkDetailView: View {
                         .allowsHitTesting(false)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Inset a little vertically so the tile is always SHORTER than
+                // the text column. On a short (4-row) card the tile otherwise
+                // filled the column and touched the card's top/bottom edges; on
+                // a tall (5-row) card the 104 cap still wins (column ≥ 116), so
+                // it's unchanged there. Net: a consistent ~6pt gap to the
+                // column edge in both, so the tile no longer touches.
+                .padding(.vertical, 6)
                 // Arrives async (scene + snapshot fetch), so fade in
                 // like the list thumbnails do — a hard pop-in reads
                 // as a glitch. The insertion is animated from the
