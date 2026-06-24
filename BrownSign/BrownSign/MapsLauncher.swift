@@ -32,6 +32,13 @@ struct DirectionsSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    /// The sheet's own corner radius.
+    private let cardCornerRadius: CGFloat = 22
+    /// The inset map preview reads a touch tighter than the sheet at the same
+    /// value (the nested-rounded-rect illusion: the corner gap is wider than
+    /// the edge gap), so it's bumped a few points to *look* like it matches.
+    private let mapPreviewCornerRadius: CGFloat = 24
+
     private var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
@@ -50,7 +57,7 @@ struct DirectionsSheet: View {
                     .tint(Color("BrandBrown"))
             }
             .frame(height: 200)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: mapPreviewCornerRadius, style: .continuous))
             .allowsHitTesting(false)
 
             VStack(spacing: 4) {
@@ -70,7 +77,7 @@ struct DirectionsSheet: View {
                     } label: {
                         VStack(spacing: 4) {
                             Image(systemName: "map.fill")
-                                .font(.title3)
+                                .font(.callout)
                             // Product name, not company name — "Google"
                             // alone under a generic map glyph didn't say
                             // what would open.
@@ -80,7 +87,7 @@ struct DirectionsSheet: View {
                                 .minimumScaleFactor(0.8)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 1)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.green)
@@ -94,12 +101,12 @@ struct DirectionsSheet: View {
                     } label: {
                         VStack(spacing: 4) {
                             Image(systemName: "location.north.fill")
-                                .font(.title3)
+                                .font(.callout)
                             Text("Waze")
                                 .font(.caption.weight(.medium))
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 1)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.cyan)
@@ -112,14 +119,14 @@ struct DirectionsSheet: View {
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: "map")
-                            .font(.title3)
+                            .font(.callout)
                         Text("Apple Maps")
                             .font(.caption.weight(.medium))
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 1)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
@@ -130,13 +137,17 @@ struct DirectionsSheet: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        // A touch more above the map than the sides so it clears the grabber;
+        // bottom stays tight since the Cancel row carries its own space.
+        .padding(.top, 20)
+        .padding(.bottom, 6)
         }
         // .height(460) fits the default text sizes; .large gives
         // accessibility sizes room to expand into, with the ScrollView
         // covering whatever still doesn't fit.
         .presentationDetents([.height(460), .large])
         .presentationDragIndicator(.visible)
+        .presentationCornerRadius(cardCornerRadius)
     }
 }
 

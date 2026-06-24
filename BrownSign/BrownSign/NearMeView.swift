@@ -1026,7 +1026,7 @@ struct NearMeView: View {
                         // "this area" when the list is following a panned map
                         // center; "your location" on the default GPS-anchored
                         // list (and in the loading / empty / offline states).
-                        Image(systemName: anchoredToArea ? "mappin.and.ellipse" : "location.fill")
+                        Image(systemName: anchoredToArea ? "mappin" : "location.fill")
                         // formatRadius converts for metric locales ("3 km")
                         // so the header agrees with the per-row distances,
                         // which were already locale-aware — a metric user
@@ -1322,33 +1322,37 @@ struct NearMeView: View {
             .refreshable {
                 await startRefresh(force: true).value
             }
-        }
-        // Floating "Recenter" button when the list is following a panned area —
-        // floats OVER the list (no layout shift as it appears/disappears) and
-        // re-anchors to the user's location. Replaces the old inline chip.
-        .overlay(alignment: .bottom) {
+
+            // When the list is following a panned area, a "Recenter" button
+            // sits BELOW the list (right-aligned), shortening the list to make
+            // room — it re-anchors to the user's location. The default
+            // GPS-anchored list has no button and runs full-length.
             if anchoredToArea {
-                Button {
-                    returnToUserLocation()
-                } label: {
-                    HStack(spacing: 8) {
-                        // The same crosshair the map's recenter button uses, so
-                        // the control reads the same across the List/Map toggle.
-                        Image(systemName: "dot.scope")
-                            .foregroundStyle(Color.accentColor)
-                        Text("Recenter")
-                            .foregroundStyle(.primary)
+                HStack {
+                    Spacer()
+                    Button {
+                        returnToUserLocation()
+                    } label: {
+                        HStack(spacing: 8) {
+                            // The same crosshair the map's recenter button uses,
+                            // so the control reads the same across the toggle.
+                            Image(systemName: "dot.scope")
+                                .foregroundStyle(Color.accentColor)
+                            Text("Recenter")
+                                .foregroundStyle(.primary)
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color(.secondarySystemBackground)))
+                        .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                     }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(.regularMaterial))
-                    .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
-                    .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Recenter on your location")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Recenter on your location")
-                .padding(.bottom, 12)
+                .padding(.horizontal)
+                .padding(.top, 12)
             }
         }
         // Match the map case's bottom padding so the parchment list

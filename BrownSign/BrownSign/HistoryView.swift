@@ -27,6 +27,9 @@ struct HistoryView: View {
     @State private var showDeleteAllConfirmation = false
     @State private var displayMode: LandmarkDisplayMode = .list
     @State private var searchText: String = ""
+    // Path-based stack so the map callout can push a detail programmatically
+    // (the list rows still push via NavigationLink(value:), which appends here).
+    @State private var path = NavigationPath()
 
     /// Lookups narrowed by the live search field. Partial substring match
     /// against the resolved title via localizedStandardContains — the
@@ -79,7 +82,7 @@ struct HistoryView: View {
 
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             VStack(spacing: 0) {
                 // Chrome above the list (picker, search field). Shown
                 // even when History is empty so the List/Map switcher
@@ -201,7 +204,7 @@ struct HistoryView: View {
                                 .padding(.bottom, 16)
                             }
                         case .map:
-                            HistoryMapView(lookups: filteredLookups)
+                            HistoryMapView(lookups: filteredLookups, onSelect: { path.append($0) })
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .padding(.horizontal)
                                 .padding(.top, 16)
@@ -390,9 +393,33 @@ private struct EmptyHistoryMapView: View {
 /// compact card that links into the full detail view.
 struct HistoryMapView: View {
     let lookups: [LandmarkLookup]
+    /// Pushes the detail (the map callout's Details button / tap / swipe-up).
+    /// Routed through HistoryView's NavigationPath so it shares the same
+    /// destination as the list rows.
+    var onSelect: (LandmarkLookup) -> Void = { _ in }
 
     @State private var selectedID: String?
     @State private var recenterToken = 0
+    @State private var directionsRequest: DirectionsRequest?
+
+    // Distances on the History callout are measured from the user, matching
+    // the Nearby card. Already warmed up app-wide by Scan/Nearby; warm again
+    // on appear in case History is the first tab visited.
+    private let locationManager = LocationManager.shared
+
+    /// Identifiable payload for the directions chooser sheet.
+    private struct DirectionsRequest: Identifiable {
+        let id = UUID()
+        let latitude: Double
+        let longitude: Double
+        let name: String
+    }
+
+    private func distanceMeters(to lookup: LandmarkLookup) -> CLLocationDistance? {
+        guard let user = locationManager.lastLocation,
+              let lat = lookup.latitude, let lon = lookup.longitude else { return nil }
+        return user.distance(from: CLLocation(latitude: lat, longitude: lon))
+    }
 
     private var mapped: [LandmarkLookup] {
         lookups.filter { $0.hasCoordinates }
@@ -441,13 +468,30 @@ struct HistoryMapView: View {
                 }
 
                 if let selected = selectedLookup {
-                    SelectedLookupCard(lookup: selected, onDismiss: {
-                        selectedID = nil
-                    })
+                    RichMapCard(
+                        title: selected.resolvedTitle,
+                        articleImageData: selected.articleImageData,
+                        articleImageURL: selected.articleImageURL,
+                        capturedImageData: selected.imageData,
+                        distanceMeters: distanceMeters(to: selected),
+                        onView: { onSelect(selected) },
+                        onDirections: {
+                            guard let lat = selected.latitude, let lon = selected.longitude else { return }
+                            directionsRequest = DirectionsRequest(
+                                latitude: lat, longitude: lon, name: selected.resolvedTitle
+                            )
+                        },
+                        onDismiss: { selectedID = nil }
+                    )
+                    // Float above the Apple Maps attribution, matching Nearby.
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 30)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+            }
+            .task { locationManager.warmUpIfAuthorized() }
+            .sheet(item: $directionsRequest) { req in
+                DirectionsSheet(latitude: req.latitude, longitude: req.longitude, name: req.name)
             }
             .animation(.easeInOut(duration: 0.2), value: selectedID)
             // iOS 26 Liquid Glass tab bars are translucent by default and
@@ -467,38 +511,6 @@ struct HistoryMapView: View {
             return CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }
         return fittingRegion(for: coords, singlePointSpan: 0.05, padding: 1.4)
-    }
-}
-
-/// Compact summary card shown over the map when a pin is selected.
-/// The whole card body is a NavigationLink to the detail view; the X
-/// is a sibling button so dismissing the card doesn't also navigate.
-private struct SelectedLookupCard: View {
-    let lookup: LandmarkLookup
-    let onDismiss: () -> Void
-
-    var body: some View {
-        MapCalloutCard(
-            title: lookup.resolvedTitle,
-            summary: lookup.summary,
-            articleImageData: lookup.articleImageData,
-            articleImageURL: lookup.articleImageURL,
-            capturedImageData: lookup.imageData,
-            onDismiss: onDismiss,
-            detail: {
-                NavigationLink(value: lookup) {
-                    Label("View details", systemImage: "text.alignleft")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("AccentButton"))
-                .controlSize(.small)
-                .buttonBorderShape(.roundedRectangle(radius: 8))
-            },
-            wrap: { content in
-                NavigationLink(value: lookup) { content }
-            }
-        )
     }
 }
 

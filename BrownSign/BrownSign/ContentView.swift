@@ -397,9 +397,11 @@ struct ContentView: View {
                 .fill(Color("BrandBrown"))
                 .frame(width: 32, height: 32)
                 .overlay {
-                    Image(systemName: "signpost.right.and.left.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                    // Custom narrow staggered signpost (matches the redesign
+                    // mock) instead of SF Symbol signpost.right.and.left.fill.
+                    SignpostMark()
+                        .fill(.white)
+                        .frame(width: 19, height: 19)
                 }
                 .accessibilityHidden(true)
             Text("Brown Sign")

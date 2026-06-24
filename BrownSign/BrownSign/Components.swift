@@ -585,6 +585,156 @@ struct BrandEmptyState<Actions: View>: View {
     }
 }
 
+// MARK: - Rich map card
+
+/// The richer map callout shared by the Nearby and History maps: a grabber
+/// handle (swipe up = open the detail), a thumbnail + 2-line title (no
+/// truncation) + a distance chip and walk-time estimate, and two filled-green
+/// actions — Details + Directions — with an X in the top-right corner. Floats
+/// over the map on a solid card; the parent positions it above the Apple Maps
+/// attribution so that stays visible.
+struct RichMapCard: View {
+    let title: String
+    var articleImageData: Data? = nil
+    var articleImageURL: URL? = nil
+    var capturedImageData: Data? = nil
+    /// Distance from the user (for the chip + walk time); nil hides that line.
+    let distanceMeters: CLLocationDistance?
+    /// Opens the full detail (Details button, card tap, and swipe-up).
+    let onView: () -> Void
+    /// Hands the landmark to the maps-app chooser.
+    let onDirections: () -> Void
+    let onDismiss: () -> Void
+
+    /// ~3 mph walking estimate (matches the design: 1.4 mi → 28 min). From
+    /// meters, so it's locale-independent.
+    private func walkTime(_ meters: CLLocationDistance) -> String {
+        let minutes = max(1, Int((meters / 80.47).rounded()))
+        return "\(minutes) min walk"
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Capsule()
+                .fill(Color.secondary.opacity(0.5))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            HStack(alignment: .top, spacing: 12) {
+                LandmarkThumbnail(
+                    articleImageData: articleImageData,
+                    articleImageURL: articleImageURL,
+                    capturedImageData: capturedImageData
+                )
+                VStack(alignment: .leading, spacing: 4) {
+                    // Wraps to two lines instead of truncating; the corner X
+                    // means it doesn't share width with a dismiss button.
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(2)
+                    if let d = distanceMeters {
+                        HStack(spacing: 8) {
+                            DistanceChip(meters: d)
+                            Label(walkTime(d), systemImage: "figure.walk")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .contentShape(Rectangle())
+            .onTapGesture { onView() }
+
+            HStack(spacing: 10) {
+                Button(action: onView) {
+                    Label("Details", systemImage: "text.alignleft")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color("AccentButton"))
+                .buttonBorderShape(.roundedRectangle(radius: 12))
+
+                Button(action: onDirections) {
+                    Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color("AccentButton"))
+                .buttonBorderShape(.roundedRectangle(radius: 12))
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
+        }
+        // Solid card (per the mock), not a frosted material.
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+        )
+        .overlay(alignment: .topTrailing) {
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        // Swipe up on the card → open the full detail (the grabber's promise).
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    if value.translation.height < -30 { onView() }
+                }
+        )
+    }
+}
+
+// MARK: - Signpost mark
+
+/// The redesign mock's signpost glyph: a thin post with a small board pointing
+/// LEFT up top and one pointing RIGHT lower down — narrower and staggered,
+/// versus SF Symbol `signpost.right.and.left.fill` (wider, level boards).
+/// Drawn in a 24×24 reference box and scaled to fit `rect`, so it takes any
+/// size and any `fill` / `foregroundStyle`. Paths transcribed from the mock
+/// SVG; the map pin draws the same paths as a UIImage in ClusteredMapView.
+struct SignpostMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let s = min(rect.width, rect.height) / 24
+        let ox = rect.midX - 12 * s
+        let oy = rect.midY - 12 * s
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: ox + x * s, y: oy + y * s)
+        }
+        var path = Path()
+        // Post: <rect x=11 y=2 w=2 h=20 rx=1>
+        path.addRoundedRect(
+            in: CGRect(x: ox + 11 * s, y: oy + 2 * s, width: 2 * s, height: 20 * s),
+            cornerSize: CGSize(width: s, height: s)
+        )
+        // Left board: M11 5 H4 L1.6 7.4 4 9.8 H11 Z
+        path.move(to: p(11, 5))
+        path.addLine(to: p(4, 5))
+        path.addLine(to: p(1.6, 7.4))
+        path.addLine(to: p(4, 9.8))
+        path.addLine(to: p(11, 9.8))
+        path.closeSubpath()
+        // Right board: M13 11 H20 L22.4 13.4 20 15.8 H13 Z
+        path.move(to: p(13, 11))
+        path.addLine(to: p(20, 11))
+        path.addLine(to: p(22.4, 13.4))
+        path.addLine(to: p(20, 15.8))
+        path.addLine(to: p(13, 15.8))
+        path.closeSubpath()
+        return path
+    }
+}
+
 // MARK: - Map callout card
 
 /// The compact card shown over a map when a pin is selected: a tappable

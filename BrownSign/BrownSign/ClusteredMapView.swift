@@ -220,6 +220,44 @@ struct ClusteredMapView: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         static let pinReuseID = "landmark"
 
+        /// The redesign mock's hand-drawn signpost glyph: a thin tall post with
+        /// a small board pointing LEFT up top and a small board pointing RIGHT
+        /// lower down. SF Symbol `signpost.right.and.left.fill` is the same idea
+        /// but Apple draws the boards much wider and level; this matches the
+        /// mock's narrower, staggered look. Paths transcribed straight from the
+        /// mock SVG (24×24 viewBox); rendered white (alwaysOriginal) so it stays
+        /// white on the brown marker balloon. Built once, reused per pin.
+        static let signpostGlyph: UIImage = {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24))
+            let image = renderer.image { _ in
+                UIColor.white.setFill()
+                // Post: <rect x=11 y=2 w=2 h=20 rx=1>
+                UIBezierPath(
+                    roundedRect: CGRect(x: 11, y: 2, width: 2, height: 20),
+                    cornerRadius: 1
+                ).fill()
+                // Left board: M11 5 H4 L1.6 7.4 4 9.8 H11 Z
+                let left = UIBezierPath()
+                left.move(to: CGPoint(x: 11, y: 5))
+                left.addLine(to: CGPoint(x: 4, y: 5))
+                left.addLine(to: CGPoint(x: 1.6, y: 7.4))
+                left.addLine(to: CGPoint(x: 4, y: 9.8))
+                left.addLine(to: CGPoint(x: 11, y: 9.8))
+                left.close()
+                left.fill()
+                // Right board: M13 11 H20 L22.4 13.4 20 15.8 H13 Z
+                let right = UIBezierPath()
+                right.move(to: CGPoint(x: 13, y: 11))
+                right.addLine(to: CGPoint(x: 20, y: 11))
+                right.addLine(to: CGPoint(x: 22.4, y: 13.4))
+                right.addLine(to: CGPoint(x: 20, y: 15.8))
+                right.addLine(to: CGPoint(x: 13, y: 15.8))
+                right.close()
+                right.fill()
+            }
+            return image.withRenderingMode(.alwaysOriginal)
+        }()
+
         var parent: ClusteredMapView
         /// Count of programmatic camera moves whose settling
         /// `regionDidChangeAnimated` hasn't been consumed yet — the ported
@@ -316,7 +354,9 @@ struct ClusteredMapView: UIViewRepresentable {
             // legibility on the dark map).
             view.clusteringIdentifier = "landmark"
             view.markerTintColor = UIColor(named: "BrandBrown")
-            view.glyphImage = UIImage(systemName: "signpost.right.fill")
+            // Custom narrow staggered signpost drawn to match the redesign
+            // mock (Apple's signpost.right.and.left.fill is wider/level).
+            view.glyphImage = Self.signpostGlyph
             // .defaultHigh, not .defaultLow: low priority kept pins clustered
             // too aggressively (they wouldn't split when zoomed). High priority
             // still clusters genuinely-overlapping pins but declusters as soon
