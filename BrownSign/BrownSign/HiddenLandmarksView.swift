@@ -188,6 +188,9 @@ struct HiddenLandmarksView: View {
             // per-button tint.
             .tint(Color.accentColor)
         }
+        // Grabber handle (the redesign's only structural ask for this sheet).
+        // Self-contained here so it applies wherever the sheet is presented.
+        .presentationDragIndicator(.visible)
     }
 
     private func restore(_ item: HiddenLandmark) {
