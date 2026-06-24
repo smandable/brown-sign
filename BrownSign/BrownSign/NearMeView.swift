@@ -193,6 +193,17 @@ struct NearMeView: View {
     @State private var recenterRegion: MKCoordinateRegion?
     @State private var searchText: String = ""
     @State private var showHiddenSheet = false
+    /// Active "get directions" request (the map card's Directions button) → the
+    /// maps-app chooser sheet.
+    @State private var directionsRequest: DirectionsRequest?
+
+    /// Identifiable payload for the directions chooser sheet.
+    private struct DirectionsRequest: Identifiable {
+        let id = UUID()
+        let latitude: Double
+        let longitude: Double
+        let name: String
+    }
     /// True when the current fetch returned a full SPARQL page, i.e. the
     /// radius holds more landmarks than are shown — drives the "Load more"
     /// list footer. Reset on each primary fetch.
@@ -726,6 +737,9 @@ struct NearMeView: View {
             .navigationDestination(item: $pushedLookup) { lookup in
                 LandmarkDetailView(lookup: lookup)
             }
+            .sheet(item: $directionsRequest) { req in
+                DirectionsSheet(latitude: req.latitude, longitude: req.longitude, name: req.name)
+            }
             .sheet(isPresented: $showHiddenSheet) {
                 HiddenLandmarksView()
             }
@@ -910,6 +924,12 @@ struct NearMeView: View {
             userLocation: userLocation,
             recenterSignal: recenterSignal,
             onSelect: { open($0) },
+            onDirections: { result in
+                guard let c = result.coordinates else { return }
+                directionsRequest = DirectionsRequest(
+                    latitude: c.latitude, longitude: c.longitude, name: result.title
+                )
+            },
             onMapCenterChanged: { center in
                 // USER pans only — NearbyMapView filters out its own
                 // programmatic camera settles (auto-fit on appear, recenter

@@ -135,6 +135,9 @@ struct NearbyMapView: View {
     /// panned away.
     let recenterSignal: Int
     let onSelect: (LandmarkResult) -> Void
+    /// Hand the selected landmark to the maps chooser (the card's Directions
+    /// button).
+    let onDirections: (LandmarkResult) -> Void
     /// Called at the end of every camera gesture with the new map
     /// center. Parent decides (via `panRefetchThresholdMeters`)
     /// whether the pan was significant enough to warrant a new
@@ -249,11 +252,15 @@ struct NearbyMapView: View {
                let selected = results.first(where: { $0.pageURL.absoluteString == id }) {
                 SelectedNearbyCard(
                     result: selected,
+                    referenceLocation: userLocation,
                     onView: { onSelect(selected) },
+                    onDirections: { onDirections(selected) },
                     onDismiss: { selectedID = nil }
                 )
                 .padding(.horizontal, 12)
-                .padding(.bottom, 12)
+                // Float ABOVE the Apple Maps attribution in the bottom-left
+                // corner (their terms require it stays visible).
+                .padding(.bottom, 30)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
@@ -407,29 +414,103 @@ struct RadiusStepper: View {
 /// navigation.
 struct SelectedNearbyCard: View {
     let result: LandmarkResult
+    /// Where the distance + walk time are measured from (the user).
+    let referenceLocation: CLLocation?
     let onView: () -> Void
+    let onDirections: () -> Void
     let onDismiss: () -> Void
 
+    private var distanceMeters: CLLocationDistance? {
+        guard let referenceLocation, let c = result.coordinates else { return nil }
+        return referenceLocation.distance(from: CLLocation(latitude: c.latitude, longitude: c.longitude))
+    }
+
+    /// ~3 mph walking estimate (matches the mock: 1.4 mi → 28 min). Computed
+    /// from meters so it's locale-independent.
+    private func walkTime(_ meters: CLLocationDistance) -> String {
+        let minutes = max(1, Int((meters / 80.47).rounded()))  // 80.47 m/min ≈ 3 mph
+        return "\(minutes) min walk"
+    }
+
     var body: some View {
-        MapCalloutCard(
-            title: result.title,
-            summary: result.summary,
-            articleImageData: result.articleImageData,
-            articleImageURL: result.articleImageURL,
-            onDismiss: onDismiss,
-            detail: {
+        VStack(spacing: 10) {
+            // Grabber — hints the card expands into the full detail (swipe up
+            // does the same as the Details button).
+            Capsule()
+                .fill(Color.secondary.opacity(0.5))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            // Tap the thumbnail/title area (or Details) to open the detail.
+            HStack(alignment: .top, spacing: 12) {
+                LandmarkThumbnail(
+                    articleImageData: result.articleImageData,
+                    articleImageURL: result.articleImageURL
+                )
+                VStack(alignment: .leading, spacing: 4) {
+                    // Wraps to two lines instead of truncating; the corner X
+                    // means it doesn't have to share width with a dismiss button.
+                    Text(result.title)
+                        .font(.headline)
+                        .lineLimit(2)
+                    if let d = distanceMeters {
+                        HStack(spacing: 8) {
+                            DistanceChip(meters: d)
+                            Label(walkTime(d), systemImage: "figure.walk")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .contentShape(Rectangle())
+            .onTapGesture { onView() }
+
+            HStack(spacing: 10) {
                 Button(action: onView) {
-                    Label("View details", systemImage: "text.alignleft")
-                        .font(.caption.weight(.semibold))
+                    Label("Details", systemImage: "text.alignleft")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, minHeight: 30)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color("AccentButton"))
-                .controlSize(.small)
-                .buttonBorderShape(.roundedRectangle(radius: 8))
-            },
-            wrap: { content in
-                Button(action: onView) { content }
+                .buttonBorderShape(.roundedRectangle(radius: 12))
+
+                Button(action: onDirections) {
+                    Label("Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, minHeight: 30)
+                }
+                .buttonStyle(.bordered)
+                .tint(Color("AccentButton"))
+                .buttonBorderShape(.roundedRectangle(radius: 12))
             }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.2), radius: 8, y: 4)
+        )
+        .overlay(alignment: .topTrailing) {
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
+        }
+        // Swipe up on the card → open the full detail (the grabber's promise).
+        .gesture(
+            DragGesture(minimumDistance: 20)
+                .onEnded { value in
+                    if value.translation.height < -30 { onView() }
+                }
         )
     }
 }
