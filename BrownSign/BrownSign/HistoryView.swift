@@ -736,9 +736,21 @@ struct LandmarkDetailView: View {
             ).scene else { return }
             let options = MKLookAroundSnapshotter.Options()
             options.size = CGSize(width: 104, height: 104)
-            let snapshot = try? await MKLookAroundSnapshotter(
-                scene: scene, options: options
-            ).snapshot.image
+            // Retry the snapshot a few times. MKLookAroundSnapshotter fails
+            // transiently (resource pressure / timing), and a nil snapshot
+            // makes the tile fall back to the live preview with Apple's required
+            // "Maps" badge — so a short backoff between attempts makes that
+            // badge appear far less often. A scene with genuinely no snapshot
+            // just exhausts the retries and falls back, only slightly later.
+            var snapshot: UIImage?
+            for attempt in 0..<3 {
+                if Task.isCancelled { return }
+                snapshot = try? await MKLookAroundSnapshotter(
+                    scene: scene, options: options
+                ).snapshot.image
+                if snapshot != nil { break }
+                if attempt < 2 { try? await Task.sleep(for: .milliseconds(400)) }
+            }
             // Publish together AFTER the snapshot resolves: setting
             // the scene first renders the live preview's badge for a
             // beat before the clean snapshot lands over it.
