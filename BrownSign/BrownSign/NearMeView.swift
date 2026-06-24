@@ -87,6 +87,9 @@ struct NearMeView: View {
     /// Vertical chrome added to a measured row's content height: the 8pt top +
     /// 8pt bottom `listRowInsets` applied to every Nearby row (8 + 8 = 16).
     private static let rowVerticalInset: CGFloat = 16
+    /// Amber/goldenrod for the "This map area" header + Recenter affordance,
+    /// signalling the list is following a panned area, not the user's location.
+    private static let areaAmber = Color(red: 0.82, green: 0.62, blue: 0.32)
 
     @State private var state: LoadState = .idle
     @State private var loadingPhase: LoadingPhase = .locating
@@ -1009,7 +1012,7 @@ struct NearMeView: View {
                         // which were already locale-aware — a metric user
                         // saw "Within 2 miles" over rows showing km.
                         Text(anchoredToArea
-                             ? "Within \(formatRadius(miles: currentRadiusMiles)) of this area"
+                             ? "This map area · \(formatRadius(miles: currentRadiusMiles, abbreviated: true))"
                              : "Within \(formatRadius(miles: currentRadiusMiles)) of your location")
                             // Keep the header on one line now the labeled
                             // radius capsule is wider — it pushed "your
@@ -1030,31 +1033,10 @@ struct NearMeView: View {
                         onDecrease: { changeRadius(by: -1) }
                     )
                 }
-                // When the list is following a panned area, give an explicit
-                // way back to the user's location — the header otherwise just
-                // reads "this area" with no affordance to return, and the
-                // toolbar refresh (the only other way home) also discards the
-                // panned pins. This re-anchor is instant and keeps them.
-                if anchoredToArea {
-                    Button {
-                        returnToUserLocation()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "location.fill")
-                            Text("Back to your location")
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color(.tertiarySystemFill)))
-                        // The visual chip is ~23pt tall; outset the hit area
-                        // to ~44pt (HIG minimum) without growing the chip.
-                        // Nothing interactive sits in the outset band.
-                        .contentShape(Rectangle().inset(by: -11))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back to your location")
-                }
+                // The way back home is now the floating "Recenter" button over
+                // the list (see `list(_:anchoredToArea:)`) — the amber header
+                // already signals "browsing away from your location", so no
+                // separate chip is needed here.
             }
             // Match the "Recent finds" section header on Scan
             // (subheadline + semibold) so the section labels read
@@ -1068,7 +1050,10 @@ struct NearMeView: View {
             // the gap to the list to match History's header→card gap (the
             // 26pt stepper centring the label is why these aren't 18/6).
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color.accentColor)
+            // Amber when the list is following a panned area (the whole screen
+            // signals "browsing away from your location"); green on the default
+            // GPS-anchored list.
+            .foregroundStyle(anchoredToArea ? Self.areaAmber : Color.accentColor)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.top, 18)
@@ -1316,6 +1301,34 @@ struct NearMeView: View {
             .padding(.horizontal)
             .refreshable {
                 await startRefresh(force: true).value
+            }
+        }
+        // Floating "Recenter" button when the list is following a panned area —
+        // floats OVER the list (no layout shift as it appears/disappears) and
+        // re-anchors to the user's location. Replaces the old inline chip.
+        .overlay(alignment: .bottom) {
+            if anchoredToArea {
+                Button {
+                    returnToUserLocation()
+                } label: {
+                    HStack(spacing: 8) {
+                        // The same crosshair the map's recenter button uses, so
+                        // the control reads the same across the List/Map toggle.
+                        Image(systemName: "dot.scope")
+                            .foregroundStyle(Color.accentColor)
+                        Text("Recenter")
+                            .foregroundStyle(.primary)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(.regularMaterial))
+                    .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Recenter on your location")
+                .padding(.bottom, 12)
             }
         }
         // Match the map case's bottom padding so the parchment list
