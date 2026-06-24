@@ -579,6 +579,11 @@ struct LandmarkDetailView: View {
     /// jump between slides without the user swiping.
     @State private var carouselSelection: String = "primary"
 
+    /// Measured height of the metadata text column, so the Look Around tile
+    /// can be sized to track it (shorter card → shorter tile) instead of a
+    /// fixed 104 that overflows and touches a short card's edges.
+    @State private var metadataColumnHeight: CGFloat = 0
+
     /// Street-level Look Around scene at the landmark's coordinates.
     /// Stays nil when the lookup has no coordinates or Apple has no
     /// coverage there (common for rural brown-sign territory — and
@@ -936,6 +941,15 @@ struct LandmarkDetailView: View {
         // padding reserves the tile's footprint while it's visible
         // (the metadata rows are short enough not to re-wrap).
         .padding(.trailing, lookAroundScene != nil ? 116 : 0)
+        // Measure the text column so the Look Around tile can match its height
+        // (it's an overlay, so this never feeds back into the column's layout).
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { metadataColumnHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, h in metadataColumnHeight = h }
+            }
+        }
         .overlay(alignment: .trailing) {
             // Street-level Look Around teaser, only where Apple has
             // imagery at the landmark. Tap opens the full-screen
@@ -959,8 +973,14 @@ struct LandmarkDetailView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .frame(width: 104)
-                .frame(maxHeight: 104)
+                // Explicit height tracking the measured column (min 56, max
+                // 104), with ~6pt to spare each side — so on a short (4-row)
+                // card the tile shrinks instead of overflowing and touching the
+                // edges, and on a tall (5-row) card it's the full 104.
+                .frame(
+                    width: 104,
+                    height: min(104, max(56, metadataColumnHeight - 12))
+                )
                 // "Look Around" is Apple's feature name, so it
                 // keeps its capitals even in sentence-case land.
                 // Frosted-capsule label, the system's own badge
@@ -979,13 +999,6 @@ struct LandmarkDetailView: View {
                         .allowsHitTesting(false)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-                // Inset a little vertically so the tile is always SHORTER than
-                // the text column. On a short (4-row) card the tile otherwise
-                // filled the column and touched the card's top/bottom edges; on
-                // a tall (5-row) card the 104 cap still wins (column ≥ 116), so
-                // it's unchanged there. Net: a consistent ~6pt gap to the
-                // column edge in both, so the tile no longer touches.
-                .padding(.vertical, 6)
                 // Arrives async (scene + snapshot fetch), so fade in
                 // like the list thumbnails do — a hard pop-in reads
                 // as a glitch. The insertion is animated from the
