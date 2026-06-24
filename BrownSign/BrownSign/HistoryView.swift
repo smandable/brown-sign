@@ -391,11 +391,27 @@ private struct EmptyHistoryMapView: View {
 struct HistoryMapView: View {
     let lookups: [LandmarkLookup]
 
-    @State private var cameraPosition: MapCameraPosition = .automatic
-    @State private var selection: LandmarkLookup?
+    @State private var selectedID: String?
+    @State private var recenterToken = 0
 
     private var mapped: [LandmarkLookup] {
         lookups.filter { $0.hasCoordinates }
+    }
+
+    private var annotations: [LandmarkAnnotation] {
+        mapped.compactMap { lookup in
+            guard let lat = lookup.latitude, let lon = lookup.longitude else { return nil }
+            return LandmarkAnnotation(
+                id: lookup.id.uuidString,
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                title: lookup.resolvedTitle
+            )
+        }
+    }
+
+    private var selectedLookup: LandmarkLookup? {
+        guard let id = selectedID else { return nil }
+        return mapped.first { $0.id.uuidString == id }
     }
 
     var body: some View {
@@ -407,43 +423,31 @@ struct HistoryMapView: View {
             )
         } else {
             ZStack(alignment: .bottom) {
-                Map(position: $cameraPosition, selection: $selection) {
-                    UserAnnotation()
-                    ForEach(mapped) { lookup in
-                        if let lat = lookup.latitude, let lon = lookup.longitude {
-                            Marker(
-                                lookup.resolvedTitle,
-                                systemImage: "signpost.right.fill",
-                                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                            )
-                            // Plain BrandBrown by Sean's call (see the Nearby
-                            // map's Marker for the dark-mode trade-off note).
-                            .tint(Color("BrandBrown"))
-                            .tag(lookup)
-                        }
-                    }
-                }
-                .mapControls {
-                    MapUserLocationButton()
-                    MapCompass()
-                }
-                .onAppear {
-                    cameraPosition = .region(regionFittingAll(mapped))
-                }
+                // Clustered MKMapView (brown numbered bubbles; tap a cluster to
+                // zoom into its members). No pan-refetch — History just browses
+                // saved finds — so no onUserPan.
+                ClusteredMapView(
+                    annotations: annotations,
+                    selectedID: $selectedID,
+                    initialRegion: regionFittingAll(mapped),
+                    recenterToken: recenterToken,
+                    recenterRegion: regionFittingAll(mapped)
+                )
                 .onChange(of: mapped.count) { _, _ in
-                    cameraPosition = .region(regionFittingAll(mapped))
+                    // Re-fit when the set changes (search filter, deletes).
+                    recenterToken += 1
                 }
 
-                if let selected = selection {
+                if let selected = selectedLookup {
                     SelectedLookupCard(lookup: selected, onDismiss: {
-                        selection = nil
+                        selectedID = nil
                     })
                     .padding(.horizontal, 12)
                     .padding(.bottom, 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: selection)
+            .animation(.easeInOut(duration: 0.2), value: selectedID)
             // iOS 26 Liquid Glass tab bars are translucent by default and
             // let content flow under them. Map tiles showing through is
             // distracting, so force a visible tab-bar background for this

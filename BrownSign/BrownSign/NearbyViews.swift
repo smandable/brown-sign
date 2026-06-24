@@ -159,17 +159,7 @@ struct NearbyMapView: View {
     /// trimmed; nil means "fit the current pins" (the normal recenter).
     let recenterRegion: MKCoordinateRegion?
 
-    @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var selectedID: String?
-    /// Count of programmatic camera assignments whose settle hasn't been
-    /// consumed yet (the `.onAppear` auto-fit and the recenter-signal moves).
-    /// `.onMapCameraChange` fires for those settles exactly like user pans;
-    /// without filtering them out, the auto-fit over accumulated cross-region
-    /// pins was reported as a "pan" to a centroid nobody chose — re-anchoring
-    /// the parent's list and firing a spurious fetch there on every
-    /// list→map switch. A counter (not a Bool) because a recenter can land
-    /// while the appear-fit is still animating.
-    @State private var pendingProgrammaticMoves = 0
 
     /// True only when the selected pin still exists in the current results, so
     /// a stale selection (the pin left the set via search/hide or a re-sorted/
@@ -180,72 +170,38 @@ struct NearbyMapView: View {
         return results.contains { $0.pageURL.absoluteString == id }
     }
 
+    private var annotations: [LandmarkAnnotation] {
+        results.compactMap { result in
+            guard let c = result.coordinates else { return nil }
+            return LandmarkAnnotation(
+                id: result.pageURL.absoluteString,
+                coordinate: CLLocationCoordinate2D(latitude: c.latitude, longitude: c.longitude),
+                title: result.title
+            )
+        }
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
-            Map(position: $cameraPosition, selection: $selectedID) {
-                UserAnnotation()
-                ForEach(results, id: \.pageURL) { result in
-                    if let coord = result.coordinates {
-                        Marker(
-                            result.title,
-                            systemImage: "signpost.right.fill",
-                            coordinate: CLLocationCoordinate2D(
-                                latitude: coord.latitude,
-                                longitude: coord.longitude
-                            )
-                        )
-                        // Plain BrandBrown by Sean's call: the lightened
-                        // dark-mode foreground variant (tried for contrast on
-                        // the dark map style) read wrong as a pin color. The
-                        // balloon shape + white glyph carry legibility.
-                        .tint(Color("BrandBrown"))
-                        .tag(result.pageURL.absoluteString)
-                    }
-                }
-            }
-            .mapControls {
-                MapUserLocationButton()
-                MapCompass()
-            }
-            .onAppear {
-                pendingProgrammaticMoves += 1
-                cameraPosition = .region(initialRegion())
-            }
-            .onChange(of: recenterSignal) { _, _ in
-                // Recenter: use a parent-supplied region when present (a
-                // radius-decrease zooms to the new radius BEFORE its pins
-                // are trimmed); otherwise fit the current pins.
-                pendingProgrammaticMoves += 1
-                withAnimation { cameraPosition = .region(recenterRegion ?? initialRegion()) }
-            }
-            .onMapCameraChange(frequency: .onEnd) { context in
-                // Report the new map center to the parent at the end of every
-                // USER gesture. The parent compares against its last-fetched
-                // center and decides whether the pan was significant enough
-                // to warrant another geosearch. `.onEnd` only fires after the
-                // camera stops moving, so we don't spam refetches mid-gesture.
-                //
-                // Programmatic settles must NOT be reported: belt and braces,
-                // a user-positioned camera always reports (and clears any
-                // stale pending count — a programmatic assignment that
-                // produced no camera change never consumes its increment),
-                // while a non-user settle is swallowed against the pending
-                // count so the appear auto-fit / recenter animation can't
-                // masquerade as a pan.
-                if cameraPosition.positionedByUser {
-                    pendingProgrammaticMoves = 0
-                } else if pendingProgrammaticMoves > 0 {
-                    pendingProgrammaticMoves -= 1
-                    return
-                }
-                onMapCenterChanged(context.region.center)
-            }
-            // Apple/Google-style zoom control, bottom-trailing (where map
-            // apps usually put it). Follows zoom convention ("+" = zoom in =
-            // fewer miles), the inverse of the list stepper; see the call
-            // site for the wiring. Shows the current radius between the
-            // buttons. Hidden while a pin's card is up so it doesn't sit
-            // underneath it.
+            // Clustered MKMapView. Cluster-tap zooms into the cluster's
+            // members; a single-pin tap selects it (→ card). onUserPan reports
+            // ONLY genuine user pans — the component filters out its own
+            // programmatic settles (initial fit, recenter signal, cluster
+            // zoom) via the ported pending-moves counter — so the app's own
+            // camera moves can never re-anchor the list or fire a spurious
+            // geosearch.
+            ClusteredMapView(
+                annotations: annotations,
+                selectedID: $selectedID,
+                initialRegion: initialRegion(),
+                recenterToken: recenterSignal,
+                recenterRegion: recenterRegion,
+                onUserPan: onMapCenterChanged
+            )
+            // Apple/Google-style zoom control, bottom-trailing. Follows zoom
+            // convention ("+" = zoom in = fewer miles), the inverse of the
+            // list stepper; see the call site for the wiring. Hidden while a
+            // pin's card is up so it doesn't sit underneath it.
             .overlay(alignment: .bottomTrailing) {
                 if !selectionVisible {
                     MapZoomControl(
@@ -341,7 +297,7 @@ struct MapZoomControl: View {
             // for metric users), matching the list header and row distances.
             Text(formatRadius(miles: miles, abbreviated: true))
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.primary)
                 .frame(width: 44, height: 28)
             Divider().frame(width: 44)
             button("minus", action: onZoomOut, enabled: canZoomOut)
@@ -391,7 +347,11 @@ struct RadiusStepper: View {
             // matching the per-row distances and the map zoom control's cue.
             Text(formatRadius(miles: miles, abbreviated: true))
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.secondary)
+                // Color.primary (explicit label color), NOT the hierarchical
+                // `.primary` — the header tints this whole control green
+                // (AccentColor), and hierarchical `.primary` would inherit that
+                // green. Color.primary ignores the inherited tint → white.
+                .foregroundStyle(Color.primary)
                 .monospacedDigit()
                 // Tight: monospaced digits keep "2 mi"/"25 mi" from jiggling
                 // without a wide reserved frame that would crowd the header.
@@ -420,7 +380,10 @@ struct RadiusStepper: View {
                 .contentShape(Rectangle().inset(by: -9))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.accentColor : Color.secondary.opacity(0.4))
+        // Primary (white in dark) + the map control's disabled opacity, so the
+        // list radius control matches the map's zoom control rather than being
+        // green.
+        .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.35))
         .disabled(!enabled)
         .accessibilityLabel(systemName == "plus" ? "Widen search radius" : "Tighten search radius")
     }
