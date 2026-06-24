@@ -1011,12 +1011,19 @@ struct NearMeView: View {
                         Text(anchoredToArea
                              ? "Within \(formatRadius(miles: currentRadiusMiles)) of this area"
                              : "Within \(formatRadius(miles: currentRadiusMiles)) of your location")
+                            // Keep the header on one line now the labeled
+                            // radius capsule is wider — it pushed "your
+                            // location" onto a second line. Shrink slightly
+                            // before ever wrapping/truncating.
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
                     Spacer(minLength: 8)
                     // Trailing radius stepper so the list can widen/tighten
                     // the search without switching to the map. Same step
                     // logic as the map's zoom control.
                     RadiusStepper(
+                        miles: currentRadiusMiles,
                         canIncrease: canIncreaseRadius,
                         canDecrease: canDecreaseRadius,
                         onIncrease: { changeRadius(by: 1) },

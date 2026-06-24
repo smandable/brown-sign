@@ -359,13 +359,21 @@ struct DistanceChip: View {
     var body: some View {
         if let meters {
             let text = formatLandmarkDistance(meters)
-            Label(text, systemImage: "location.fill")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(Color("DistanceChipText"))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color("DistanceChipFill")))
-                .accessibilityLabel("\(text) away")
+            // Manual HStack, NOT a Label: Label's default icon/title gap is
+            // wide and bloats the pill. Tight 2pt spacing + small padding
+            // keeps the arrow and distance close so the whole chip stays
+            // compact.
+            HStack(spacing: 2) {
+                Image(systemName: "location.fill")
+                Text(text)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Color("DistanceChipText"))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(Capsule().fill(Color("DistanceChipFill")))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(text) away")
         }
     }
 }

@@ -71,37 +71,30 @@ struct NearbyRow: View {
         HStack(alignment: .top, spacing: 12) {
             thumbnail
             VStack(alignment: .leading, spacing: 4) {
-                Text(result.title)
-                    .font(.headline)
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(result.title)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    // Distance is the row's visual hero now: a prominent green
+                    // chip top-right of the title (the redesign). Best-effort —
+                    // no coordinates, or no reference point yet (the cold-start
+                    // cached list before the GPS fix), renders nothing rather
+                    // than the literal "0 ft" the old zero-fallback showed.
+                    DistanceChip(meters: result.coordinates.flatMap {
+                        distanceMeters(from: referenceLocation, to: $0)
+                    })
+                }
                 Text(result.summary)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                HStack(spacing: 8) {
-                    // No reference point (the cold-start cached list before
-                    // the GPS fix lands) → no distance chip, rather than the
-                    // literal "0 ft" the old zero-fallback rendered.
-                    if let coord = result.coordinates,
-                       let d = distanceMeters(from: referenceLocation, to: coord) {
-                        // Manual HStack instead of Label so the
-                        // location-arrow / number gap is tighter than
-                        // the default Label spacing.
-                        HStack(spacing: 3) {
-                            Image(systemName: "location")
-                            Text(formatLandmarkDistance(d))
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                    if let type = result.wikidataType {
-                        Text(type)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
+            // Fill the row width so the title-row Spacer can push the distance
+            // chip to the trailing edge (a non-expanded VStack would collapse
+            // the Spacer and leave the chip hugging the title).
+            .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.right")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
@@ -381,6 +374,10 @@ struct MapZoomControl: View {
 /// capsule that steps the search radius (mirrors the map's zoom
 /// control). "−" tightens, "+" widens; both disable at the ladder ends.
 struct RadiusStepper: View {
+    /// Current search radius (miles), shown inline between the −/+ so the
+    /// control reads as a labeled "[ − ] 2 mi [ + ]" capsule instead of a
+    /// cryptic bare stepper. Locale-converted for display ("3 km").
+    let miles: Int
     let canIncrease: Bool
     let canDecrease: Bool
     let onIncrease: () -> Void
@@ -389,6 +386,21 @@ struct RadiusStepper: View {
     var body: some View {
         HStack(spacing: 0) {
             button("minus", action: onDecrease, enabled: canDecrease)
+            Divider().frame(height: 16)
+            // The value the +/- changes, shown inline. Locale-aware ("3 km"),
+            // matching the per-row distances and the map zoom control's cue.
+            Text(formatRadius(miles: miles, abbreviated: true))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                // Tight: monospaced digits keep "2 mi"/"25 mi" from jiggling
+                // without a wide reserved frame that would crowd the header.
+                .frame(minWidth: 30)
+                .padding(.horizontal, 2)
+                // The −/+ buttons carry the actionable labels and the header
+                // ("Within N miles of …") announces the value, so this inline
+                // copy would just be a redundant VoiceOver stop.
+                .accessibilityHidden(true)
             Divider().frame(height: 16)
             button("plus", action: onIncrease, enabled: canIncrease)
         }
