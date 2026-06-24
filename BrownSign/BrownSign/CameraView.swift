@@ -14,6 +14,8 @@ import SwiftUI
 import AVFoundation
 import CoreMedia
 import UIKit
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct CameraView: UIViewControllerRepresentable {
     var onCapture: (Data) -> Void
@@ -159,14 +161,18 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         configureSession()
         configurePreviewLayer()
         configureCaptureButton()
+        configurePhotosButton()
+        configureFlashButton()
         configureZoomLabel()
         configureTapToFocus()
         configurePinchToZoom()
         configureZoomAccessibility()
         captureConfigured = true
-        // Keep the close button above the freshly-inserted preview + capture
-        // button so it stays tappable.
+        // Keep the chrome above the freshly-inserted preview + capture button
+        // so it stays tappable.
         view.bringSubviewToFront(closeButton)
+        view.bringSubviewToFront(flashButton)
+        view.bringSubviewToFront(photosButton)
     }
 
     private func startSessionIfNeeded() {
@@ -266,13 +272,25 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
 
     private func configureCaptureButton() {
         captureButton = UIButton(type: .custom)
-        captureButton.backgroundColor = .white
+        // The button itself is the outer RING: clear center, white border.
+        captureButton.backgroundColor = .clear
         captureButton.layer.cornerRadius = 35
-        captureButton.layer.borderColor = UIColor.white.withAlphaComponent(0.6).cgColor
+        captureButton.layer.borderColor = UIColor.white.cgColor
         captureButton.layer.borderWidth = 3
         captureButton.translatesAutoresizingMaskIntoConstraints = false
         captureButton.accessibilityLabel = "Take photo"
         captureButton.addTarget(self, action: #selector(capturePhoto), for: .touchUpInside)
+
+        // Inner white disc with a small gap inside the ring — the classic
+        // disc + ring shutter, matching the inline viewfinder's button.
+        // Non-interactive so taps fall through to the button.
+        let innerDisc = UIView()
+        innerDisc.backgroundColor = .white
+        innerDisc.isUserInteractionEnabled = false
+        innerDisc.layer.cornerRadius = 29
+        innerDisc.translatesAutoresizingMaskIntoConstraints = false
+        captureButton.addSubview(innerDisc)
+
         view.addSubview(captureButton)
 
         NSLayoutConstraint.activate([
@@ -282,7 +300,11 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
             captureButton.bottomAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.bottomAnchor,
                 constant: -24
-            )
+            ),
+            innerDisc.widthAnchor.constraint(equalToConstant: 58),
+            innerDisc.heightAnchor.constraint(equalToConstant: 58),
+            innerDisc.centerXAnchor.constraint(equalTo: captureButton.centerXAnchor),
+            innerDisc.centerYAnchor.constraint(equalTo: captureButton.centerYAnchor)
         ])
     }
 
@@ -301,15 +323,112 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         NSLayoutConstraint.activate([
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             closeButton.heightAnchor.constraint(equalToConstant: 44),
-            closeButton.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
-                constant: 16
+            // Top-RIGHT (the flash control takes the top-left).
+            closeButton.trailingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                constant: -16
             ),
             closeButton.topAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.topAnchor,
                 constant: 16
             )
         ])
+    }
+
+    // MARK: - Flash control
+
+    /// Flash mode for full-screen captures, toggled by the top-left button
+    /// (auto → on → off). The inline viewfinder always uses auto and has no
+    /// control of its own.
+    private var flashMode: AVCaptureDevice.FlashMode = .auto
+    private var flashButton: UIButton!
+
+    private func configureFlashButton() {
+        flashButton = UIButton(type: .system)
+        flashButton.tintColor = .white
+        flashButton.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        flashButton.layer.cornerRadius = 22
+        flashButton.translatesAutoresizingMaskIntoConstraints = false
+        flashButton.addTarget(self, action: #selector(toggleFlash), for: .touchUpInside)
+        view.addSubview(flashButton)
+
+        NSLayoutConstraint.activate([
+            flashButton.widthAnchor.constraint(equalToConstant: 44),
+            flashButton.heightAnchor.constraint(equalToConstant: 44),
+            flashButton.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: 16
+            ),
+            flashButton.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: 16
+            )
+        ])
+        updateFlashButtonIcon()
+    }
+
+    private func updateFlashButtonIcon() {
+        let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        let name: String
+        let label: String
+        switch flashMode {
+        case .on: name = "bolt.fill"; label = "Flash on"
+        case .off: name = "bolt.slash.fill"; label = "Flash off"
+        default: name = "bolt.badge.a.fill"; label = "Flash auto"
+        }
+        flashButton.setImage(UIImage(systemName: name, withConfiguration: config), for: .normal)
+        flashButton.accessibilityLabel = label
+    }
+
+    @objc private func toggleFlash() {
+        switch flashMode {
+        case .auto: flashMode = .on
+        case .on: flashMode = .off
+        default: flashMode = .auto
+        }
+        updateFlashButtonIcon()
+    }
+
+    // MARK: - Library picker
+
+    /// "Choose a photo" button to the LEFT of the shutter — the same library-
+    /// import affordance the inline viewfinder has (a tan rounded square with
+    /// the photo glyph). A pick routes through `onCapture`, exactly like a
+    /// shutter capture, so the full-screen camera and inline tile import the
+    /// same way.
+    private var photosButton: UIButton!
+
+    private func configurePhotosButton() {
+        photosButton = UIButton(type: .system)
+        let config = UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        photosButton.setImage(UIImage(systemName: "photo.on.rectangle.angled", withConfiguration: config), for: .normal)
+        photosButton.tintColor = .white
+        photosButton.backgroundColor = UIColor(named: "BrandBrownForeground")
+        photosButton.layer.cornerRadius = 12
+        photosButton.translatesAutoresizingMaskIntoConstraints = false
+        photosButton.accessibilityLabel = "Choose a photo"
+        photosButton.addTarget(self, action: #selector(presentPhotoPicker), for: .touchUpInside)
+        view.addSubview(photosButton)
+
+        NSLayoutConstraint.activate([
+            photosButton.widthAnchor.constraint(equalToConstant: 50),
+            photosButton.heightAnchor.constraint(equalToConstant: 50),
+            // Vertically centred on the shutter, near the leading edge.
+            photosButton.centerYAnchor.constraint(equalTo: captureButton.centerYAnchor),
+            photosButton.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: 40
+            )
+        ])
+    }
+
+    @objc private func presentPhotoPicker() {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        present(picker, animated: true)
     }
 
     private func configureTapToFocus() {
@@ -508,8 +627,9 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
 
     @objc private func capturePhoto() {
         let settings = AVCapturePhotoSettings()
-        if photoOutput.supportedFlashModes.contains(.auto) {
-            settings.flashMode = .auto
+        // User-chosen flash mode from the top-left control (default auto).
+        if photoOutput.supportedFlashModes.contains(flashMode) {
+            settings.flashMode = flashMode
         }
         // Capture at full sensor resolution once zoomed in, so the crop is taken
         // from the high-res readout (a crisp 2x is a 12MP center crop of 48MP)
@@ -679,5 +799,31 @@ final class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegat
         }
         zoomPillFadeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+}
+
+// MARK: - Library picker delegate
+
+extension CameraViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let provider = results.first?.itemProvider else { return }
+        // Hand the chosen photo's bytes up through onCapture — the same path a
+        // shutter press uses — so it ingests/OCRs identically. Prefer the raw
+        // data representation (ingestPhoto downsamples from it via ImageIO);
+        // fall back to a re-encoded UIImage if the provider won't vend data.
+        let typeID = UTType.image.identifier
+        if provider.hasItemConformingToTypeIdentifier(typeID) {
+            provider.loadDataRepresentation(forTypeIdentifier: typeID) { [weak self] data, _ in
+                guard let self, let data else { return }
+                DispatchQueue.main.async { self.onCapture?(data) }
+            }
+        } else if provider.canLoadObject(ofClass: UIImage.self) {
+            provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                guard let self, let image = object as? UIImage,
+                      let data = image.jpegData(compressionQuality: 0.9) else { return }
+                DispatchQueue.main.async { self.onCapture?(data) }
+            }
+        }
     }
 }

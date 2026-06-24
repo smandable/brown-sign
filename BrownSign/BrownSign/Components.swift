@@ -378,6 +378,26 @@ struct DistanceChip: View {
     }
 }
 
+/// Short relative timestamp for the Scan "Recent finds" rows: "Just now" /
+/// "2h ago" / "Yesterday" / "3 days ago", falling back to an abbreviated
+/// date for anything older than a week. Day-granularity History headers
+/// (Today / "EEE, MMM d") are a separate concern handled in HistoryView.
+func relativeFindTimestamp(_ date: Date, now: Date = Date()) -> String {
+    let cal = Calendar.current
+    let seconds = max(0, now.timeIntervalSince(date))
+    if seconds < 60 { return "Just now" }
+    if cal.isDateInToday(date) {
+        if seconds < 3600 { return "\(Int(seconds / 60))m ago" }
+        return "\(Int(seconds / 3600))h ago"
+    }
+    if cal.isDateInYesterday(date) { return "Yesterday" }
+    let days = cal.dateComponents(
+        [.day], from: cal.startOfDay(for: date), to: cal.startOfDay(for: now)
+    ).day ?? 0
+    if days >= 1 && days < 7 { return "\(days) days ago" }
+    return date.formatted(.dateTime.month(.abbreviated).day())
+}
+
 /// Locale-aware search-radius string for the Nearby chrome — the "Within …"
 /// list header (spelled out: "2 miles" / "3 km") and the map zoom control's
 /// scale cue (`abbreviated`: "2 mi" / "3 km"). Uses the same measurement-

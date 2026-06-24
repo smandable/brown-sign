@@ -77,13 +77,21 @@ struct ContentView: View {
     /// self-size inside the outer ScrollView. Scales with Dynamic Type, with
     /// a little headroom so large text sizes don't clip; the per-row
     /// parchment hides any slack.
-    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 116
+    @ScaledMetric(relativeTo: .body) private var recentRowHeight: CGFloat = 96
 
     /// Per-session dismiss for the "Turn on location" banner. Flips back
     /// to false every cold launch, so a user who taps the X still sees
     /// it next time they open the app — but we don't nag them during
     /// the current session.
     @State private var locationBannerDismissed = false
+
+    /// Drives the brand bar's info button → a "how it works" sheet.
+    @State private var showInfo = false
+
+    /// The inline live viewfinder's capture session. Held here (not inside
+    /// the tile) so it survives the tile showing/hiding across the scan→
+    /// result→scan cycle and reuses one configured session.
+    @State private var cameraController = ScanCameraController()
 
     // Review prompt: count successful lookups, request a rating
     // after the user has had a few good experiences with the app.
@@ -94,6 +102,9 @@ struct ContentView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.requestReview) private var requestReview
+    /// Pauses the inline viewfinder when the app isn't frontmost (so its
+    /// session never runs in the background).
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Recent lookups for the empty-state "Recent finds" preview.
     /// Same sort order as HistoryView, so the top rows match; capped at
@@ -106,22 +117,28 @@ struct ContentView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 16) {
-                        // Brown sign hero anchored at the top whenever
-                        // we're in a "fresh" state (no result, not
-                        // mid-search). Disappears once a result lands
-                        // so the result card has the full viewport.
-                        if result == nil && !isSearching {
-                            brownSignHero
+                        brandBar
+
+                        // Camera-first: the live viewfinder leads the screen in
+                        // the fresh state (nothing captured, no result, not
+                        // searching). A landed result / captured photo takes the
+                        // slot instead — the same rhythm the brand hero had.
+                        if result == nil && !isSearching && capturedImage == nil {
+                            cameraTile
                         }
 
                         if let image = capturedImage {
+                            // Same 260 footprint + 14 radius as the viewfinder
+                            // it replaces, so the captured shot doesn't appear
+                            // to shrink after the shutter.
                             Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(maxWidth: .infinity, maxHeight: 180)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 260)
                                 .clipped()
                                 .contentShape(Rectangle())
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
                                 .overlay(alignment: .topTrailing) {
                                     Button {
                                         // Cancel any in-flight OCR for this
@@ -151,68 +168,7 @@ struct ContentView: View {
                                 }
                         }
 
-                        photoInputRow
-
-                        HStack(spacing: 8) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundStyle(.secondary)
-                            LandmarkTextField(
-                                text: $signText,
-                                isFocused: $isSignTextFocused,
-                                onSearch: {
-                                    // Mirror the "Look it up" button's guard so
-                                    // the keyboard Search key can't launch an
-                                    // overlapping lookUp() (which would double
-                                    // the review-prompt counter and race the
-                                    // result/savedLookup writes) or run a no-op
-                                    // pipeline on empty text.
-                                    let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    guard !trimmed.isEmpty, !isProcessing, !isSearching else { return }
-                                    Task { await lookUp() }
-                                }
-                            )
-                            .frame(minHeight: 28)
-                            .onChange(of: signText) { _, _ in
-                                // Clear any stale status (e.g.
-                                // "No results" left over from a
-                                // previous search) the moment the
-                                // user starts a new query — they
-                                // shouldn't have to commit a search
-                                // just to dismiss old feedback.
-                                if !statusMessage.isEmpty {
-                                    statusMessage = ""
-                                }
-                            }
-
-                            if !signText.isEmpty {
-                                Button {
-                                    clearSearch()
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.title2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Clear search")
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.secondarySystemBackground))
-                                .onTapGesture { isSignTextFocused = true }
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(
-                                    isSignTextFocused
-                                        ? Color.accentColor
-                                        : Color.secondary.opacity(0.35),
-                                    lineWidth: isSignTextFocused ? 2 : 1
-                                )
-                        )
-                        .id("textField")
+                        searchField
 
                         if locationManager.isDenied && !locationBannerDismissed {
                             // Faded while the keyboard is up — but opacity 0
@@ -226,20 +182,17 @@ struct ContentView: View {
                                 .accessibilityHidden(isSignTextFocused)
                         }
 
-                        if !statusMessage.isEmpty {
-                            Text(statusMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
                         if let result {
                             resultCard(for: result)
                                 .id("resultCard")
                             alternativesSection
-                        } else if !isSearching {
-                            // Hero moved to the top of the VStack;
-                            // the empty-state body is just the
+                        } else {
+                            // Recents/how-it-works show whenever there's no
+                            // result — idle AND while a capture is being
+                            // processed. The status text lives inside the search
+                            // field now (not a separate line above), so it never
+                            // pushes this list down and back up.
+                            // The empty-state body is just the
                             // how-it-works guide or recent-finds list.
                             // Fades while the keyboard is up — those
                             // rows otherwise sit visibly under the
@@ -298,40 +251,10 @@ struct ContentView: View {
                 .ignoresSafeArea(edges: .top)
             )
             .scrollDismissesKeyboard(.immediately)
-            .safeAreaInset(edge: .bottom) {
-                let lookUpDisabled = signText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || isProcessing
-                    || isSearching
-                Button {
-                    guard !lookUpDisabled else { return }
-                    Task { await lookUp() }
-                } label: {
-                    Label("Look it up", systemImage: "magnifyingglass")
-                        .fontWeight(.regular)
-                        .frame(maxWidth: .infinity, minHeight: 28)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color("AccentButton"))
-                .buttonBorderShape(.roundedRectangle(radius: 12))
-                // Dim via opacity, NOT `.disabled`: `.disabled` greys a
-                // bordered-prominent button's fill, which stacked with this
-                // opacity to near-invisible. The action already guards on
-                // `lookUpDisabled`, so taps stay no-ops when there's nothing
-                // to look up.
-                .opacity(lookUpDisabled ? 0.5 : 1)
-                .accessibilityHint(lookUpDisabled ? "Enter text to search" : "")
-                .padding(.horizontal)
-                .padding(.top, 8)
-                // 16pt below the button — same gap above the tab bar
-                // that the list and map cards leave on Nearby/History.
-                // Kept inside .bar so the material stays flush with the
-                // tab bar (iOS bottom-action-bar convention) instead of
-                // floating with a clear strip below it.
-                .padding(.bottom, 16)
-                .background(.bar)
-            }
-            // Keyboard toolbar is built into LandmarkTextField's
-            // inputAccessoryView (dismiss ⌨↓ + search 🔍).
+            // The bottom "Look it up" bar is gone — the redesign moves that
+            // action onto the search field's own circular submit arrow
+            // (see `searchField`). Keyboard toolbar is built into
+            // LandmarkTextField's inputAccessoryView (dismiss ⌨↓ + search 🔍).
             .fullScreenCover(isPresented: $showCamera) {
                 CameraView(
                     onCapture: { data in
@@ -378,6 +301,24 @@ struct ContentView: View {
                             }
                         }
                 }
+            }
+            .sheet(isPresented: $showInfo) {
+                NavigationStack {
+                    VStack(alignment: .leading, spacing: 28) {
+                        howItWorksSteps
+                        Spacer(minLength: 0)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .navigationTitle("How it works")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showInfo = false }
+                        }
+                    }
+                }
+                .presentationDetents([.medium])
             }
             // Launcher-driven camera open: onAppear covers cold launch
             // (the trigger fired before this view existed and parked
@@ -444,43 +385,69 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Photo input row
+    // MARK: - Brand bar
 
-    /// The camera button plus the library picker (extracted from `body` to
-    /// keep the type checker happy). Library import sits beside the camera
-    /// because the safe road-trip flow is "passenger photographs the sign,
-    /// identifies it at the next stop" — that photo lives in the library,
-    /// not the live camera. Both route through the same ingest pipeline.
-    private var photoInputRow: some View {
-        HStack(spacing: 8) {
+    /// Compact brand bar at the top of Scan: a 32pt BrandBrown rounded-square
+    /// mark with the signpost glyph + the "Brown Sign" wordmark, and a
+    /// trailing info button (the "how it works" sheet). Replaces the
+    /// oversized brown hero so the live viewfinder leads the screen.
+    private var brandBar: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color("BrandBrown"))
+                .frame(width: 32, height: 32)
+                .overlay {
+                    Image(systemName: "signpost.right.and.left.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .accessibilityHidden(true)
+            Text("Brown Sign")
+                .font(.system(size: 18, weight: .heavy))
+            Spacer(minLength: 0)
             Button {
-                showCamera = true
+                showInfo = true
             } label: {
-                Label("Snap a landmark sign", systemImage: "camera.fill")
-                    .fontWeight(.regular)
-                    .frame(maxWidth: .infinity, minHeight: 28)
+                Image(systemName: "info.circle")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderedProminent)
-            // Filled buttons use AccentButton instead of
-            // AccentColor — needs more saturation in dark
-            // mode for white-text contrast (4.8:1 vs 3.2:1).
-            .tint(Color("AccentButton"))
-            .buttonBorderShape(.roundedRectangle(radius: 12))
-
-            // Icon-only width matches the Share button on the result card.
-            Button {
-                photoPickerPresented = true
-            } label: {
-                Label("Choose a photo", systemImage: "photo.on.rectangle")
-                    .labelStyle(.iconOnly)
-                    .frame(width: 44)
-                    .frame(minHeight: 28)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Color("AccentButton"))
-            .buttonBorderShape(.roundedRectangle(radius: 12))
-            .accessibilityLabel("Choose a photo")
+            .buttonStyle(.plain)
+            .accessibilityLabel("How Brown Sign works")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Camera tile
+
+    /// True when the inline viewfinder should run its session: the app is
+    /// frontmost and nothing (the full-screen camera, the detail/info sheet,
+    /// the photo picker) is covering the Scan tab. The tile itself only
+    /// renders in the fresh state, so this is the additional "not obscured"
+    /// gate that keeps the inline session from ever running alongside the
+    /// full-screen camera.
+    private var viewfinderActive: Bool {
+        scenePhase == .active
+            && !showCamera
+            && presentedLookup == nil
+            && !showInfo
+            && !photoPickerPresented
+    }
+
+    /// The live camera-first viewfinder (the redesign's centerpiece). The
+    /// gallery thumb opens the library picker; the shutter captures from the
+    /// inline feed; the expand button opens the full-screen CameraView
+    /// (pinch-zoom / focus for a distant sign). Library import lives here —
+    /// the safe road-trip flow is "passenger photographs the sign, looks it
+    /// up at the next stop" — and routes through the same ingest pipeline.
+    private var cameraTile: some View {
+        ScanViewfinder(
+            controller: cameraController,
+            active: viewfinderActive,
+            onPickPhoto: { photoPickerPresented = true },
+            onExpand: { showCamera = true },
+            onCapture: { ingestPhoto(data: $0) }
+        )
         .photosPicker(
             isPresented: $photoPickerPresented,
             selection: $photoPickerItem,
@@ -498,6 +465,115 @@ struct ContentView: View {
                 ingestPhoto(data: data)
             }
         }
+    }
+
+    // MARK: - Search field
+
+    /// Magnifier + text field + a circular submit arrow — the redesign's
+    /// replacement for the separate bottom "Look it up" bar. The arrow is
+    /// dimmed + disabled when empty, green when there's text; tapping it runs
+    /// the same lookUp() the keyboard Search key does.
+    private var searchField: some View {
+        let trimmed = signText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canSubmit = !trimmed.isEmpty && !isProcessing && !isSearching
+        let processing = isProcessing || isSearching
+        return HStack(spacing: 8) {
+            if !statusMessage.isEmpty {
+                // Status ("Identifying landmark…", or a terminal error) shows
+                // INSIDE the field so it never inserts a separate line that
+                // pushes the recents list down and back up. A spinner stands in
+                // for the magnifier while working; a terminal error gets a
+                // dismiss X (the typed query stays in place behind it).
+                if processing {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "exclamationmark.circle")
+                        .foregroundStyle(.secondary)
+                }
+                Text(statusMessage)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    // 1 line while working keeps the field height fixed (so the
+                    // list never moves); a terminal error may wrap to 2 but it's
+                    // a stable end state, not a transient push.
+                    .lineLimit(processing ? 1 : 2)
+                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                if !processing {
+                    Button {
+                        statusMessage = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
+                }
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                LandmarkTextField(
+                    text: $signText,
+                    isFocused: $isSignTextFocused,
+                    onSearch: {
+                        // Mirror the submit arrow's guard so the keyboard Search
+                        // key can't launch an overlapping lookUp() (which would
+                        // double the review-prompt counter and race the result/
+                        // savedLookup writes) or run a no-op pipeline on empty text.
+                        guard canSubmit else { return }
+                        Task { await lookUp() }
+                    }
+                )
+                .frame(minHeight: 28)
+                // Reset/"scan again": with the viewfinder tile hidden once a
+                // result is showing, this is the way back to the camera. Shown
+                // whenever there's anything to clear (typed text, a result, a
+                // captured photo).
+                if !signText.isEmpty || result != nil || capturedImage != nil {
+                    Button {
+                        clearSearch()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear")
+                }
+                Button {
+                    guard canSubmit else { return }
+                    isSignTextFocused = false
+                    Task { await lookUp() }
+                } label: {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color("AccentButton")))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSubmit)
+                // Green even when empty (per the mock); just dimmed when there's
+                // nothing to look up yet.
+                .opacity(canSubmit ? 1 : 0.5)
+                .accessibilityLabel("Look up landmark")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+                .onTapGesture { isSignTextFocused = true }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(
+                    isSignTextFocused ? Color.accentColor : Color.secondary.opacity(0.35),
+                    lineWidth: isSignTextFocused ? 2 : 1
+                )
+        )
+        .id("textField")
     }
 
     // MARK: - Location denied banner
@@ -556,38 +632,14 @@ struct ContentView: View {
 
     // MARK: - Empty state
 
-    /// Stylized brown road-sign illustration — echoes the real-world
-    /// UK/US tourist-attraction sign that gives the app its name.
-    /// Purely decorative; hidden from VoiceOver since the container
-    /// carries the accessibility label.
-    private var brownSignHero: some View {
-        let signBrown = Color("BrandBrown")
-        return ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(signBrown)
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(Color.white, lineWidth: 2)
-                .padding(6)
-            VStack(spacing: 8) {
-                Image(systemName: "signpost.right.and.left.fill")
-                    .font(.system(size: 44, weight: .semibold))
-                    .foregroundStyle(.white)
-                Text("BROWN SIGN")
-                    .font(.system(size: 18, weight: .heavy, design: .rounded))
-                    .tracking(2)
-                    .foregroundStyle(.white)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 140)
-        .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
-        .accessibilityHidden(true)
-    }
-
     /// Three-step "how it works" guide shown on first launch (when
     /// the user has no saved lookups). Compact so it doesn't push
     /// the Look It Up bar off small screens.
     private var howItWorksSteps: some View {
-        let brown = Color("BrandBrown")
+        // Foreground brown (the lighter dark-mode variant), matching the
+        // empty-state glyphs — the brand value is too dark on the dark
+        // background. Plain BrandBrown stays for fills under white text.
+        let brown = Color("BrandBrownForeground")
         let steps: [(String, String, String)] = [
             ("camera.fill", "Snap", "Point your camera at any landmark sign"),
             ("sparkles", "Identify", "We look up the landmark for you"),
@@ -602,7 +654,7 @@ struct ContentView: View {
                         .frame(width: 38)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
-                            .font(.title2.weight(.bold))
+                            .font(.system(size: 21, weight: .heavy))
                         Text(detail)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -625,7 +677,7 @@ struct ContentView: View {
             // subheadline + semibold + accent color so the section
             // labels read consistently across tabs.
             HStack(spacing: 6) {
-                Image(systemName: "signpost.right.fill")
+                Image(systemName: "flag.fill")
                 Text("Recent finds")
             }
             .font(.subheadline.weight(.semibold))
@@ -648,8 +700,27 @@ struct ContentView: View {
                         // the second state update had propagated.
                         presentedLookup = lookup
                     } label: {
-                        HStack(spacing: 8) {
-                            HistoryRow(lookup: lookup, datePrefix: "Found")
+                        HStack(spacing: 12) {
+                            LandmarkThumbnail(
+                                articleImageData: lookup.articleImageData,
+                                articleImageURL: lookup.articleImageURL,
+                                capturedImageData: lookup.imageData,
+                                size: 54
+                            )
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(lookup.resolvedTitle)
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                // Meta line: a green distance pill (when we can
+                                // measure one from the current location) + a
+                                // relative "2h ago" timestamp, per the redesign.
+                                HStack(spacing: 8) {
+                                    DistanceChip(meters: recentDistanceMeters(lookup))
+                                    Text(relativeFindTimestamp(lookup.date))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Spacer(minLength: 0)
                             Image(systemName: "chevron.right")
                                 .font(.caption)
@@ -680,7 +751,7 @@ struct ContentView: View {
                         )
                         .fill(Color("CardBackground"))
                     )
-                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                    .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
                     .listRowSeparatorTint(Color.secondary.opacity(0.2))
                 }
             }
@@ -691,6 +762,15 @@ struct ContentView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Distance from the user's current location to a saved find, for the
+    /// recents row's green pill. Best-effort: nil (no chip) when the find has
+    /// no coordinates or we don't have a location fix yet.
+    private func recentDistanceMeters(_ lookup: LandmarkLookup) -> CLLocationDistance? {
+        guard let lat = lookup.latitude, let lon = lookup.longitude,
+              let reference = locationManager.lastLocation else { return nil }
+        return reference.distance(from: CLLocation(latitude: lat, longitude: lon))
     }
 
     // MARK: - Result card

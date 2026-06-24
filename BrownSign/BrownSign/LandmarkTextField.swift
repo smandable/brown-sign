@@ -22,7 +22,7 @@ struct LandmarkTextField: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UITextField {
         let tf = UITextField()
-        tf.placeholder = "Type landmark text here"
+        tf.placeholder = "Or type a landmark name"
         tf.font = .preferredFont(forTextStyle: .body)
         tf.borderStyle = .none
         tf.autocorrectionType = .no
