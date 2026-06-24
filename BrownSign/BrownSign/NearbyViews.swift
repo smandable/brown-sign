@@ -437,7 +437,7 @@ struct SelectedNearbyCard: View {
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color("BrandBrown"))
+                .tint(Color("AccentButton"))
                 .controlSize(.small)
                 .buttonBorderShape(.roundedRectangle(radius: 8))
             },

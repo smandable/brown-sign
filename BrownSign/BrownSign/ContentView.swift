@@ -779,7 +779,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, minHeight: 28)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color("BrandBrown"))
+                .tint(Color("AccentButton"))
                 .buttonBorderShape(.roundedRectangle(radius: 12))
                 .disabled(savedLookup == nil)
 
@@ -792,7 +792,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity, minHeight: 28)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color("BrandBrown"))
+                    .tint(Color("AccentButton"))
                     .buttonBorderShape(.roundedRectangle(radius: 12))
                     .disabled(!isSafariPresentableURL(result.pageURL))
 
@@ -804,7 +804,7 @@ struct ContentView: View {
                             .frame(width: 44, height: 28)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color("BrandBrown"))
+                    .tint(Color("AccentButton"))
                     .buttonBorderShape(.roundedRectangle(radius: 12))
                 }
             }

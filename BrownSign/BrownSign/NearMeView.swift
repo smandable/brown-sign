@@ -527,7 +527,7 @@ struct NearMeView: View {
                             // Match the Try again recovery button's larger,
                             // better-padded size (see .serviceUnavailable).
                             .controlSize(.large)
-                            .tint(Color("BrandBrown"))
+                            .tint(Color("AccentButton"))
                             .buttonBorderShape(.roundedRectangle(radius: 12))
                         }
                     case .locationUnavailable:
@@ -548,7 +548,7 @@ struct NearMeView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.large)
-                            .tint(Color("BrandBrown"))
+                            .tint(Color("AccentButton"))
                             .buttonBorderShape(.roundedRectangle(radius: 12))
                         }
                     case .serviceUnavailable:
@@ -585,7 +585,7 @@ struct NearMeView: View {
                                 // standard radius — the size was the problem,
                                 // not the corners.
                                 .controlSize(.large)
-                                .tint(Color("BrandBrown"))
+                                .tint(Color("AccentButton"))
                                 .buttonBorderShape(.roundedRectangle(radius: 12))
                             }
                         }
@@ -679,7 +679,7 @@ struct NearMeView: View {
                                             }
                                             .buttonStyle(.borderedProminent)
                                             .controlSize(.large)
-                                            .tint(Color("BrandBrown"))
+                                            .tint(Color("AccentButton"))
                                             .buttonBorderShape(.roundedRectangle(radius: 12))
                                         }
                                     }
@@ -1265,7 +1265,7 @@ struct NearMeView: View {
                             .animation(nil, value: results.count)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color("BrandBrown"))
+                    .tint(Color("AccentButton"))
                     .buttonBorderShape(.roundedRectangle(radius: 12))
                     .disabled(isLoadingMore)
                     // Visual last row of the card, so the parchment behind

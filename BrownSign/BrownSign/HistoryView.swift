@@ -468,7 +468,7 @@ private struct SelectedLookupCard: View {
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(Color("BrandBrown"))
+                .tint(Color("AccentButton"))
                 .controlSize(.small)
                 .buttonBorderShape(.roundedRectangle(radius: 8))
             },
@@ -667,31 +667,6 @@ struct LandmarkDetailView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    Button {
-                        showSafari = true
-                    } label: {
-                        Label("Read full article", systemImage: "safari")
-                            .fontWeight(.regular)
-                            .frame(maxWidth: .infinity, minHeight: 28)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color("BrandBrown"))
-                    .buttonBorderShape(.roundedRectangle(radius: 12))
-                    .disabled(lookup.pageURL == nil)
-
-                    if let url = lookup.pageURL {
-                        ShareLink(item: url) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                                .labelStyle(.iconOnly)
-                                .frame(width: 44, height: 28)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color("BrandBrown"))
-                        .buttonBorderShape(.roundedRectangle(radius: 12))
-                    }
-                }
-
                 if !lookup.rawSignText.isEmpty {
                     Text("Original sign: \(lookup.rawSignText)")
                         .font(.caption)
@@ -700,6 +675,14 @@ struct LandmarkDetailView: View {
                 }
             }
             .padding()
+        }
+        // The action buttons live in a pinned bottom bar, NOT inline in
+        // the scroll content. Inline, they scrolled up under the floating
+        // tab bar on the History push path and clipped (the reported bug).
+        // safeAreaInset floats them above the tab bar and reserves matching
+        // bottom space so nothing in the scroll content hides behind them.
+        .safeAreaInset(edge: .bottom) {
+            detailActionBar
         }
         .navigationTitle(lookup.resolvedTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -734,7 +717,7 @@ struct LandmarkDetailView: View {
                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)
             ).scene else { return }
             let options = MKLookAroundSnapshotter.Options()
-            options.size = CGSize(width: 110, height: 88)
+            options.size = CGSize(width: 104, height: 104)
             let snapshot = try? await MKLookAroundSnapshotter(
                 scene: scene, options: options
             ).snapshot.image
@@ -810,6 +793,48 @@ struct LandmarkDetailView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 260)
         .clipped()
+    }
+
+    /// The pinned action bar shown by `safeAreaInset(edge: .bottom)`: a
+    /// full-width green "Read full article" CTA plus a 48pt outlined share,
+    /// on a frosted `.bar` with a top hairline — the same house treatment
+    /// as the Scan "Look it up" bar. The primary action is green
+    /// (AccentButton) now, not brown, per the redesign's "green = actions".
+    @ViewBuilder
+    private var detailActionBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                showSafari = true
+            } label: {
+                Label("Read full article", systemImage: "safari")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color("AccentButton"))
+            .buttonBorderShape(.roundedRectangle(radius: 12))
+            .disabled(lookup.pageURL == nil)
+
+            if let url = lookup.pageURL {
+                // Outlined (not filled) so it reads as secondary against the
+                // green primary; tinted green so the stroke + glyph match.
+                ShareLink(item: url) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .labelStyle(.iconOnly)
+                        .frame(width: 48, height: 28)
+                }
+                .buttonStyle(.bordered)
+                .tint(Color("AccentButton"))
+                .buttonBorderShape(.roundedRectangle(radius: 12))
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+        // Same 16pt gap-above-tab-bar the Scan bar uses; kept inside .bar
+        // so the frosted material stays flush with the tab bar.
+        .padding(.bottom, 16)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 
     @ViewBuilder
@@ -892,7 +917,7 @@ struct LandmarkDetailView: View {
         // async fade-in can never stretch the card. The trailing
         // padding reserves the tile's footprint while it's visible
         // (the metadata rows are short enough not to re-wrap).
-        .padding(.trailing, lookAroundScene != nil ? 122 : 0)
+        .padding(.trailing, lookAroundScene != nil ? 116 : 0)
         .overlay(alignment: .trailing) {
             // Street-level Look Around teaser, only where Apple has
             // imagery at the landmark. Tap opens the full-screen
@@ -916,8 +941,8 @@ struct LandmarkDetailView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .frame(width: 110)
-                .frame(maxHeight: 88)
+                .frame(width: 104)
+                .frame(maxHeight: 104)
                 // "Look Around" is Apple's feature name, so it
                 // keeps its capitals even in sentence-case land.
                 // Frosted-capsule label, the system's own badge

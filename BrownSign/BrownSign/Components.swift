@@ -344,6 +344,32 @@ func formatLandmarkDistance(_ meters: CLLocationDistance) -> String {
     }
 }
 
+/// The prominent green distance pill the redesign puts on Nearby rows and
+/// the Scan recents/result rows: a location arrow + short distance on a
+/// translucent green capsule (`DistanceChipFill`) in `DistanceChipText`.
+/// Best-effort by design — callers pass `nil` when there's no measurable
+/// distance (a typed / NPS / pre-enrichment save with no coordinates, or
+/// location denied) and the chip renders nothing rather than a placeholder,
+/// so it only ever appears when it can show a real distance. Reusing one
+/// view keeps the Nearby and Scan pills identical.
+struct DistanceChip: View {
+    /// Distance from the reference location, in meters. `nil` → renders nothing.
+    let meters: CLLocationDistance?
+
+    var body: some View {
+        if let meters {
+            let text = formatLandmarkDistance(meters)
+            Label(text, systemImage: "location.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color("DistanceChipText"))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color("DistanceChipFill")))
+                .accessibilityLabel("\(text) away")
+        }
+    }
+}
+
 /// Locale-aware search-radius string for the Nearby chrome — the "Within …"
 /// list header (spelled out: "2 miles" / "3 km") and the map zoom control's
 /// scale cue (`abbreviated`: "2 mi" / "3 km"). Uses the same measurement-
