@@ -838,7 +838,8 @@ struct LandmarkDetailView: View {
     }
 
     /// The pinned action bar shown by `safeAreaInset(edge: .bottom)`: a
-    /// full-width green "Read full article" CTA plus a 48pt outlined share,
+    /// full-width green "Read full article" CTA plus 48pt outlined Listen
+    /// and Share buttons,
     /// on a frosted `.bar` with a top hairline — the same house treatment
     /// as the Scan "Look it up" bar. The primary action is green
     /// (AccentButton) now, not brown, per the redesign's "green = actions".
@@ -856,6 +857,8 @@ struct LandmarkDetailView: View {
             .tint(Color("AccentButton"))
             .buttonBorderShape(.roundedRectangle(radius: 12))
             .disabled(lookup.pageURL == nil)
+
+            LandmarkListenButton(lookup: lookup)
 
             if let url = lookup.pageURL {
                 // Outlined (not filled) so it reads as secondary against the

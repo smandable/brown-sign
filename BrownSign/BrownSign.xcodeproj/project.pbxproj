@@ -43,6 +43,7 @@
 		148C104B2F8B3DD80091888E /* Exceptions for "BrownSign" folder in "BrownSign" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				BrownSign.entitlements,
 				Info.plist,
 			);
 			target = 148C0FB32F8AE8CA0091888E /* BrownSign */;
@@ -363,6 +364,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = BrownSign/BrownSign.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_PREVIEWS = YES;
@@ -372,8 +374,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.travel";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Brown Sign uses the camera to read brown roadside signs and identify the landmark.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Brown Sign uses your location to show landmarks near you and rank results by distance.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Brown Sign uses your location to show landmarks near you, rank results by distance, and tell you about landmarks as you drive.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
@@ -405,6 +406,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = BrownSign/BrownSign.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 7VP76365KX;
 				ENABLE_PREVIEWS = YES;
@@ -414,8 +416,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.travel";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Brown Sign uses the camera to read brown roadside signs and identify the landmark.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Brown Sign uses your location to show landmarks near you and rank results by distance.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Brown Sign uses your location to show landmarks near you, rank results by distance, and tell you about landmarks as you drive.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;

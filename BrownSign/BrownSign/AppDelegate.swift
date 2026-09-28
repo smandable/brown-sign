@@ -2,11 +2,14 @@
 //  AppDelegate.swift
 //  BrownSign
 //
-//  Exists solely to receive Home Screen quick-action taps — SwiftUI
-//  has no native hook for UIApplicationShortcutItem. SwiftUI still
-//  owns the window; this delegate pair only forwards to AppRouter.
+//  Routes scenes to their delegates: the iPhone window to SceneDelegate,
+//  which exists to receive Home Screen quick-action taps (SwiftUI has no
+//  native hook for UIApplicationShortcutItem; SwiftUI still owns the
+//  window and this pair only forwards to AppRouter), and the car screen
+//  to CarPlaySceneDelegate.
 //
 
+import CarPlay
 import UIKit
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -15,6 +18,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         configurationForConnecting connectingSceneSession: UISceneSession,
         options: UIScene.ConnectionOptions
     ) -> UISceneConfiguration {
+        if connectingSceneSession.role == .carTemplateApplication {
+            // Matches the Info.plist scene manifest entry.
+            let config = UISceneConfiguration(name: "CarPlay", sessionRole: connectingSceneSession.role)
+            config.sceneClass = CPTemplateApplicationScene.self
+            config.delegateClass = CarPlaySceneDelegate.self
+            return config
+        }
         let config = UISceneConfiguration(
             name: nil,
             sessionRole: connectingSceneSession.role

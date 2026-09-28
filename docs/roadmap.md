@@ -6,7 +6,15 @@ Saved from the 2026-06-10 deep review's competitor and platform research
 the launcher bundle as the next release and asked for the rest to be
 kept here for future releases.
 
-## Next up: 1.9.0 — the "launcher bundle" + LookAround
+## In progress: CarPlay audio + Listen
+
+Built on the `carplay-listen` branch (2026-09-28), waiting on Apple's
+CarPlay audio entitlement: narration of landmark stories on the phone,
+Play nearby, Narrate as I drive, Siri phrases, and a CarPlay audio app
+(Nearby and History tabs, Now Playing). Status, the entitlement request
+draft and the ship checklist live in `docs/carplay.md`.
+
+## Shipped in 1.9.0: the "launcher bundle" + LookAround
 
 One tab-selection/deep-link refactor, amortized across every launcher
 surface at once:

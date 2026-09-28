@@ -81,6 +81,7 @@ struct BrownSignApp: App {
                 LocationManager.shared.warmUpIfAuthorized()
             }
         }
-        .modelContainer(for: [LandmarkLookup.self, HiddenLandmark.self])
+        // Shared with the CarPlay scene (see AppModelContainer).
+        .modelContainer(AppModelContainer.shared)
     }
 }

@@ -716,6 +716,9 @@ struct NearMeView: View {
                     Text("Nearby")
                         .font(.system(size: 21, weight: .semibold))
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    NearbyListenMenu(playNearby: hasResults ? { playNearby() } : nil)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     // Spin whenever a fetch is in flight, including a
                     // pan-search on the map: mirrors the map's "Loading…"
@@ -1927,6 +1930,27 @@ struct NearMeView: View {
     }
 
     // MARK: - Tap-to-open
+
+    /// Listen's Play nearby, from the list on screen. When the list follows
+    /// the user, hand these rows to the station, which keeps choosing the
+    /// closest unheard landmark as they move. When it follows a panned area
+    /// or a search has narrowed it, play exactly these rows, in order.
+    private func playNearby() {
+        guard case .loaded(let results) = state else { return }
+        let visible = visibleResults(from: results)
+        let searching = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard let anchor = listAnchor else { return }
+        if !anchor.isArea, !searching {
+            NearbyStation.shared.seed(visible, center: anchor.center, radiusMiles: currentRadiusMiles)
+            Task { await LandmarkNarrator.shared.playNearby() }
+        } else {
+            let items = listResults(from: visible)
+                .map(NarrationItem.init(result:))
+                .filter { !$0.summary.isEmpty }
+            guard !items.isEmpty else { return }
+            Task { await LandmarkNarrator.shared.play(items, title: anchor.isArea ? "This area" : "Nearby") }
+        }
+    }
 
     /// Upsert an unenriched placeholder immediately so the detail view
     /// has something to render, then enrich in the background. Mirrors
