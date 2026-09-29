@@ -37,12 +37,16 @@ Sign is a listening app: it reads landmark stories aloud.
 ## Requesting the entitlement
 
 Requested 2026-09-28 at [developer.apple.com/contact/carplay](https://developer.apple.com/contact/carplay/).
-The form only asks for the organization (use Sean Mandable,
-7VP76365KX, the team that signs Brown Sign) and the app type
-(**Audio**). Bundle ID `com.seanmandable.brownsign`, App Store ID
-6762070205.
+Pick the organization (Sean Mandable, 7VP76365KX, the team that signs
+Brown Sign) and the app type (**Audio**). The form also has three
+fields it doesn't require: "Tell us about your app", "What specific
+CarPlay features do you plan to implement?" and an App Store URL. The
+2026-09-28 request went in with them blank, so the details below went
+to Apple the same day as a reply to its acknowledgment email.
+Follow-ups go that way, keeping the email's Case-ID line. Bundle ID
+`com.seanmandable.brownsign`, App Store ID 6762070205.
 
-Description, in case Apple asks for more detail:
+Description, for those fields or a follow-up:
 
 > Brown Sign identifies the brown roadside signs that point to historic
 > landmarks, and shows the landmarks around you. In CarPlay, Brown Sign
