@@ -128,10 +128,17 @@ nonisolated enum NarrationScript {
     /// (a History find from another trip), so the lead drops the distance.
     static let maxSpokenDistance: CLLocationDistance = 80_000
 
+    /// Past a quarter mile a landmark is usually out of sight, and "on your
+    /// left" doesn't mean anything to a driver, so the lead only gives a
+    /// direction inside this (the "Less than a quarter mile away" range).
+    static let maxDirectionDistance: CLLocationDistance = 1609.344 / 4
+
     enum LeadStyle {
-        /// "Old State House. About a mile away, on your left."
+        /// "Old State House. Less than a quarter mile away, on your left."
+        /// Farther out: "Old State House. About a mile away."
         case plain
         /// Automatic narration: "Coming up on your right: Old State House."
+        /// Farther out: "Nearby: Old State House, about a mile away."
         case approaching
     }
 
@@ -152,7 +159,7 @@ nonisolated enum NarrationScript {
         let meters = listener.distance(from: landmark)
         guard meters <= maxSpokenDistance else { return "\(title)." }
         let distance = spokenDistance(meters)
-        let direction = RelativeDirection.of(coordinate, from: listener)
+        let direction = meters < maxDirectionDistance ? RelativeDirection.of(coordinate, from: listener) : nil
         switch style {
         case .plain:
             if let direction {
