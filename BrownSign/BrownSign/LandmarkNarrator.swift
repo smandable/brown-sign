@@ -64,6 +64,9 @@ final class LandmarkNarrator: NSObject {
     /// Narrate as I drive turns itself off after this long without moving
     /// (the car is parked), so it doesn't hold location from a pocket all day.
     private static let parkedTimeout: TimeInterval = 20 * 60
+    /// A paused program ends itself after this long (say the listener got
+    /// out of the car mid-story), so Play nearby doesn't hold location all day.
+    private static let pausedTimeout: TimeInterval = 20 * 60
     /// Default-rate English runs about 15 characters a second; refined per
     /// landmark from the synthesizer's own progress once it's under way.
     private static let defaultCharactersPerSecond = 15.0
@@ -88,6 +91,7 @@ final class LandmarkNarrator: NSObject {
     @ObservationIgnored private var autoEnabledAt = Date()
     @ObservationIgnored private var lastMovement: (location: CLLocation, date: Date)?
     @ObservationIgnored private var parkedWatch: Task<Void, Never>?
+    @ObservationIgnored private var pausedWatch: Task<Void, Never>?
 
     // Now Playing bookkeeping.
     @ObservationIgnored private var scriptLength = 1
@@ -230,6 +234,12 @@ final class LandmarkNarrator: NSObject {
         if let since = speakingSince { spokenTime += Date().timeIntervalSince(since) }
         speakingSince = nil
         isPlaying = false
+        pausedWatch?.cancel()
+        pausedWatch = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.pausedTimeout))
+            guard let self, !Task.isCancelled, self.current != nil, !self.isPlaying else { return }
+            self.finish()
+        }
         publishNowPlaying()
         postChange()
     }
@@ -237,6 +247,8 @@ final class LandmarkNarrator: NSObject {
     func resume() {
         guard let current, !isPlaying else { return }
         guard activateSession() else { return }
+        pausedWatch?.cancel()
+        pausedWatch = nil
         isPlaying = true
         if pendingAdvance {
             pendingAdvance = false
@@ -401,6 +413,8 @@ final class LandmarkNarrator: NSObject {
     private func finish() {
         advanceTask?.cancel()
         advanceTask = nil
+        pausedWatch?.cancel()
+        pausedWatch = nil
         pendingAdvance = false
         silenceSynthesizer()
         if program == .approaching { lastAutomaticFinish = Date() }
