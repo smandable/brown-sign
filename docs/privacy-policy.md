@@ -17,7 +17,7 @@ Brown Sign is developed by Sean Mandable. This privacy policy explains what data
 - **OCR** (reading sign text from photos) runs entirely on-device using Apple's Vision framework.
 - **Apple Intelligence** features (text cleanup, summary polishing, match scoring) run on-device using Apple's FoundationModels framework. No text is sent to Apple or any cloud LLM.
 - **Search history** is stored locally on your device using SwiftData. It is never synced, uploaded, or backed up to any server.
-- **Narration** (Listen, Play nearby, Narrate as I drive, and CarPlay) uses Apple's on-device speech synthesizer to read the same Wikipedia summaries the app shows. No audio is recorded or sent anywhere.
+- **Narration** (Listen, Play nearby, Narrate as I drive, and CarPlay) uses Apple's on-device speech synthesizer to read each landmark's Wikipedia introduction aloud. No audio is recorded or sent anywhere.
 - **Narration log**: the app remembers which landmarks it has narrated in the last 30 days, on your device only, so it doesn't repeat them. Older entries are dropped automatically.
 - **Nearby results** from your most recent search are cached on-device (in the app's Caches folder) so the Nearby tab opens instantly. The cache holds only public landmark data, never personal information, and is cleared when you delete the app.
 
@@ -62,4 +62,4 @@ If this policy changes, the updated version will be posted at this URL with a ne
 Questions or concerns about this privacy policy can be directed to:
 
 Sean Mandable
-smandable@gmail.com
+support@seanmandable.me
