@@ -1,9 +1,9 @@
 # CarPlay and Listen
 
-**Status (2026-09-28):** built on the `carplay-listen` branch, not shipped.
+**Status (2026-09-29):** built on the `carplay-listen` branch, not shipped.
 The iPhone half (Listen, Play nearby, Narrate as I drive, Siri) works now.
-The CarPlay half waits on Apple granting the CarPlay **audio** entitlement
-(requested 2026-09-28).
+Apple granted the CarPlay **audio** entitlement on 2026-09-29 (requested
+2026-09-28), and it's switched on for Brown Sign's App ID.
 
 ## Why the audio category
 
@@ -63,15 +63,18 @@ Description, for those fields or a follow-up:
 
 ## After Apple approves
 
-1. Certificates, Identifiers & Profiles → Identifiers →
+1. Done 2026-09-29: Certificates, Identifiers & Profiles → Identifiers →
    `com.seanmandable.brownsign` → Additional Capabilities → enable
-   **CarPlay Audio** → Save.
-2. In the project, change `CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]`
-   to plain `CODE_SIGN_ENTITLEMENTS` (Debug and Release, app target), so
-   device builds carry `BrownSign.entitlements` too. Try automatic
-   signing first; if Xcode says the profile lacks
-   `com.apple.developer.carplay-audio`, follow Apple's manual-profile
-   steps in "Requesting CarPlay Entitlements".
+   **CarPlay Audio App** → Save. This invalidates the App ID's existing
+   profiles; automatic signing makes new ones on the next build.
+2. Done 2026-09-29: `CODE_SIGN_ENTITLEMENTS` now applies to device
+   builds too (Debug and Release, app target). Automatic signing needs
+   an Apple account in Xcode (Settings > Accounts) to fetch a profile
+   with `com.apple.developer.carplay-audio`. Without one, the build fails
+   with "Entitlement com.apple.developer.carplay-audio not found and
+   could not be included in profile". With the account signed in,
+   automatic signing worked: the regenerated team profile and the signed
+   app both carry the entitlement (checked 2026-09-29).
 3. Test on the phone: CarPlay Simulator (Additional Tools for Xcode) with
    the iPhone over USB, then a real car. Check with the phone locked.
 4. Ship it as a new minor version with a new build number (see
