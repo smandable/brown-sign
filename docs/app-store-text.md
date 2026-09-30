@@ -27,6 +27,9 @@ Signs don't wait. Ask Siri to "Scan a sign with Brown Sign", add the scan button
 NEARBY DISCOVERY
 Open the Nearby tab to see landmarks around you, with an adjustable search radius from 2 to 25 miles. No scan needed. Switch to map view and pan to keep exploring; pins accumulate as you go, and the list follows along to show what's around the area you're viewing, with one tap to jump back to your own location. Hiking trails, museums, parks, monuments, lighthouses, covered bridges, historic districts, and dozens of other categories.
 
+LISTEN AS YOU DRIVE
+Brown Sign reads landmark stories aloud. Play nearby tells you about the closest landmarks one after another, and Narrate as I drive speaks up as you approach each one, then hands your audio back. It works in CarPlay, and with Siri: "Play nearby landmarks in Brown Sign".
+
 SMART SEARCH
 Brown Sign searches Wikipedia, the National Park Service, and Wikidata to find the right match. It uses Apple Intelligence to clean up messy camera text and polish summaries into quick, readable cards.
 
@@ -49,7 +52,7 @@ SHARE
 Share any landmark's article link with friends, family, or fellow travelers in one tap.
 
 PRIVACY FIRST
-Everything runs on your device. Camera images stay local. Location is used only to find and rank nearby results, never tracked or shared. No accounts, no analytics, no ads.
+Everything runs on your device. Camera images stay local. Location is used only to find, rank, and narrate nearby landmarks, never tracked or shared. No accounts, no analytics, no ads.
 
 COMPLETELY FREE
 Every feature, everywhere. No subscription, no in-app purchases, no region packs to buy.
@@ -68,22 +71,20 @@ Apple auto-combines single keywords, so no multi-word phrases / spaces.
 roadtrip,tourist,attraction,sightseeing,travel,national,park,monument,museum,trail,scenic,historic
 ```
 
-## What's New (Version 2.0)
+## What's New (Version 2.1.0)
 ```
-Brown Sign 2.0 is a full redesign, built around getting you to a sign faster and telling you more once you find one.
+New: Brown Sign can read landmark stories aloud, and it now works in CarPlay.
 
-The Scan tab now opens straight into a live camera. The viewfinder is ready the moment you arrive, so you can frame the sign and shoot without anything getting in the way first.
+Tap the headphones on the Nearby tab and choose Play nearby to hear about the closest landmarks, one after another, as you drive. Or turn on Narrate as I drive, and Brown Sign stays quiet until you're about to pass a landmark, tells you its story, then hands your music or podcast back. Every landmark's page has a Listen button too.
 
-Nearby is richer. Tap a landmark on the map and you get a real card now: its photo, how far away it is, a rough walk time, and one tap to open the details or get directions, all without leaving the map. Pins gather into neat clusters as you pan across a region, then split back apart as you zoom in.
-
-History groups your finds by day, so the place you saw last weekend is easy to come back to.
-
-And the whole app got a fresh coat of paint: green for the things you tap, brown for the Brown Sign identity, larger rounded cards, and a redrawn signpost throughout.
+In the car, Brown Sign shows up in CarPlay with your nearby landmarks and your history, one tap from playing. Or just ask Siri to "Play nearby landmarks in Brown Sign".
 ```
 
 ### Previous versions
 
 ```
+Version 2.0: A full redesign, built around getting you to a sign faster and telling you more once you find one. The Scan tab opens straight into a live camera. Tap a landmark on the Nearby map for a real card with its photo, how far away it is, a rough walk time, and one tap to the details or directions, and pins gather into clusters as you pan across a region. History groups your finds by day. And the whole app got a fresh coat of paint: green for the things you tap, brown for the Brown Sign identity, larger rounded cards, and a redrawn signpost throughout.
+
 Version 1.9.0: Get to the camera before the sign is gone. Say "Scan a sign with Brown Sign" to Siri, add a Brown Sign button to Control Center, the Lock Screen, or the Action button, or long-press the app icon, and each one opens the app with the camera already up, with a shortcut straight to Nearby too. Landmark pages can now show a street-level Look Around preview, so you can see what you'd be pulling off the highway for. Plus Nearby photos that recover on their own after a failed download, and more accurate landmark locations so directions and Look Around point at the right spot.
 
 Version 1.8.0: Identify a sign from a photo. The passenger snaps a picture as you drive past, and you look it up at the next stop. Brown Sign also now tells you when it can't reach the landmark services, so a dead zone no longer reads as "no results", and lookups are quicker on slow connections. The Nearby follow-the-map list got a big reliability pass: refreshing while exploring another area brings the list home with your results, changing the radius keeps you on the area you're browsing, and "Back to your location" fills in anything missing at the current radius. Plus kilometer units for metric travelers, clearer error messages, better dark mode contrast, larger touch targets, and more VoiceOver support throughout.
@@ -121,6 +122,19 @@ Version 1.4.3 — Whole-app design unification. Every card, list, textfield, and
 Version 1.4.2 — Faster cold-start on the Nearby tab. Pins from your last session now appear instantly when you reopen the app, while a fresh search runs in the background — and the closest landmarks render before the rest of the list finishes loading. Pull-to-refresh is smoother: no more jump at the top of the list when results update. More landmarks show a thumbnail in the list and on map pins. Articles whose photos only appear inline in the body (like swing bridges) used to fall back to a placeholder; we now find those images too. Polish: list cards across Scan, Nearby, and History now end exactly with the last row instead of extending the parchment past the content; section headers are sized consistently across the three tabs; and Nearby's search field shows an explicit "No results" message when nothing matches.
 
 Version 1.0 — Initial release.
+```
+
+## App Review Notes (Version 2.1.0)
+For the Notes field under App Review Information.
+
+```
+Brown Sign 2.1.0 adds Listen: the app reads short landmark stories aloud with on-device speech (AVSpeechSynthesizer), on the iPhone and in CarPlay as an audio app. The CarPlay audio entitlement was granted to this team on 2026-09-29.
+
+To try it: on the Nearby tab, tap the headphones button (top left) and choose Play nearby, or open any landmark and tap Listen. In CarPlay, open Brown Sign and tap Play nearby. With Siri: "Play nearby landmarks in Brown Sign".
+
+Background modes:
+- audio: plays the narration.
+- location: runs only while Play nearby or Narrate as I drive is on, to choose which landmark to narrate as the car moves, and iOS shows the location indicator while it runs. The app asks only for When In Use permission. Narrate as I drive turns itself off after 20 minutes parked or when CarPlay disconnects, and a paused story ends after 20 minutes. Location leaves the device only as coordinates in Wikipedia and Wikidata landmark searches.
 ```
 
 ## Support URL

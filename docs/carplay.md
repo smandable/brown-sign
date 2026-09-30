@@ -1,9 +1,8 @@
 # CarPlay and Listen
 
-**Status (2026-09-29):** built on the `carplay-listen` branch, not shipped.
-The iPhone half (Listen, Play nearby, Narrate as I drive, Siri) works now.
-Apple granted the CarPlay **audio** entitlement on 2026-09-29 (requested
-2026-09-28), and it's switched on for Brown Sign's App ID.
+**Status (2026-09-30):** ships in 2.1.0 (build 43). Apple granted the
+CarPlay **audio** entitlement on 2026-09-29 (requested 2026-09-28), and
+it's switched on for Brown Sign's App ID.
 
 ## Why the audio category
 
@@ -18,7 +17,9 @@ Sign is a listening app: it reads landmark stories aloud.
 - **Listen engine** (`LandmarkNarrator`): on-device speech, a queue,
   Now Playing info and artwork, lock screen / steering wheel / CarPlay
   controls, and a `.spokenAudio` session that pauses for navigation
-  prompts and calls and hands audio back when playback stops.
+  prompts and calls and hands audio back when playback stops. A paused
+  story ends itself after 20 minutes, so Play nearby doesn't hold
+  location from a pocket.
 - **Play nearby**: the closest landmark not yet heard, then the next
   closest from wherever the listener is by then (`NearbyStation`,
   10 mile rings widening to 25, re-fetched after about 2 miles).
@@ -75,17 +76,14 @@ Description, for those fields or a follow-up:
    could not be included in profile". With the account signed in,
    automatic signing worked: the regenerated team profile and the signed
    app both carry the entitlement (checked 2026-09-29).
-3. Test on the phone: CarPlay Simulator (Additional Tools for Xcode) with
-   the iPhone over USB, then a real car. Check with the phone locked.
-4. Ship it as a new minor version with a new build number (see
-   CLAUDE.md), with What's New copy in `docs/app-store-text.md`.
-5. Update `docs/privacy-policy.md` (new effective date) before
-   submitting: location is also used, in the background, while Play
-   nearby or Narrate as I drive is on; and a 30-day list of narrated
-   landmarks is kept on the device.
-6. App Review notes: background `location` runs only while Play nearby
-   or Narrate as I drive is on, to choose which landmark to narrate as
-   the car moves. Background `audio` plays the narration.
+3. Done 2026-09-30: tried on the phone and in a car.
+4. Done 2026-09-30: version 2.1.0, build 43, with What's New in
+   `docs/app-store-text.md`.
+5. Done 2026-09-30: `docs/privacy-policy.md` (effective September 30,
+   2026) covers background location while Play nearby or Narrate as I
+   drive is on, and the 30-day on-device narration log.
+6. Done 2026-09-30: App Review notes are in `docs/app-store-text.md`
+   (background `location` and `audio`, and how to try Listen).
 
 ## Testing
 
@@ -101,7 +99,5 @@ Description, for those fields or a follow-up:
   playback, Narrate as I drive on a simulated drive (three automatic
   narrations with the cooldown between them), the heard log surviving a
   relaunch, disambiguation suffixes dropped from spoken titles.
-- **Not verified yet:** the CarPlay templates on a car screen, lock
-  screen and steering wheel controls on a device, Siri phrases, real GPS
-  course ("on your left"), pausing for a navigation prompt, voice
-  quality on a device (the simulator only has the lowest-quality voice).
+- **On a phone and in a car (2026-09-30):** tried by Sean on his
+  iPhone 18 Pro and in his car before the 2.1.0 bump.
